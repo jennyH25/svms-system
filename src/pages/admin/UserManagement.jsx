@@ -62,7 +62,6 @@ const UserManagement = () => {
   ]
 
   const actions = [
-
     { label: 'Edit', icon: <Edit className="w-4 h-4" />, onClick: (row) => console.log('Edit', row) },
     { label: 'Delete', icon: <Trash2 className="w-4 h-4" />, onClick: (row) => console.log('Delete', row), variant: 'danger' },
   ]
