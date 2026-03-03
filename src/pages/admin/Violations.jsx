@@ -3,6 +3,7 @@ import DataTable from '@/components/ui/DataTable'
 import Button from '@/components/ui/Button'
 import Modal, { ModalFooter } from '@/components/ui/Modal'
 import SearchBar from '@/components/ui/SearchBar'
+import AnimatedContent from '@/components/ui/AnimatedContent'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -13,16 +14,16 @@ import { Plus } from 'lucide-react'
 
 const Violations = () => {
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [categoryFilter, setCategoryFilter] = useState('minor') // 'all', 'minor', 'major'
-  const [specificDegree, setSpecificDegree] = useState('') // specific degree filter
+  const [categoryFilter, setCategoryFilter] = useState('minor') 
+  const [specificDegree, setSpecificDegree] = useState('')
   const [formData, setFormData] = useState({
     type: '',
     degree: '',
     violation: '',
   })
-
-  // Comprehensive violation data based on school regulations
+  
   const violationsData = [
+
     // First Degree Minor Offenses
     { id: 1, violation: 'Loitering', degree: 'First' },
     { id: 2, violation: 'Littering', degree: 'First' },
@@ -107,7 +108,7 @@ const Violations = () => {
     { id: 69, violation: 'Event Disruption', degree: 'Seventh' },
   ]
 
-  // Get available degrees based on category filter
+
   const getAvailableDegrees = () => {
     if (categoryFilter === 'minor') {
       return ['First', 'Second']
@@ -119,9 +120,8 @@ const Violations = () => {
 
   const availableDegrees = getAvailableDegrees()
 
-  // Filter data based on category and specific degree selection
   const filteredData = violationsData.filter(item => {
-    // First, filter by category (minor/major/all)
+
     let categoryMatch = true
     if (categoryFilter === 'minor') {
       categoryMatch = ['First', 'Second'].includes(item.degree)
@@ -129,7 +129,7 @@ const Violations = () => {
       categoryMatch = ['Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh'].includes(item.degree)
     }
 
-    // Then, filter by specific degree if selected
+
     let degreeMatch = !specificDegree || item.degree === specificDegree
 
     return categoryMatch && degreeMatch
@@ -148,80 +148,88 @@ const Violations = () => {
 
   const handleViolationRowClick = (violation) => {
     console.log('Violation clicked:', violation)
-    // Add your logic here - e.g., open edit modal, navigate, etc.
+
   }
 
   return (
     <div className="text-white">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold tracking-wide">VIOLATIONS</h2>
-        <Button
-          variant="secondary"
-          size="sm"
-          className="gap-2 flex items-center"
-          onClick={() => setIsModalOpen(true)}
-        >
-          <Plus className="w-4 h-4" />
-          Add Violation
-        </Button>
-      </div>
+      <AnimatedContent>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold tracking-wide">VIOLATIONS</h2>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="gap-2 flex items-center"
+            onClick={() => setIsModalOpen(true)}
+          >
+            <Plus className="w-4 h-4" />
+            Add Violation
+          </Button>
+        </div>
+      </AnimatedContent>
 
       {/* Search and Filters */}
-      <div className="flex gap-4 mb-6 items-center">
-        <SearchBar placeholder="Search Violation" className="flex-1 max-w-xs" />
-        
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="secondary" size="sm" className="min-w-[100px] justify-between">
-              Degree
-              <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem onClick={() => setSpecificDegree('')}>
-              All
-            </DropdownMenuItem>
-            {availableDegrees.map(degree => (
-              <DropdownMenuItem key={degree} onClick={() => setSpecificDegree(degree)}>
-                {degree}
+      <AnimatedContent distance={40} delay={0.1}>
+        <div className="flex gap-4 mb-6 items-center">
+          <SearchBar placeholder="Search Violation" className="flex-1 max-w-xs" />
+          
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="secondary" size="sm" className="min-w-[100px] justify-between">
+                Degree
+                <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={() => setSpecificDegree('')}>
+                All
               </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+              {availableDegrees.map(degree => (
+                <DropdownMenuItem key={degree} onClick={() => setSpecificDegree(degree)}>
+                  {degree}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </AnimatedContent>
 
       {/* Minor/Major Toggle */}
-      <div className="flex mb-4">
-        <button
-          onClick={() => { setCategoryFilter('minor'); setSpecificDegree('') }}
-          className={`px-8 py-2.5 rounded-l-lg text-sm font-medium transition-colors ${
-            categoryFilter === 'minor'
-              ? 'bg-[#1E1F22] text-white'
-              : 'bg-[#2D2F33] text-gray-400 hover:text-white'
-          }`}
-        >
-          Minor
-        </button>
-        <button
-          onClick={() => { setCategoryFilter('major'); setSpecificDegree('') }}
-          className={`px-8 py-2.5 rounded-r-lg text-sm font-medium transition-colors ${
-            categoryFilter === 'major'
-              ? 'bg-[#1E1F22] text-white'
-              : 'bg-[#2D2F33] text-gray-400 hover:text-white'
-          }`}
-        >
-          Major
-        </button>
-      </div>
+      <AnimatedContent distance={40} delay={0.2}>
+        <div className="flex mb-4">
+          <button
+            onClick={() => { setCategoryFilter('minor'); setSpecificDegree('') }}
+            className={`px-8 py-2.5 rounded-l-lg text-sm font-medium transition-colors ${
+              categoryFilter === 'minor'
+                ? 'bg-[#1E1F22] text-white'
+                : 'bg-[#2D2F33] text-gray-400 hover:text-white'
+            }`}
+          >
+            Minor
+          </button>
+          <button
+            onClick={() => { setCategoryFilter('major'); setSpecificDegree('') }}
+            className={`px-8 py-2.5 rounded-r-lg text-sm font-medium transition-colors ${
+              categoryFilter === 'major'
+                ? 'bg-[#1E1F22] text-white'
+                : 'bg-[#2D2F33] text-gray-400 hover:text-white'
+            }`}
+          >
+            Major
+          </button>
+        </div>
+      </AnimatedContent>
 
       {/* Table Container */}
-      <div className="bg-[#23262B] rounded-xl p-6">
-        <h3 className="text-lg font-bold mb-4">List of Violation</h3>
-        <DataTable columns={columns} data={filteredData} onRowClick={handleViolationRowClick} />
-      </div>
+      <AnimatedContent distance={40} delay={0.3}>
+        <div className="bg-[#23262B] rounded-xl p-6">
+          <h3 className="text-lg font-bold mb-4">List of Violation</h3>
+          <DataTable columns={columns} data={filteredData} onRowClick={handleViolationRowClick} />
+        </div>
+      </AnimatedContent>
 
       {/* Add Violation Modal */}
       <Modal
@@ -230,37 +238,69 @@ const Violations = () => {
         title="Add Violation"
         size="md"
       >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-white mb-2">Type</label>
-            <select
-              value={formData.type}
-              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-              className="w-full bg-[#3a3a3a] text-white rounded-lg px-4 py-2 border border-white/10 focus:outline-none focus:ring-1 focus:ring-white/20 text-sm"
-            >
-              <option value="">Select Type</option>
-              <option value="academic">Academic</option>
-              <option value="behavioral">Behavioral</option>
-              <option value="conduct">Conduct</option>
-            </select>
-          </div>
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-white mb-2">Type</label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="secondary" size="sm" className="w-full justify-between bg-[#3a3a3a] hover:bg-[#4a4a4a] h-10">
+                    {formData.type ? formData.type.charAt(0).toUpperCase() + formData.type.slice(1) : 'Select Type'}
+                    <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-full">
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, type: 'academic' })}>
+                    Academic
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, type: 'behavioral' })}>
+                    Behavioral
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, type: 'conduct' })}>
+                    Conduct
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium text-white mb-2">Degree</label>
-            <select
-              value={formData.degree}
-              onChange={(e) => setFormData({ ...formData, degree: e.target.value })}
-              className="w-full bg-[#3a3a3a] text-white rounded-lg px-4 py-2 border border-white/10 focus:outline-none focus:ring-1 focus:ring-white/20 text-sm"
-            >
-              <option value="">Select Degree</option>
-              <option value="First">First</option>
-              <option value="Second">Second</option>
-              <option value="Third">Third</option>
-              <option value="Fourth">Fourth</option>
-              <option value="Fifth">Fifth</option>
-              <option value="Sixth">Sixth</option>
-              <option value="Seventh">Seventh</option>
-            </select>
+            <div>
+              <label className="block text-sm font-medium text-white mb-2">Degree</label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="secondary" size="sm" className="w-full justify-between bg-[#3a3a3a] hover:bg-[#4a4a4a] h-10">
+                    {formData.degree ? formData.degree : 'Select Degree'}
+                    <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-full">
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, degree: 'First' })}>
+                    First
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, degree: 'Second' })}>
+                    Second
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, degree: 'Third' })}>
+                    Third
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, degree: 'Fourth' })}>
+                    Fourth
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, degree: 'Fifth' })}>
+                    Fifth
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, degree: 'Sixth' })}>
+                    Sixth
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setFormData({ ...formData, degree: 'Seventh' })}>
+                    Seventh
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
 
           <div>
@@ -274,7 +314,7 @@ const Violations = () => {
             />
           </div>
 
-          <ModalFooter>
+          <div className="flex justify-center gap-3">
             <Button
               variant="secondary"
               onClick={() => setIsModalOpen(false)}
@@ -289,7 +329,7 @@ const Violations = () => {
             >
               Save
             </Button>
-          </ModalFooter>
+          </div>
         </div>
       </Modal>
     </div>
