@@ -1,9 +1,9 @@
 import React, { useState } from 'react'
-import Card from '../components/ui/Card'
-import StatCard from '../components/ui/StatCard'
-import { AddViolationButton, ViewStudentsButton } from '../components/ui/QuickActionButton'
-import AnimatedContent from '../components/ui/AnimatedContent'
-import DataTable, { TableCellText, TableCellDateTime, TableCellBadge } from '../components/ui/DataTable'
+import Card from '../../components/ui/Card'
+import StatCard from '../../components/ui/StatCard'
+import { AddViolationButton, ViewStudentsButton } from '../../components/ui/QuickActionButton'
+import AnimatedContent from '../../components/ui/AnimatedContent'
+import DataTable, { TableCellText, TableCellDateTime, TableCellBadge } from '../../components/ui/DataTable'
 import {
   DropdownMenu,
   DropdownMenuContent,

@@ -1,12 +1,12 @@
 import React, { useState } from 'react'
-import AnimatedContent from '../components/ui/AnimatedContent'
-import Button from '../components/ui/Button'
+import AnimatedContent from '../../components/ui/AnimatedContent'
+import Button from '../../components/ui/Button'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-} from '../components/ui/dropdown-menu'
+} from '../../components/ui/dropdown-menu'
 
 const Settings = () => {
   const [theme, setTheme] = useState('dark')

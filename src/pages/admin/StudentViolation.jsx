@@ -1,16 +1,16 @@
 import React from 'react'
-import AnimatedContent from '../components/ui/AnimatedContent'
-import Card from '../components/ui/Card'
-import StatCard from '../components/ui/StatCard'
-import Button from '../components/ui/Button'
-import DataTable from '../components/ui/DataTable'
+import AnimatedContent from '../../components/ui/AnimatedContent'
+import Card from '../../components/ui/Card'
+import StatCard from '../../components/ui/StatCard'
+import Button from '../../components/ui/Button'
+import DataTable from '../../components/ui/DataTable'
 import { Plus, TrendingUp, TrendingDown } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-} from '../components/ui/dropdown-menu'
+} from '../../components/ui/dropdown-menu'
 
 const StudentViolation = () => {
   // Example data for table and stats

@@ -20,7 +20,7 @@ const Navbar = () => {
   const handleLogout = () => {
     // Clear user session (customize as needed)
     localStorage.clear();
-    window.location.reload();
+    window.location.href = '/login';
   }
 
   return (

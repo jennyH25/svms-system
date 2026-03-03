@@ -1,16 +1,16 @@
 import React, { useState } from 'react'
-import AnimatedContent from '../components/ui/AnimatedContent'
-import SearchBar from '../components/ui/SearchBar'
-import Button from '../components/ui/Button'
-import DataTable from '../components/ui/DataTable'
-import TableTabs from '../components/ui/TableTabs'
+import AnimatedContent from '../../components/ui/AnimatedContent'
+import SearchBar from '../../components/ui/SearchBar'
+import Button from '../../components/ui/Button'
+import DataTable from '../../components/ui/DataTable'
+import TableTabs from '../../components/ui/TableTabs'
 import { Folder } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-} from '../components/ui/dropdown-menu'
+} from '../../components/ui/dropdown-menu'
 import { Filter, Download } from 'lucide-react'
 
 const folderList = [
