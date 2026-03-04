@@ -55,30 +55,44 @@ const StudentViolation = () => {
   // Search and filter states
   const [searchTerm, setSearchTerm] = useState("");
   const [sortOrder, setSortOrder] = useState("Asc");
-  const [selectedDate, setSelectedDate] = useState("");
-  const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedYear, setSelectedYear] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
+    // Date dropdown handler
+    const handleDateChange = (range) => {
+      setSelectedDate(range);
+    };
   const [selectedStatus, setSelectedStatus] = useState("");
 
   const handleSearchChange = (e) => setSearchTerm(e.target.value);
   const handleSortOrder = (order) => setSortOrder(order);
   const handleYearChange = (year) => setSelectedYear(year);
-  const handleStatusChange = (status) => setSelectedStatus(status);
-  const handleDateChange = (e) => {
-    setSelectedDate(e.target.value);
-    setShowDatePicker(false);
-    // You can implement file upload logic here
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        // Handle the file upload (e.g., upload to server or preview)
-        alert(`Signature attached for row ${rowId}: ${file.name}`);
-      }
+
+  // Helper to match yearSection to dropdown
+  const yearMatches = (row, selectedYear) => {
+    if (!selectedYear) return true;
+    const yearMap = {
+      '1st Year': /^BSIT\s*-\s*1/i,
+      '2nd Year': /^BSIT\s*-\s*2/i,
+      '3rd Year': /^BSIT\s*-\s*3/i,
+      '4th Year': /^BSIT\s*-\s*4/i,
     };
-    input.click();
+    const regex = yearMap[selectedYear];
+    return regex ? regex.test(row.yearSection) : true;
+  };
+  const handleStatusChange = (status) => setSelectedStatus(status);
+
+  // Helper to match status
+  const statusMatches = (row, selectedStatus) => {
+    if (!selectedStatus) return true;
+    if (!row.status || !row.status.type) return false;
+    const typeName = row.status.type.displayName || row.status.type.name || row.status.type;
+    if (selectedStatus === 'Cleared') {
+      return typeName === 'span';
+    }
+    if (selectedStatus === 'Pending') {
+      return typeName === 'Button';
+    }
+    return true;
   };
 
   const [clearedRows, setClearedRows] = useState({});
@@ -265,12 +279,46 @@ const StudentViolation = () => {
 
   const rawData = sampleUsers;
 
-  const data = rawData.filter(row => {
+  // Filter and sort data by search, date, and sortOrder
+  const filteredData = rawData.filter(row => {
     const term = searchTerm.toLowerCase();
-    return (
-      row.studentNameText.toLowerCase().includes(term) ||
-      row.studentIdText.toLowerCase().includes(term)
-    );
+    let matchesSearch = row.studentNameText.toLowerCase().includes(term) || row.studentIdText.toLowerCase().includes(term);
+    let matchesDate = true;
+    let matchesYear = yearMatches(row, selectedYear);
+    let matchesStatus = statusMatches(row, selectedStatus);
+    if (selectedDate) {
+      const today = new Date();
+      const rowDate = new Date(row.date.split('\n')[0]);
+      switch (selectedDate) {
+        case 'Today':
+          matchesDate = rowDate.toDateString() === today.toDateString();
+          break;
+        case 'This Week':
+          const startOfWeek = new Date(today);
+          startOfWeek.setDate(today.getDate() - today.getDay());
+          const endOfWeek = new Date(startOfWeek);
+          endOfWeek.setDate(startOfWeek.getDate() + 6);
+          matchesDate = rowDate >= startOfWeek && rowDate <= endOfWeek;
+          break;
+        case 'This Month':
+          matchesDate = rowDate.getMonth() === today.getMonth() && rowDate.getFullYear() === today.getFullYear();
+          break;
+        case 'This Year':
+          matchesDate = rowDate.getFullYear() === today.getFullYear();
+          break;
+        default:
+          matchesDate = true;
+      }
+    }
+    return matchesSearch && matchesDate && matchesYear && matchesStatus;
+  });
+
+  const data = [...filteredData].sort((a, b) => {
+    if (sortOrder === 'Asc') {
+      return a.no - b.no;
+    } else {
+      return b.no - a.no;
+    }
   });
 
   return (
@@ -336,29 +384,25 @@ const StudentViolation = () => {
                 <DropdownMenuItem onClick={() => handleSortOrder("Asc")}>Asc</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleSortOrder("Desc")}>Desc</DropdownMenuItem>
               </DropdownMenuContent>
+            
             </DropdownMenu>
-            {/* Date Dropdown */}
+            {/* Date Dropdown (after Asc/Desc) */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="secondary" size="sm" className="min-w-[90px] justify-between" onClick={() => setShowDatePicker(true)}>
+                <Button variant="secondary" size="sm" className="min-w-[90px] justify-between">
                   {selectedDate ? selectedDate : "Date"}
                   <ChevronDown className="ml-2 w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                <DropdownMenuItem onClick={() => setShowDatePicker(true)}>Pick Date</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDateChange("")}>All</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDateChange('Today')}>Today</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDateChange('This Week')}>This Week</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDateChange('This Month')}>This Month</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDateChange('This Year')}>This Year</DropdownMenuItem>
+                <DropdownMenuItem disabled>Custom Range</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            {showDatePicker && (
-              <input
-                type="date"
-                className="absolute z-50 bg-white text-black rounded shadow-lg p-2"
-                value={selectedDate}
-                onChange={handleDateChange}
-                onBlur={() => setShowDatePicker(false)}
-                style={{ left: '50%', transform: 'translateX(-50%)' }}
-              />
-            )}
             {/* Year Dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -368,6 +412,7 @@ const StudentViolation = () => {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
+                <DropdownMenuItem onClick={() => handleYearChange("")}>All</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleYearChange("1st Year")}>1st Year</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleYearChange("2nd Year")}>2nd Year</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleYearChange("3rd Year")}>3rd Year</DropdownMenuItem>
@@ -383,6 +428,7 @@ const StudentViolation = () => {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
+                <DropdownMenuItem onClick={() => handleStatusChange("")}>All</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleStatusChange("Cleared")}>Cleared</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleStatusChange("Pending")}>Pending</DropdownMenuItem>
               </DropdownMenuContent>
@@ -397,11 +443,6 @@ const StudentViolation = () => {
 
       <AnimatedContent delay={0.5}>
         <DataTable columns={columns} data={data} actions={actions} />
-        {data.length === 0 && (
-          <div className="py-12 text-center text-gray-500 text-lg font-semibold">
-            No results found
-          </div>
-        )}
       </AnimatedContent>
       {/* Log New Violation Modal */}
       <LogNewViolationModal isOpen={showLogModal} onClose={() => setShowLogModal(false)} />
