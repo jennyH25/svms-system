@@ -1,8 +1,6 @@
-
-
 import React from 'react';
 
-const StatCard = ({ 
+const AdminStatCard = ({ 
   title, 
   value, 
   percentage = 0, 
@@ -43,4 +41,4 @@ const StatCard = ({
   );
 };
 
-export default StatCard;
+export default AdminStatCard;

@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import Card from '../../components/ui/Card'
-import StatCard from '../../components/ui/StatCard'
+import AdminStatCard from '../../components/ui/AdminStatCard'
 import { AddViolationButton, ViewStudentsButton } from '../../components/ui/QuickActionButton'
 import AnimatedContent from '../../components/ui/AnimatedContent'
 import DataTable, { TableCellText, TableCellDateTime, TableCellBadge } from '../../components/ui/DataTable'
@@ -45,7 +45,7 @@ const Dashboard = () => {
         <div className="flex gap-4 mb-6">
           {/* Stats Cards */}
           <div className="flex gap-4 flex-1">
-            <StatCard 
+            <AdminStatCard 
               title="Active Violations" 
               value="0" 
               percentage={0}
@@ -54,7 +54,7 @@ const Dashboard = () => {
               iconBgColor="bg-orange-500/20"
               className="flex-1"
             />
-            <StatCard 
+            <AdminStatCard 
               title="At-Risk Students" 
               value="0" 
               percentage={0}
