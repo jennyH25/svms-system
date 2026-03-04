@@ -15,7 +15,7 @@ const Login = () => {
   // Dummy accounts
   const ADMIN_USERNAME = 'admin';
   const ADMIN_PASSWORD = 'admin123';
-  const STUDENT_USERNAME = 'stu-2026';
+  const STUDENT_USERNAME = 'student';
   const STUDENT_PASSWORD = 'student123';
 
   const handleLogin = (e) => {
