@@ -22,7 +22,6 @@ import {
 } from "../../components/ui/dropdown-menu";
 import Modal, { ModalFooter, ModalDivider } from "../../components/ui/Modal";
 
-
 const UserManagement = () => {
   const [activeTab, setActiveTab] = useState("regular");
   const [selectedProgram, setSelectedProgram] = useState("");
@@ -30,11 +29,9 @@ const UserManagement = () => {
   const [selectedSection, setSelectedSection] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
-
 
   const emptyUser = {
     id: null,
@@ -46,9 +43,7 @@ const UserManagement = () => {
     violationCount: 0,
   };
 
-
   const [newUser, setNewUser] = useState(emptyUser);
-
 
   // Sample student data
   const [studentData, setStudentData] = useState([
@@ -174,7 +169,6 @@ const UserManagement = () => {
     },
   ]);
 
-
   // Filters
   const filteredStudents = useMemo(() => {
     return studentData.filter((student) => {
@@ -183,7 +177,6 @@ const UserManagement = () => {
       if (activeTab === "irregular" && student.status !== "Irregular")
         return false;
 
-
       // Program filter
       if (
         selectedProgram &&
@@ -191,20 +184,17 @@ const UserManagement = () => {
       )
         return false;
 
-
       // Year filter
       if (selectedYear) {
         const studentYear = student.yearSection.charAt(0);
         if (studentYear !== selectedYear) return false;
       }
 
-
       // Section filter
       if (selectedSection) {
         const studentSection = student.yearSection.slice(1).toLowerCase();
         if (studentSection !== selectedSection.toLowerCase()) return false;
       }
-
 
       // Search query
       if (searchQuery) {
@@ -217,7 +207,6 @@ const UserManagement = () => {
         );
       }
 
-
       return true;
     });
   }, [
@@ -229,20 +218,17 @@ const UserManagement = () => {
     searchQuery,
   ]);
 
-
   const statistics = useMemo(() => {
     const total = filteredStudents.length;
     const withViolations = filteredStudents.filter(
-      (s) => s.violationCount > 0
+      (s) => s.violationCount > 0,
     ).length;
     const highRisk = filteredStudents.filter(
-      (s) => s.violationCount >= 5
+      (s) => s.violationCount >= 5,
     ).length;
-
 
     return { total, withViolations, highRisk };
   }, [filteredStudents]);
-
 
   const columns = [
     {
@@ -258,9 +244,7 @@ const UserManagement = () => {
     {
       key: "studentName",
       label: "Student Name",
-      render: (value) => (
-        <span className="text-white font-bold">{value}</span>
-      ),
+      render: (value) => <span className="text-gray font-bold">{value}</span>,
     },
     { key: "program", label: "Program" },
     { key: "yearSection", label: "Year/Section" },
@@ -283,10 +267,7 @@ const UserManagement = () => {
     },
   ];
 
-
   const actions = [
-
-
     {
       label: "Edit",
       icon: <Edit className="w-4 h-4" />,
@@ -303,7 +284,7 @@ const UserManagement = () => {
           window.confirm(`Are you sure you want to delete ${row.studentName}?`)
         ) {
           setStudentData((prev) =>
-            prev.filter((student) => student.id !== row.id)
+            prev.filter((student) => student.id !== row.id),
           );
         }
       },
@@ -311,12 +292,10 @@ const UserManagement = () => {
     },
   ];
 
-
   const tabs = [
     { key: "regular", label: "Regular" },
     { key: "irregular", label: "Irregular" },
   ];
-
 
   const resetFilters = () => {
     setSelectedProgram("");
@@ -325,7 +304,6 @@ const UserManagement = () => {
     setSearchQuery("");
     setActiveTab("regular");
   };
-
 
   return (
     <div className="text-white relative">
@@ -359,11 +337,9 @@ const UserManagement = () => {
         </div>
       </AnimatedContent>
 
-
       <AnimatedContent distance={40} delay={0.1}>
         <p className="text-white font-semibold mb-4">S.Y. 2025-2026</p>
       </AnimatedContent>
-
 
       <AnimatedContent distance={40} delay={0.2}>
         <div className="flex items-center gap-3 mb-4 flex-wrap">
@@ -373,7 +349,6 @@ const UserManagement = () => {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
-
 
           {/* Program Dropdown */}
           <DropdownMenu>
@@ -401,7 +376,6 @@ const UserManagement = () => {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-
 
           {/* Year Dropdown */}
           <DropdownMenu>
@@ -433,7 +407,6 @@ const UserManagement = () => {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-
 
           {/* Section Dropdown */}
           <DropdownMenu>
@@ -471,7 +444,6 @@ const UserManagement = () => {
             </DropdownMenuContent>
           </DropdownMenu>
 
-
           {(selectedProgram ||
             selectedYear ||
             selectedSection ||
@@ -489,7 +461,6 @@ const UserManagement = () => {
         </div>
       </AnimatedContent>
 
-
       <AnimatedContent distance={40} delay={0.3}>
         <TableTabs
           tabs={tabs}
@@ -498,7 +469,6 @@ const UserManagement = () => {
           className="mb-4"
         />
       </AnimatedContent>
-
 
       <AnimatedContent distance={40} delay={0.4}>
         <div className="flex items-center justify-between mb-4 flex-wrap gap-4">
@@ -549,11 +519,13 @@ const UserManagement = () => {
         </div>
       </AnimatedContent>
 
-
       <AnimatedContent distance={40} delay={0.5}>
-        <DataTable columns={columns} data={filteredStudents} actions={actions} />
+        <DataTable
+          columns={columns}
+          data={filteredStudents}
+          actions={actions}
+        />
       </AnimatedContent>
-
 
       {/* Add Modal */}
       <Modal
@@ -577,7 +549,6 @@ const UserManagement = () => {
             />
           </div>
 
-
           {/* Student ID */}
           <div>
             <label className="text-sm text-gray-300">Student ID</label>
@@ -591,7 +562,6 @@ const UserManagement = () => {
               placeholder="Enter student ID"
             />
           </div>
-
 
           {/* Program */}
           <div>
@@ -608,7 +578,6 @@ const UserManagement = () => {
             </select>
           </div>
 
-
           {/* Year/Section */}
           <div>
             <label className="text-sm text-gray-300">Year/Section</label>
@@ -622,7 +591,6 @@ const UserManagement = () => {
               placeholder="e.g., 3A"
             />
           </div>
-
 
           {/* Status */}
           <div>
@@ -640,9 +608,7 @@ const UserManagement = () => {
           </div>
         </div>
 
-
         <ModalDivider />
-
 
         <ModalFooter>
           <button
@@ -651,7 +617,6 @@ const UserManagement = () => {
           >
             Cancel
           </button>
-
 
           <button
             onClick={() => {
@@ -671,7 +636,6 @@ const UserManagement = () => {
           </button>
         </ModalFooter>
       </Modal>
-
 
       {/* Edit Modal */}
       <Modal
@@ -699,7 +663,6 @@ const UserManagement = () => {
                 />
               </div>
 
-
               {/* Student ID */}
               <div>
                 <label className="text-sm text-gray-300">Student ID</label>
@@ -715,7 +678,6 @@ const UserManagement = () => {
                   className="w-full mt-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white focus:ring-2 focus:ring-[#4A9B9B] focus:outline-none"
                 />
               </div>
-
 
               {/* Program Dropdown */}
               <div>
@@ -735,7 +697,6 @@ const UserManagement = () => {
                 </select>
               </div>
 
-
               {/* Year / Section */}
               <div>
                 <label className="text-sm text-gray-300">Year/Section</label>
@@ -751,7 +712,6 @@ const UserManagement = () => {
                   className="w-full mt-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white focus:ring-2 focus:ring-[#4A9B9B] focus:outline-none"
                 />
               </div>
-
 
               {/* Status */}
               <div>
@@ -771,7 +731,6 @@ const UserManagement = () => {
                 </select>
               </div>
 
-
               {/* Violation Count */}
               <div>
                 <label className="text-sm text-gray-300">Violation Count</label>
@@ -790,9 +749,7 @@ const UserManagement = () => {
               </div>
             </div>
 
-
             <ModalDivider />
-
 
             <ModalFooter>
               <button
@@ -802,13 +759,12 @@ const UserManagement = () => {
                 Cancel
               </button>
 
-
               <button
                 onClick={() => {
                   setStudentData((prev) =>
                     prev.map((student) =>
-                      student.id === selectedUser.id ? selectedUser : student
-                    )
+                      student.id === selectedUser.id ? selectedUser : student,
+                    ),
                   );
                   setIsEditOpen(false);
                 }}
@@ -823,6 +779,5 @@ const UserManagement = () => {
     </div>
   );
 };
-
 
 export default UserManagement;
