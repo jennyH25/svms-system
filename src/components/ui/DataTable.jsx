@@ -42,7 +42,7 @@ const DataTable = ({
               </th>
             ))}
             {hasActions && (
-              <th className="text-center py-3 px-4 font-medium w-16"></th>
+              <th className="text-center py-3 px-4 font-medium w-16">Actions</th>
             )}
           </tr>
         </thead>
@@ -50,7 +50,7 @@ const DataTable = ({
           {data.map((row, rowIndex) => (
             <tr 
               key={row.id || rowIndex} 
-              className={`border-b border-gray-100 hover:bg-gray-100 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
+              className={`border-b border-gray-100 hover:bg-gray-100 transition-colors text-[#1a1a1a] ${onRowClick ? 'cursor-pointer' : ''}`}
               onClick={() => onRowClick?.(row)}
             >
               {columns.map((column) => (
@@ -76,14 +76,14 @@ const DataTable = ({
                         <MoreVertical className="w-4 h-4 text-gray-500" />
                       </button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="bg-white border border-gray-200 shadow-lg">
+                    <DropdownMenuContent align="end" className="bg-white border border-gray-200 shadow-lg z-50">
                       {actions.map((action, actionIndex) => (
                         <DropdownMenuItem 
                           key={actionIndex}
-                          className={`flex items-center gap-2 cursor-pointer ${
+                          className={`!flex !items-center !gap-2 !cursor-pointer !px-3 !py-2 !text-sm !outline-none !transition-colors !rounded-lg ${
                             action.variant === 'danger' 
-                              ? 'text-red-600 hover:bg-red-500' 
-                              : 'text-gray-700 hover:bg-gray-100'
+                              ? '!text-red-600 data-[highlighted]:!bg-gray-200' 
+                              : '!text-gray-700 data-[highlighted]:!bg-gray-200'
                           }`}
                           onClick={() => action.onClick?.(row)}
                         >
@@ -101,8 +101,8 @@ const DataTable = ({
       </table>
       
       {data.length === 0 && (
-        <div className="py-12 text-center text-gray-500 text-lg font-semibold">
-          No results found
+        <div className="py-12 text-center text-gray-500">
+          No data available
         </div>
       )}
     </div>
