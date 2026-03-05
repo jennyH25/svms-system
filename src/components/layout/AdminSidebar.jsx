@@ -5,7 +5,7 @@ import logo from '../../assets/css_logo.png'
 const Sidebar = () => {
   const menuItems = [
     { 
-      path: '/', 
+      path: '/admin', 
       label: 'Dashboard',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -14,7 +14,7 @@ const Sidebar = () => {
       )
     },
     { 
-      path: '/user-management', 
+      path: '/admin/user-management', 
       label: 'User Management',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -23,7 +23,7 @@ const Sidebar = () => {
       )
     },
     { 
-      path: '/student-violation', 
+      path: '/admin/student-violation', 
       label: 'Student Violation',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -32,7 +32,7 @@ const Sidebar = () => {
       )
     },
     { 
-      path: '/violations', 
+      path: '/admin/violations', 
       label: 'Violations',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -41,7 +41,7 @@ const Sidebar = () => {
       )
     },
     { 
-      path: '/archives', 
+      path: '/admin/archives', 
       label: 'Archives',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -50,7 +50,7 @@ const Sidebar = () => {
       )
     },
     { 
-      path: '/settings', 
+      path: '/admin/settings', 
       label: 'Settings',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

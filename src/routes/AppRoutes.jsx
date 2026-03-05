@@ -21,12 +21,15 @@ const AppRoutes = () => {
   return (
     <Routes>
 
+      {/* DEFAULT */}
+      <Route path="/" element={<Navigate to="/login" replace />} />
+
       {/* AUTH */}
       <Route path="/login" element={<Login />} />
       <Route path="/student/login" element={<Login />} />
 
       {/* ================= ADMIN ROUTES ================= */}
-      <Route path="/" element={<AdminLayout />}>
+      <Route path="/admin" element={<AdminLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="user-management" element={<UserManagement />} />
         <Route path="student-violation" element={<StudentViolation />} />

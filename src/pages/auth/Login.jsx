@@ -22,7 +22,7 @@ const Login = () => {
     e.preventDefault();
     setError('');
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-      navigate('/');
+      navigate('/admin');
     } else if (username === STUDENT_USERNAME && password === STUDENT_PASSWORD) {
       navigate('/student/dashboard');
     } else {
