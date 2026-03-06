@@ -498,14 +498,6 @@ const Dashboard = () => {
               },
             ]}
             data={recentActivity}
-            actions={[
-              {
-                label: "Delete",
-                icon: <Trash2 className="w-4 h-4" />,
-                variant: "danger",
-                onClick: (row) => console.log("Delete", row),
-              },
-            ]}
             onRowClick={(row) => console.log("Row clicked", row)}
           />
         </Card>
