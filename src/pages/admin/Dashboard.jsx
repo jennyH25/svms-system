@@ -537,9 +537,9 @@ const Dashboard = () => {
           </DropdownMenu>
           <button
             className="bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-medium px-4 py-2 rounded-lg border border-cyan-700 shadow transition-colors h-10"
-            onClick={() => {/* Add generate logic here */}}
+            onClick={() => {/* Add export logic here */}}
           >
-            Generate
+            Export
           </button>
         </div>
         {/* Chart Area */}
@@ -631,7 +631,7 @@ const Dashboard = () => {
               document.body.removeChild(link);
             }}
           >
-            Generate
+            Export
           </button>
         </div>
         {/* Filter Row */}
