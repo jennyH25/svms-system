@@ -6,6 +6,7 @@ import {
   ViewStudentsButton,
 } from "../../components/ui/QuickActionButton";
 import AnimatedContent from "../../components/ui/AnimatedContent";
+import Modal from "../../components/ui/Modal";
 import DataTable, {
   TableCellText,
   TableCellDateTime,
@@ -267,11 +268,11 @@ const Dashboard = () => {
           {/* Action Buttons */}
           <div className="flex flex-col gap-4">
             <AddViolationButton
-              onClick={() => console.log("Add Violation")}
+              onClick={() => window.location.href = "/admin/student-violation"}
               className="flex-1"
             />
             <ViewStudentsButton
-              onClick={() => console.log("View Students")}
+              onClick={() => window.location.href = "/admin/user-management"}
               className="flex-1"
             />
           </div>
@@ -317,7 +318,7 @@ const Dashboard = () => {
                   className="text-gray-400 hover:text-white transition-colors"
                   onClick={() => setTrendModalOpen(true)}
                 >
-                  <Maximize2 className="w-5 h-5" />
+                  <Maximize2 className="ml-5 w-5 h-5" />
                 </button>
               </div>
             </div>
@@ -512,367 +513,254 @@ const Dashboard = () => {
 
       {/* Modals */}
       {/* Violation Trends Modal */}
-      {trendModalOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50"
-          onClick={() => setTrendModalOpen(false)}
-        >
-          <div
-            className="bg-[#0f172a]/95 border border-white/10 rounded-xl shadow-xl p-6 w-[75%] max-h-[80vh] overflow-y-auto transform scale-100 opacity-100 transition-all duration-300"
-            onClick={(e) => e.stopPropagation()}
+      <Modal
+        isOpen={trendModalOpen}
+        onClose={() => setTrendModalOpen(false)}
+        title={"Violation Trends Over the Semester"}
+        size="2xl"
+        className="max-w-[1100px] max-h-[80vh] overflow-y-auto scrollbar-hide"
+      >
+        <p className="text-sm text-gray-400 mb-4">This chart visualizes violation trends for the selected semester.</p>
+        {/* Semester Dropdown & Actions */}
+        <div className="flex items-center gap-2 mb-6">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-4 py-2 rounded-lg border border-white/10 h-10">
+                {selectedSemester}
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setSelectedSemester("1st Sem")}>1st Sem</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSelectedSemester("2nd Sem")}>2nd Sem</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <button
+            className="bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-medium px-4 py-2 rounded-lg border border-cyan-700 shadow transition-colors h-10"
+            onClick={() => {/* Add generate logic here */}}
           >
-            {/* Header */}
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-semibold text-white">
-                Violation Trends Over the Semester
-              </h2>
-              <div className="flex items-center gap-2">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-3 py-1.5 rounded-lg border border-white/10">
-                      {selectedSemester}
-                      <ChevronDown className="w-4 h-4" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={() => setSelectedSemester("1st Sem")}
-                    >
-                      1st Sem
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setSelectedSemester("2nd Sem")}
-                    >
-                      2nd Sem
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <button className="text-gray-400 hover:text-white transition-colors">
-                  <Download className="w-5 h-5" />
-                </button>
-                <button
-                  className="text-gray-400 hover:text-white transition-colors"
-                  onClick={() => setTrendModalOpen(false)}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Chart Area */}
-            <div className="h-[320px] flex items-end justify-between px-4 relative mb-6">
-              <svg
-                className="w-full h-full absolute inset-0"
-                preserveAspectRatio="none"
-              >
-                <defs>
-                  <linearGradient
-                    id="modalLineGradient"
-                    x1="0%"
-                    y1="0%"
-                    x2="100%"
-                    y2="0%"
-                  >
-                    <stop offset="0%" stopColor="#06b6d4" />
-                    <stop offset="100%" stopColor="#06b6d4" />
-                  </linearGradient>
-                </defs>
-                <path
-                  d="M 10 140 Q 100 120, 150 130 T 250 80 T 350 90 T 450 60 T 550 75 T 650 50 T 750 65 T 850 55 T 950 70"
-                  fill="none"
-                  stroke="url(#modalLineGradient)"
-                  strokeWidth="2"
-                />
-                <circle
-                  cx="150"
-                  cy="130"
-                  r="6"
-                  fill="#fff"
-                  stroke="#06b6d4"
-                  strokeWidth="2"
-                />
-                <circle
-                  cx="250"
-                  cy="80"
-                  r="6"
-                  fill="#fff"
-                  stroke="#06b6d4"
-                  strokeWidth="2"
-                />
-                <circle
-                  cx="450"
-                  cy="60"
-                  r="6"
-                  fill="#fff"
-                  stroke="#06b6d4"
-                  strokeWidth="2"
-                />
-                <circle
-                  cx="650"
-                  cy="50"
-                  r="6"
-                  fill="#fff"
-                  stroke="#06b6d4"
-                  strokeWidth="2"
-                />
-                <circle
-                  cx="850"
-                  cy="55"
-                  r="6"
-                  fill="#fff"
-                  stroke="#06b6d4"
-                  strokeWidth="2"
-                />
-              </svg>
-              <div className="absolute bottom-0 left-0 right-0 flex justify-between text-muted px-2">
-                <span>Jan</span>
-                <span>Feb</span>
-                <span>Mar</span>
-                <span>Apr</span>
-                <span>May</span>
-                <span>Jun</span>
-              </div>
-            </div>
-
-            {/* Analytics Description */}
-            <div className="bg-white/5 border border-white/10 rounded-lg p-4 text-sm text-gray-300">
-              This chart visualizes the trend of recorded student violations
-              throughout the selected semester. Administrators can analyze
-              patterns of misconduct over time and identify months where
-              violations increase, allowing earlier intervention strategies.
-            </div>
+            Generate
+          </button>
+        </div>
+        {/* Chart Area */}
+        <div className="h-[320px] flex items-end justify-between px-4 relative mb-6">
+          <svg className="w-full h-full absolute inset-0" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="modalLineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#06b6d4" />
+                <stop offset="100%" stopColor="#06b6d4" />
+              </linearGradient>
+            </defs>
+            <path
+              d="M 10 140 Q 100 120, 150 130 T 250 80 T 350 90 T 450 60 T 550 75 T 650 50 T 750 65 T 850 55 T 950 70"
+              fill="none"
+              stroke="url(#modalLineGradient)"
+              strokeWidth="2"
+            />
+            <circle cx="150" cy="130" r="6" fill="#fff" stroke="#06b6d4" strokeWidth="2" />
+            <circle cx="250" cy="80" r="6" fill="#fff" stroke="#06b6d4" strokeWidth="2" />
+            <circle cx="450" cy="60" r="6" fill="#fff" stroke="#06b6d4" strokeWidth="2" />
+            <circle cx="650" cy="50" r="6" fill="#fff" stroke="#06b6d4" strokeWidth="2" />
+            <circle cx="850" cy="55" r="6" fill="#fff" stroke="#06b6d4" strokeWidth="2" />
+          </svg>
+          <div className="absolute bottom-0 left-0 right-0 flex justify-between text-muted px-2">
+            <span>Jan</span>
+            <span>Feb</span>
+            <span>Mar</span>
+            <span>Apr</span>
+            <span>May</span>
+            <span>Jun</span>
           </div>
         </div>
-      )}
+        {/* Analytics Description */}
+        <div className="bg-white/5 border border-white/10 rounded-lg p-4 text-sm text-gray-300">
+          This chart visualizes the trend of recorded student violations throughout the selected semester. Administrators can analyze patterns of misconduct over time and identify months where violations increase, allowing earlier intervention strategies.
+        </div>
+      </Modal>
 
       {/* Student Violation Ranking Modal */}
-      {rankingModalOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50"
-          onClick={() => setRankingModalOpen(false)}
-        >
-          <div
-            className="bg-[#0f172a]/95 border border-white/10 rounded-xl shadow-xl p-6 w-[75%] max-h-[80vh] overflow-y-auto transform scale-100 opacity-100 transition-all duration-300"
-            onClick={(e) => e.stopPropagation()}
+      <Modal
+        isOpen={rankingModalOpen}
+        onClose={() => setRankingModalOpen(false)}
+        title={"Student Violation Ranking"}
+        size="2xl"
+        className="max-w-[1100px] max-h-[80vh] overflow-y-auto scrollbar-hide"
+      >
+        <div className="flex items-center justify-between mb-6">
+          <p className="text-sm text-gray-400">This list shows the ranking of students based on recorded violations.</p>
+          <button
+            className="bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-medium px-4 py-2 rounded-lg border border-cyan-700 shadow transition-colors"
+            onClick={() => {
+              // Export functionality - create CSV from filtered data
+              const csvContent = [
+                [
+                  "Rank",
+                  "Student Name",
+                  "ID",
+                  "Program",
+                  "Year",
+                  "Section",
+                  "Total Violations",
+                ],
+                ...filteredRankingData.map((student) => [
+                  student.rank,
+                  student.name,
+                  student.id,
+                  student.program,
+                  student.year,
+                  student.section,
+                  student.violations,
+                ]),
+              ]
+                .map((row) => row.join(","))
+                .join("\n");
+
+              const blob = new Blob([csvContent], {
+                type: "text/csv;charset=utf-8;",
+              });
+              const link = document.createElement("a");
+              const url = URL.createObjectURL(blob);
+              link.setAttribute("href", url);
+              link.setAttribute(
+                "download",
+                `student_violation_ranking_${new Date().toISOString().split("T")[0]}.csv`,
+              );
+              link.style.visibility = "hidden";
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            }}
           >
-            {/* Header */}
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-semibold text-white">
-                Student Violation Ranking
-              </h2>
-              <div className="flex items-center gap-2">
-                <button
-                  className="text-gray-400 hover:text-white transition-colors"
-                  onClick={() => {
-                    // Export functionality - create CSV from filtered data
-                    const csvContent = [
-                      [
-                        "Rank",
-                        "Student Name",
-                        "ID",
-                        "Program",
-                        "Year",
-                        "Section",
-                        "Total Violations",
-                      ],
-                      ...filteredRankingData.map((student) => [
-                        student.rank,
-                        student.name,
-                        student.id,
-                        student.program,
-                        student.year,
-                        student.section,
-                        student.violations,
-                      ]),
-                    ]
-                      .map((row) => row.join(","))
-                      .join("\n");
+            Generate
+          </button>
+        </div>
+        {/* Filter Row */}
+        <div className="flex gap-3 mb-6">
+          <SearchBar
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by student name"
+            className="flex-1"
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-3 py-2 rounded-lg border border-white/10 whitespace-nowrap">
+                Program: {programFilter}
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setProgramFilter("All")}>All</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setProgramFilter("BSIT")}>BSIT</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setProgramFilter("BSCS")}>BSCS</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-3 py-2 rounded-lg border border-white/10 whitespace-nowrap">
+                Year: {yearLevelFilter}
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setYearLevelFilter("All")}>All</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setYearLevelFilter("1")}>1</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setYearLevelFilter("2")}>2</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setYearLevelFilter("3")}>3</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setYearLevelFilter("4")}>4</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-3 py-2 rounded-lg border border-white/10 whitespace-nowrap">
+                Section: {sectionFilter}
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setSectionFilter("All")}>All</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSectionFilter("A")}>A</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSectionFilter("B")}>B</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSectionFilter("C")}>C</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSectionFilter("D")}>D</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSectionFilter("E")}>E</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        {/* Ranking List Section */}
+        <div className="space-y-4">
+          {filteredRankingData.length > 0 ? (
+            filteredRankingData.map((student) => {
+              const textSize =
+                student.rank === "01"
+                  ? "text-lg font-semibold"
+                  : student.rank === "02"
+                    ? "text-base font-medium"
+                    : student.rank === "03"
+                      ? "text-[15px] font-medium"
+                      : "text-[15px]";
+              const rankNumSize =
+                student.rank === "01"
+                  ? "text-lg font-bold text-white"
+                  : student.rank === "02"
+                    ? "text-base font-semibold text-gray-300"
+                    : student.rank === "03"
+                      ? "text-[15px] font-medium text-gray-400"
+                      : "text-[15px] text-gray-400";
+              const barHeight =
+                student.rank === "01"
+                  ? "h-3"
+                  : student.rank === "02"
+                    ? "h-2.5"
+                    : "h-2";
 
-                    const blob = new Blob([csvContent], {
-                      type: "text/csv;charset=utf-8;",
-                    });
-                    const link = document.createElement("a");
-                    const url = URL.createObjectURL(blob);
-                    link.setAttribute("href", url);
-                    link.setAttribute(
-                      "download",
-                      `student_violation_ranking_${new Date().toISOString().split("T")[0]}.csv`,
-                    );
-                    link.style.visibility = "hidden";
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                  }}
+              return (
+                <div
+                  key={student.rank}
+                  className="border-b border-white/5 pb-4 last:border-b-0"
                 >
-                  <Download className="w-5 h-5" />
-                </button>
-                <button
-                  className="text-gray-400 hover:text-white transition-colors"
-                  onClick={() => setRankingModalOpen(false)}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Filter Row */}
-            <div className="flex gap-3 mb-6">
-              <SearchBar
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by student name"
-                className="flex-1"
-              />
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-3 py-2 rounded-lg border border-white/10 whitespace-nowrap">
-                    Program: {programFilter}
-                    <ChevronDown className="w-4 h-4" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setProgramFilter("All")}>
-                    All
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setProgramFilter("BSIT")}>
-                    BSIT
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setProgramFilter("BSCS")}>
-                    BSCS
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-3 py-2 rounded-lg border border-white/10 whitespace-nowrap">
-                    Year: {yearLevelFilter}
-                    <ChevronDown className="w-4 h-4" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setYearLevelFilter("All")}>
-                    All
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setYearLevelFilter("1")}>
-                    1
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setYearLevelFilter("2")}>
-                    2
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setYearLevelFilter("3")}>
-                    3
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setYearLevelFilter("4")}>
-                    4
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-3 py-2 rounded-lg border border-white/10 whitespace-nowrap">
-                    Section: {sectionFilter}
-                    <ChevronDown className="w-4 h-4" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setSectionFilter("All")}>
-                    All
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSectionFilter("A")}>
-                    A
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSectionFilter("B")}>
-                    B
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSectionFilter("C")}>
-                    C
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSectionFilter("D")}>
-                    D
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSectionFilter("E")}>
-                    E
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-
-            {/* Ranking List Section */}
-            <div className="space-y-4">
-              {filteredRankingData.length > 0 ? (
-                filteredRankingData.map((student) => {
-                  const textSize =
-                    student.rank === "01"
-                      ? "text-lg font-semibold"
-                      : student.rank === "02"
-                        ? "text-base font-medium"
-                        : student.rank === "03"
-                          ? "text-[15px] font-medium"
-                          : "text-[15px]";
-                  const rankNumSize =
-                    student.rank === "01"
-                      ? "text-lg font-bold text-white"
-                      : student.rank === "02"
-                        ? "text-base font-semibold text-gray-300"
-                        : student.rank === "03"
-                          ? "text-[15px] font-medium text-gray-400"
-                          : "text-[15px] text-gray-400";
-                  const barHeight =
-                    student.rank === "01"
-                      ? "h-3"
-                      : student.rank === "02"
-                        ? "h-2.5"
-                        : "h-2";
-
-                  return (
-                    <div
-                      key={student.rank}
-                      className="border-b border-white/5 pb-4 last:border-b-0"
-                    >
-                      {/* Rank and Name */}
-                      <div className="flex items-start gap-3 mb-2">
-                        <span className={rankNumSize}>{student.rank}</span>
-                        <div>
-                          <p className={textSize}>{student.name}</p>
-                          <p className="text-[12px] text-gray-400 mt-0.5">
-                            Program: {student.program} | Year: {student.year} |
-                            Section: {student.section}
-                          </p>
-                        </div>
-                      </div>
-                      {/* Progress Bar */}
-                      <div className="flex items-center gap-2 ml-7">
-                        <div
-                          className={`flex-1 bg-white/10 rounded-full ${barHeight}`}
-                        >
-                          <div
-                            className={`${student.color} ${barHeight} rounded-full`}
-                            style={{
-                              width: `${(student.violations / 6) * 100}%`,
-                            }}
-                          />
-                        </div>
-                        <span className="text-[13px] bg-white/10 px-2 py-1 rounded min-w-[28px] text-center">
-                          {student.violations}
-                        </span>
-                      </div>
+                  {/* Rank and Name */}
+                  <div className="flex items-start gap-3 mb-2">
+                    <span className={rankNumSize}>{student.rank}</span>
+                    <div>
+                      <p className={textSize}>{student.name}</p>
+                      <p className="text-[12px] text-gray-400 mt-0.5">
+                        Program: {student.program} | Year: {student.year} |
+                        Section: {student.section}
+                      </p>
                     </div>
-                  );
-                })
-              ) : (
-                <div className="text-center py-12">
-                  <div className="text-gray-400 text-lg mb-2">
-                    No students found
                   </div>
-                  <div className="text-gray-500 text-sm">
-                    Try adjusting your search or filter criteria
+                  {/* Progress Bar */}
+                  <div className="flex items-center gap-2 ml-7">
+                    <div
+                      className={`flex-1 bg-white/10 rounded-full ${barHeight}`}
+                    >
+                      <div
+                        className={`${student.color} ${barHeight} rounded-full`}
+                        style={{
+                          width: `${(student.violations / 6) * 100}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="text-[13px] bg-white/10 px-2 py-1 rounded min-w-[28px] text-center">
+                      {student.violations}
+                    </span>
                   </div>
                 </div>
-              )}
+              );
+            })
+          ) : (
+            <div className="text-center py-12">
+              <div className="text-gray-400 text-lg mb-2">
+                No students found
+              </div>
+              <div className="text-gray-500 text-sm">
+                Try adjusting your search or filter criteria
+              </div>
             </div>
-          </div>
+          )}
         </div>
-      )}
+      </Modal>
     </div>
   );
 };
