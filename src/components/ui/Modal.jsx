@@ -21,24 +21,35 @@ const Modal = ({
   showCloseButton = true,
   className = '' 
 }) => {
+  // Animation state
+  const [visible, setVisible] = React.useState(false);
+
   // Handle escape key
   useEffect(() => {
     const handleEscape = (e) => {
-      if (e.key === 'Escape') onClose?.()
-    }
-    
+      if (e.key === 'Escape') onClose?.();
+    };
     if (isOpen) {
-      document.addEventListener('keydown', handleEscape)
-      document.body.style.overflow = 'hidden'
+      document.addEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'hidden';
     }
-    
     return () => {
-      document.removeEventListener('keydown', handleEscape)
-      document.body.style.overflow = 'unset'
-    }
-  }, [isOpen, onClose])
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen, onClose]);
 
-  if (!isOpen) return null
+  React.useEffect(() => {
+    if (isOpen) {
+      setVisible(true);
+    } else {
+      // Delay unmount for animation
+      const timeout = setTimeout(() => setVisible(false), 200);
+      return () => clearTimeout(timeout);
+    }
+  }, [isOpen]);
+
+  if (!isOpen && !visible) return null;
 
   const sizes = {
     sm: 'max-w-sm',
@@ -46,18 +57,17 @@ const Modal = ({
     lg: 'max-w-lg',
     xl: 'max-w-xl',
     '2xl': 'max-w-2xl',
-  }
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className={`fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/50 backdrop-blur-md"
+        className={`absolute inset-0 bg-black/50 backdrop-blur-md transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0'}`}
         onClick={onClose}
       />
-      
       {/* Modal Content */}
-      <div className={`relative w-full ${sizes[size]} mx-4 bg-gradient-to-br from-[#2a2d35]/80 to-[#1a1c20]/80 backdrop-blur-2xl border border-white/20 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.4)] ring-1 ring-inset ring-white/10 ${className}`}>
+      <div className={`relative w-full ${sizes[size]} mx-4 bg-gradient-to-br from-[#2a2d35]/80 to-[#1a1c20]/80 backdrop-blur-2xl border border-white/20 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.4)] ring-1 ring-inset ring-white/10 ${className} transform transition-transform duration-300 ${isOpen ? 'scale-100 translate-y-0' : 'scale-95 translate-y-4'}`}>
         {/* Header */}
         {(title || showCloseButton) && (
           <div className="flex items-center justify-between px-6 pt-6 pb-4">
@@ -74,7 +84,6 @@ const Modal = ({
             )}
           </div>
         )}
-        
         {/* Body */}
         <div className="px-6 pb-6">
           {children}
