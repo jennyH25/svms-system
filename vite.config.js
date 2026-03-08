@@ -11,6 +11,13 @@ export default defineConfig({
         target: "http://localhost:3001",
         changeOrigin: true,
       },
+      // route static uploads to the backend as well so that logos appear
+      // correctly during development (vite itself doesn't serve the
+      // server/uploads folder).
+      "/uploads": {
+        target: "http://localhost:3001",
+        changeOrigin: true,
+      },
     },
   },
   resolve: {

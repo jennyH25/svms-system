@@ -1,8 +1,18 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
 import logo from "../../assets/css_logo.png";
+import { useSettings } from "../../context/SettingsContext";
 
 const StudentSidebar = () => {
+  const { settings } = useSettings();
+  
+  // Parse the display name to show first two words in bold
+  const displayName = settings?.displayName || "Student Violation Management System";
+  const nameParts = displayName.split(" ").filter(Boolean);
+  const firstTwoWords = nameParts.slice(0, 2).join(" ") || "";
+  const secondLine = nameParts[2] || "";
+  const thirdLine = nameParts[3] || "";
+
   const menuItems = [
     {
       path: "/student",
@@ -51,16 +61,15 @@ const StudentSidebar = () => {
       {/* Logo */}
       <div className="mb-12">
         <img
-          src={logo}
-          alt="CSS Logo"
-          className="h-14 mt-4 mb-4 object-contain"
+          src={settings?.logoPath || logo}
+          alt="System Logo"
+          className="h-[8.5rem] mt-4 mb-4 object-contain"
         />
         <h1 className="text-xl font-extrabold leading-tight">
-          Student Portal
+          {firstTwoWords}
         </h1>
-        <p className="text-gray-500 text-base">
-          Violation Monitoring
-        </p>
+        {secondLine && <p className="text-white">{secondLine}</p>}
+        {thirdLine && <p className="text-white">{thirdLine}</p>}
       </div>
 
       {/* Navigation */}

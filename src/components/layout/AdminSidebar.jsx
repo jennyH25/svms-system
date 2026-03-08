@@ -1,8 +1,18 @@
 import React from 'react'
 import { NavLink } from 'react-router-dom'
 import logo from '../../assets/css_logo.png'
+import { useSettings } from '../../context/SettingsContext'
 
 const Sidebar = () => {
+  const { settings, loading } = useSettings()
+  
+  // Parse the display name to show first two words in bold
+  const displayName = settings?.displayName || 'Student Violation Management System'
+  const nameParts = displayName.split(' ').filter(Boolean)
+  const firstTwoWords = nameParts.slice(0, 2).join(' ') || ''
+  const secondLine = nameParts[2] || ''
+  const thirdLine = nameParts[3] || ''
+
   const menuItems = [
     { 
       path: '/admin', 
@@ -65,11 +75,12 @@ const Sidebar = () => {
     <aside className="w-60 h-screen sticky top-0 bg-gradient-to-b from-[#1A1C1F] to-[#232528] text-white p-6 font-inter">
       {/* Logo/Brand */}  
       <div className="mb-12">
-        <img src={logo} alt="CSS Logo" className="h-14 mt-4 mb-4 object-contain" />
+        <img src={settings?.logoPath || logo} alt="System Logo" className="h-[8.5rem] mt-4 mb-4 object-contain" />
         <h1 className="text-xl font-extrabold leading-tight text-white">
-          Student Violation
+          {firstTwoWords}
         </h1>
-        <p className="text-gray-500 text-base">Management System</p>
+        {secondLine && <p className="text-white">{secondLine}</p>}
+        {thirdLine && <p className="text-white">{thirdLine}</p>}
       </div>
 
       {/* Navigation */}

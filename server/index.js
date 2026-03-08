@@ -4,6 +4,8 @@ import cors from "cors";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import nodemailer from "nodemailer";
+import multer from "multer";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -15,7 +17,9 @@ import {
   syncAuthDatabase,
   syncStudentsFromUsers,
   syncStudentsDatabase,
+  syncSystemSettingsDatabase,
 } from "./db.js";
+import { encryptImagePath, decryptImagePath } from "./encryption.js";
 
 const app = express();
 const port = Number(process.env.API_PORT || process.env.PORT || 3001);
@@ -198,6 +202,40 @@ async function generateStudentUsername(pool, firstName, lastName) {
 function generateTemporaryPassword() {
   return crypto.randomBytes(6).toString("base64url");
 }
+
+// Ensure uploads directory exists
+const uploadsDir = path.join(path.dirname(__filename), "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Multer configuration for file uploads with diskStorage
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    const name = path.basename(file.originalname, ext);
+    cb(null, `${name}-${uniqueSuffix}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage: storage,
+  fileFilter: (_req, file, cb) => {
+    // Accept any image MIME type
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed.'));
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+});
 
 app.use(cors());
 app.use(express.json());
@@ -1264,7 +1302,273 @@ app.delete("/api/students/:id", async (req, res) => {
   }
 });
 
+// ==================== SYSTEM SETTINGS API ====================
+
+// GET system settings
+app.get("/api/settings", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const result = await pool.query(
+      `SELECT id, setting_key, display_name, logo_path, theme, theme_color, updated_at
+       FROM "SystemSettings"
+       WHERE setting_key = 'system_config'
+       LIMIT 1`
+    );
+
+    if (!result.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "System settings not found.",
+      });
+    }
+
+    const settings = result.rows[0];
+    let decryptedLogoPath = null;
+    if (settings.logo_path) {
+      // try to decrypt; if result looks like a valid uploads path we use it.
+      const tried = decryptImagePath(settings.logo_path);
+      if (tried && tried.startsWith("/uploads")) {
+        decryptedLogoPath = tried;
+        // if the stored value wasn't already the encrypted form of the path,
+        // replace it so future fetches don't need to decrypt again. this also
+        // upgrades any records that were accidentally saved unencrypted.
+        const shouldReencrypt = settings.logo_path !== encryptImagePath(tried);
+        if (shouldReencrypt) {
+          await pool.query(
+            `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+            [encryptImagePath(tried), settings.id]
+          );
+        }
+      } else {
+        // decryption failed (old key issue) or the stored value wasn't an
+        // uploads path at all; null out so UI doesn't try to render it.
+        decryptedLogoPath = null;
+      }
+    }
+
+    return res.status(200).json({
+      status: "ok",
+      settings: {
+        id: settings.id,
+        settingKey: settings.setting_key,
+        displayName: settings.display_name || "Student Violation Management System",
+        logoPath: decryptedLogoPath,
+        theme: settings.theme || "dark",
+        themeColor: settings.theme_color || "#000000",
+        updatedAt: settings.updated_at,
+      },
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to fetch settings (${error.message}).`,
+    });
+  }
+});
+
+// POST/PUT system settings (display name and theme)
+app.post("/api/settings", async (req, res) => {
+  const { displayName, theme, themeColor } = req.body ?? {};
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    const result = await pool.query(
+      `UPDATE "SystemSettings"
+       SET display_name = $1, theme = $2, theme_color = $3
+       WHERE setting_key = 'system_config'
+       RETURNING id, setting_key, display_name, logo_path, theme, theme_color, updated_at`,
+      [displayName || "Student Violation Management System", theme || "dark", themeColor || "#000000"]
+    );
+
+    if (!result.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "System settings not found.",
+      });
+    }
+
+    const settings = result.rows[0];
+    let decryptedLogoPath = null;
+    if (settings.logo_path) {
+      const tried = decryptImagePath(settings.logo_path);
+      if (tried && tried.startsWith("/uploads")) {
+        decryptedLogoPath = tried;
+        const shouldReencrypt = settings.logo_path !== encryptImagePath(tried);
+        if (shouldReencrypt) {
+          await pool.query(
+            `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+            [encryptImagePath(tried), settings.id]
+          );
+        }
+      } else {
+        decryptedLogoPath = null;
+      }
+    }
+
+    return res.status(200).json({
+      status: "ok",
+      settings: {
+        id: settings.id,
+        settingKey: settings.setting_key,
+        displayName: settings.display_name,
+        logoPath: decryptedLogoPath,
+        theme: settings.theme,
+        themeColor: settings.theme_color,
+        updatedAt: settings.updated_at,
+      },
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to update settings (${error.message}).`,
+    });
+  }
+});
+
+// POST logo upload
+app.post("/api/settings/logo", (req, res, next) => {
+  // wrap multer so we can catch its errors instead of letting them bubble
+  upload.single("logo")(req, res, (err) => {
+    if (err) {
+      // multer errors are typically fileFilter or limit related
+      return res.status(400).json({
+        status: "error",
+        message: err.message || "Invalid file upload.",
+      });
+    }
+    next();
+  });
+}, async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({
+      status: "error",
+      message: "No file provided.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    // Construct the logo path and encrypt it for the database
+    const logoPath = `/uploads/${req.file.filename}`;
+    const encryptedPath = encryptImagePath(logoPath);
+
+    const result = await pool.query(
+      `UPDATE "SystemSettings"
+       SET logo_path = $1
+       WHERE setting_key = 'system_config'
+       RETURNING id, setting_key, display_name, logo_path, theme, theme_color, updated_at`,
+      [encryptedPath]
+    );
+
+    if (!result.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "System settings not found.",
+      });
+    }
+
+    const settings = result.rows[0];
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Logo uploaded successfully.",
+      settings: {
+        id: settings.id,
+        settingKey: settings.setting_key,
+        displayName: settings.display_name,
+        logoPath: logoPath, // Return the actual (decrypted) path for display
+        theme: settings.theme,
+        themeColor: settings.theme_color,
+        updatedAt: settings.updated_at,
+      },
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to upload logo (${error.message}).`,
+    });
+  }
+});
+
+// DELETE logo
+app.delete("/api/settings/logo", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    const result = await pool.query(
+      `UPDATE "SystemSettings"
+       SET logo_path = NULL
+       WHERE setting_key = 'system_config'
+       RETURNING id, setting_key, display_name, logo_path, theme, theme_color, updated_at`,
+      []
+    );
+
+    if (!result.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "System settings not found.",
+      });
+    }
+
+    const settings = result.rows[0];
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Logo removed successfully.",
+      settings: {
+        id: settings.id,
+        settingKey: settings.setting_key,
+        displayName: settings.display_name,
+        logoPath: null,
+        theme: settings.theme,
+        themeColor: settings.theme_color,
+        updatedAt: settings.updated_at,
+      },
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to remove logo (${error.message}).`,
+    });
+  }
+});
+
 // In production, serve the built frontend from the same Express app.
+app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(distPath));
 
 app.get("/{*path}", (req, res, next) => {
@@ -1285,6 +1589,7 @@ async function ensureAuthDatabaseReady() {
       await syncAuthDatabase({ seedAccounts });
       await syncStudentsDatabase();
       await syncStudentsFromUsers();
+      await syncSystemSettingsDatabase();
     })();
   }
 
