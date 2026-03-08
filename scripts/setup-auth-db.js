@@ -3,12 +3,14 @@ import {
   closeDbPool,
   getSeedAccountsFromEnv,
   syncAuthDatabase,
+  syncStudentsDatabase,
 } from "../server/db.js";
 
 async function setupAuthDatabase() {
   try {
     const seedAccounts = getSeedAccountsFromEnv();
     const result = await syncAuthDatabase({ seedAccounts });
+    await syncStudentsDatabase();
 
     console.log("Auth database setup completed successfully.");
     if (result.accounts.length > 0) {

@@ -12,6 +12,7 @@ import {
 const Navbar = () => {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false)
   const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}')
+  const welcomeRole = currentUser?.role === 'student' ? 'Student' : 'Admin'
 
   const handleSaveProfile = async (formData) => {
     const nextUser = {
@@ -51,7 +52,35 @@ const Navbar = () => {
         return
       }
     } else {
-      localStorage.setItem('svms_user', JSON.stringify(nextUser))
+      try {
+        const response = await fetch('/api/profile/student', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: currentUser.id,
+            username: formData.username,
+            schoolId: formData.schoolId,
+            email: formData.email,
+            firstName: formData.firstName,
+            lastName: formData.lastName,
+            currentPassword: formData.currentPassword,
+            newPassword: formData.newPassword,
+            confirmPassword: formData.confirmPassword,
+          }),
+        })
+
+        const result = await response.json().catch(() => ({}))
+
+        if (!response.ok) {
+          alert(result?.message || 'Failed to save student profile.')
+          return
+        }
+
+        localStorage.setItem('svms_user', JSON.stringify(result.user || nextUser))
+      } catch (_error) {
+        alert('Unable to save student profile right now.')
+        return
+      }
     }
 
     setIsEditProfileOpen(false)
@@ -71,7 +100,7 @@ const Navbar = () => {
         <div>
           <h1 className="text-lg text-white">
             <span className="font-bold">Welcome,</span>{' '}
-            <span className="font-normal">Admin</span>
+            <span className="font-normal">{welcomeRole}</span>
           </h1>
         </div>
 

@@ -20,7 +20,7 @@ const TableTabs = ({
         <button
           key={tab.key}
           onClick={() => onTabChange?.(tab.key)}
-          className={`px-8 py-2.5 text-sm font-medium transition-colors className="bg-[#FFFFFF]" ${
+          className={`px-8 py-2.5 text-sm font-medium transition-colors ${
             index === 0 ? 'rounded-l-lg' : ''
           } ${index === tabs.length - 1 ? 'rounded-r-lg' : ''} ${
             activeTab === tab.key 

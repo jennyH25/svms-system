@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
   Archive,
@@ -20,7 +20,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "../../components/ui/dropdown-menu";
-import Modal from "../../components/ui/Modal";
+import Modal, { ModalFooter } from "../../components/ui/Modal";
 import EditUserModal from "@/components/modals/EditUserModal";
 import AddUserModal from "@/components/modals/AddUserModal";
 
@@ -34,153 +34,157 @@ const UserManagement = () => {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [deleteCandidate, setDeleteCandidate] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isAddingUser, setIsAddingUser] = useState(false);
+  const [showEditSuccessModal, setShowEditSuccessModal] = useState(false);
+  const [showCreateSuccessModal, setShowCreateSuccessModal] = useState(false);
 
-  const handleSaveEdit = (id, updatedData) => {
-    setStudentData((prev) =>
-      prev.map((student) =>
-        student.id === id ? { ...student, ...updatedData } : student,
-      ),
-    );
+  const [studentData, setStudentData] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchStudents = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/students");
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result?.message || "Failed to load students.");
+      }
+
+      const rows = Array.isArray(result.students) ? result.students : [];
+      setStudentData(
+        rows.map((student) => ({
+          id: Number(student.id),
+          userId: student.user_id ? Number(student.user_id) : null,
+          email: student.email || "",
+          schoolId: student.school_id,
+          studentName: student.full_name,
+          firstName: student.first_name,
+          lastName: student.last_name,
+          program: student.program,
+          yearSection: student.year_section,
+          status: student.status,
+          violationCount: Number(student.violation_count) || 0,
+        })),
+      );
+    } catch (error) {
+      alert(error.message || "Unable to fetch students.");
+      setStudentData([]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleSaveNewUser = (userData) => {
-    const newId = Date.now();
-    const newEntry = {
-      ...userData,
-      id: newId,
-      no: studentData.length + 1,
-      violationCount: 0,
-    };
-    setStudentData((prev) => [...prev, newEntry]);
+  useEffect(() => {
+    fetchStudents();
+  }, []);
+
+  const handleSaveEdit = async (id, updatedData) => {
+    try {
+      const response = await fetch(`/api/students/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          schoolId: updatedData.schoolId,
+          email: updatedData.email,
+          firstName: updatedData.firstName,
+          lastName: updatedData.lastName,
+          program: updatedData.program,
+          yearSection: updatedData.yearSection,
+          status: updatedData.status,
+          violationCount: Number(updatedData.violationCount),
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || "Failed to update student.");
+      }
+
+      await fetchStudents();
+      setShowEditSuccessModal(true);
+      return true;
+    } catch (error) {
+      alert(error.message || "Unable to update student.");
+      return false;
+    }
   };
 
-  // Sample student data
-  const [studentData, setStudentData] = useState([
-    {
-      id: 1,
-      no: 1,
-      schoolId: "23-00001",
-      studentName: "Arman Jeresano",
-      program: "BSIT",
-      yearSection: "3B",
-      status: "Regular",
-      violationCount: 5,
-    },
-    {
-      id: 2,
-      no: 2,
-      schoolId: "23-00002",
-      studentName: "Maria Santos",
-      program: "BSCS",
-      yearSection: "3A",
-      status: "Regular",
-      violationCount: 1,
-    },
-    {
-      id: 3,
-      no: 3,
-      schoolId: "23-00003",
-      studentName: "John Doe",
-      program: "BSIT",
-      yearSection: "2C",
-      status: "Irregular",
-      violationCount: 2,
-    },
-    {
-      id: 4,
-      no: 4,
-      schoolId: "23-00004",
-      studentName: "Jane Smith",
-      program: "BSCS",
-      yearSection: "1B",
-      status: "Regular",
-      violationCount: 5,
-    },
-    {
-      id: 5,
-      no: 5,
-      schoolId: "23-00005",
-      studentName: "Peter Pan",
-      program: "BSIT",
-      yearSection: "4B",
-      status: "Regular",
-      violationCount: 1,
-    },
-    {
-      id: 6,
-      no: 6,
-      schoolId: "23-00006",
-      studentName: "Wendy Darling",
-      program: "BSCS",
-      yearSection: "3A",
-      status: "Irregular",
-      violationCount: 2,
-    },
-    {
-      id: 7,
-      no: 7,
-      schoolId: "23-00007",
-      studentName: "James Hook",
-      program: "BSIT",
-      yearSection: "3C",
-      status: "Regular",
-      violationCount: 1,
-    },
-    {
-      id: 8,
-      no: 8,
-      schoolId: "23-00008",
-      studentName: "Alice Wonder",
-      program: "BSCS",
-      yearSection: "2D",
-      status: "Regular",
-      violationCount: 5,
-    },
-    {
-      id: 9,
-      no: 9,
-      schoolId: "23-00009",
-      studentName: "Bob Builder",
-      program: "BSIT",
-      yearSection: "1E",
-      status: "Irregular",
-      violationCount: 1,
-    },
-    {
-      id: 10,
-      no: 10,
-      schoolId: "23-00010",
-      studentName: "Charlie Brown",
-      program: "BSCS",
-      yearSection: "4D",
-      status: "Regular",
-      violationCount: 2,
-    },
-    {
-      id: 11,
-      no: 11,
-      schoolId: "23-00011",
-      studentName: "Lucy Liu",
-      program: "BSIT",
-      yearSection: "3A",
-      status: "Regular",
-      violationCount: 5,
-    },
-    {
-      id: 12,
-      no: 12,
-      schoolId: "23-00012",
-      studentName: "Snoopy Dog",
-      program: "BSCS",
-      yearSection: "3C",
-      status: "Irregular",
-      violationCount: 1,
-    },
-  ]);
+  const handleSaveNewUser = async (userData) => {
+    setIsAddingUser(true);
+    try {
+      const response = await fetch("/api/students", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          schoolId: userData.schoolId,
+          email: userData.email,
+          firstName: userData.firstName,
+          lastName: userData.lastName,
+          program: userData.program,
+          yearSection: userData.yearSection,
+          status: userData.status,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || "Failed to add student.");
+      }
+
+      await fetchStudents();
+      setShowCreateSuccessModal(true);
+      return true;
+    } catch (error) {
+      alert(error.message || "Unable to add student.");
+      return false;
+    } finally {
+      setIsAddingUser(false);
+    }
+  };
+
+  const handleDeleteStudent = async () => {
+    if (!deleteCandidate) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/students/${deleteCandidate.id}`, {
+        method: "DELETE",
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || "Failed to delete student.");
+      }
+
+      await fetchStudents();
+      setDeleteCandidate(null);
+    } catch (error) {
+      alert(error.message || "Unable to delete student.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Filters
   const filteredStudents = useMemo(() => {
+    const toText = (value) => String(value || "").toLowerCase();
+    const parseYearSection = (value) => {
+      const text = String(value || "").trim();
+      const match = text.match(/(\d+)\s*([a-zA-Z]+)/);
+      if (!match) {
+        return { year: "", section: "" };
+      }
+
+      return { year: match[1], section: match[2].toLowerCase() };
+    };
+
     return studentData.filter((student) => {
+      const parsedYearSection = parseYearSection(student.yearSection);
+
       // Tab filter
       if (activeTab === "regular" && student.status !== "Regular") return false;
       if (activeTab === "irregular" && student.status !== "Irregular")
@@ -189,30 +193,34 @@ const UserManagement = () => {
       // Program filter
       if (
         selectedProgram &&
-        student.program.toLowerCase() !== selectedProgram.toLowerCase()
+        toText(student.program) !== selectedProgram.toLowerCase()
       )
         return false;
 
       // Year filter
       if (selectedYear) {
-        const studentYear = student.yearSection.charAt(0);
+        const studentYear = parsedYearSection.year;
         if (studentYear !== selectedYear) return false;
       }
 
       // Section filter
       if (selectedSection) {
-        const studentSection = student.yearSection.slice(1).toLowerCase();
+        const studentSection = parsedYearSection.section;
         if (studentSection !== selectedSection.toLowerCase()) return false;
       }
 
       // Search query
       if (searchQuery) {
-        const query = searchQuery.toLowerCase();
+        const query = searchQuery.toLowerCase().trim();
         return (
-          student.studentName.toLowerCase().includes(query) ||
-          student.schoolId.toLowerCase().includes(query) ||
-          student.program.toLowerCase().includes(query) ||
-          student.yearSection.toLowerCase().includes(query)
+          toText(student.studentName).includes(query) ||
+          toText(student.firstName).includes(query) ||
+          toText(student.lastName).includes(query) ||
+          toText(student.schoolId).includes(query) ||
+          toText(student.program).includes(query) ||
+          toText(student.yearSection).includes(query) ||
+          toText(student.email).includes(query) ||
+          toText(student.status).includes(query)
         );
       }
 
@@ -288,15 +296,7 @@ const UserManagement = () => {
     {
       label: "Delete",
       icon: <Trash2 className="w-4 h-4" />,
-      onClick: (row) => {
-        if (
-          window.confirm(`Are you sure you want to delete ${row.studentName}?`)
-        ) {
-          setStudentData((prev) =>
-            prev.filter((student) => student.id !== row.id),
-          );
-        }
-      },
+      onClick: (row) => setDeleteCandidate(row),
       variant: "danger",
     },
   ];
@@ -528,7 +528,7 @@ const UserManagement = () => {
       <AnimatedContent distance={40} delay={0.5}>
         <DataTable
           columns={columns}
-          data={filteredStudents}
+          data={isLoading ? [] : filteredStudents}
           actions={actions}
         />
       </AnimatedContent>
@@ -538,6 +538,7 @@ const UserManagement = () => {
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
         onSave={handleSaveNewUser}
+        isSaving={isAddingUser}
       />
 
       {/* Edit Modal */}
@@ -547,6 +548,85 @@ const UserManagement = () => {
         user={selectedUser}
         onSave={handleSaveEdit}
       />
+
+      <Modal
+        isOpen={Boolean(deleteCandidate)}
+        onClose={() => {
+          if (!isDeleting) {
+            setDeleteCandidate(null);
+          }
+        }}
+        title={<span className="font-black font-inter">Delete Student</span>}
+        size="md"
+        showCloseButton={!isDeleting}
+      >
+        <div className="rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3 mb-4">
+          <p className="text-red-300 text-sm font-medium">
+            This action permanently removes the student record from the database.
+          </p>
+        </div>
+        <p className="text-gray-200 text-sm">
+          Delete <span className="font-semibold text-white">{deleteCandidate?.studentName}</span>?
+        </p>
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setDeleteCandidate(null)}
+            disabled={isDeleting}
+            className="px-6 py-2.5"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            onClick={handleDeleteStudent}
+            disabled={isDeleting}
+            className="px-6 py-2.5"
+          >
+            {isDeleting ? "Deleting..." : "Delete"}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        isOpen={showEditSuccessModal}
+        onClose={() => setShowEditSuccessModal(false)}
+        title={<span className="font-black font-inter">Saved Successfully</span>}
+        size="sm"
+      >
+        <p className="text-sm text-gray-300">User changes were saved to the database.</p>
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => setShowEditSuccessModal(false)}
+            className="px-6 py-2.5"
+          >
+            OK
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        isOpen={showCreateSuccessModal}
+        onClose={() => setShowCreateSuccessModal(false)}
+        title={<span className="font-black font-inter">Successfully Created</span>}
+        size="sm"
+      >
+        <p className="text-sm text-gray-300">Student account was created and credentials were sent.</p>
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => setShowCreateSuccessModal(false)}
+            className="px-6 py-2.5"
+          >
+            OK
+          </Button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 };

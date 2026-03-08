@@ -1,19 +1,62 @@
 
-import React from 'react';
-import StudentLayout from '../../components/layout/StudentLayout';
+import React, { useEffect, useMemo, useState } from 'react';
 import Card from '../../components/ui/Card';
-import StatCard from '../../components/ui/StatCard';
 import StudentStatCard from '../../components/ui/StudentStatCard';
 // GaugeIndicator is now used inside StatCard
 import AnimatedContent from '../../components/ui/AnimatedContent';
 
-const studentInfo = {
-  name: 'Jeresano, Arman',
-  id: '23-000000',
-  program: 'BS INFORMATION TECHNOLOGY',
-  section: 'BSIT - 1A',
-  year: '1ST YEAR',
-};
+function formatStudentName(lastName, firstName, fallbackFullName) {
+  if (lastName && firstName) {
+    return `${lastName}, ${firstName}`;
+  }
+
+  return fallbackFullName || 'Student';
+}
+
+function formatProgram(program) {
+  const normalized = String(program || '').trim().toUpperCase();
+
+  if (normalized === 'BSIT') {
+    return 'BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY';
+  }
+
+  if (normalized === 'BSCS') {
+    return 'BACHELOR OF SCIENCE IN COMPUTER SCIENCE';
+  }
+
+  return String(program || 'N/A').trim() || 'N/A';
+}
+
+function parseYearSection(yearSection) {
+  const value = String(yearSection || '').trim().toUpperCase();
+  const match = value.match(/(\d+)\s*([A-Z]+)/);
+
+  if (!match) {
+    return { yearNumber: '', section: 'N/A' };
+  }
+
+  return {
+    yearNumber: match[1],
+    section: match[2],
+  };
+}
+
+function toOrdinalYearLabel(yearNumber) {
+  const n = Number(yearNumber);
+  if (!Number.isFinite(n) || n <= 0) {
+    return 'N/A';
+  }
+
+  const j = n % 10;
+  const k = n % 100;
+  let suffix = 'TH';
+
+  if (j === 1 && k !== 11) suffix = 'ST';
+  else if (j === 2 && k !== 12) suffix = 'ND';
+  else if (j === 3 && k !== 13) suffix = 'RD';
+
+  return `${n}${suffix} YEAR`;
+}
 
 const recentActivities = [
   {
@@ -39,6 +82,76 @@ const recentActivities = [
 ];
 
 const StudentDashboard = () => {
+  const [studentProfile, setStudentProfile] = useState(null);
+  const [studentUser, setStudentUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('svms_user') || '{}');
+    } catch (_error) {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    const userId = studentUser?.id;
+    if (!userId) {
+      return;
+    }
+
+    const loadStudentProfile = async () => {
+      try {
+        const response = await fetch(`/api/students/profile/${userId}`);
+        const result = await response.json().catch(() => ({}));
+
+        if (!response.ok || !result?.student) {
+          return;
+        }
+
+        setStudentProfile(result.student);
+
+        const nextUser = {
+          ...studentUser,
+          schoolId: result.student.school_id || studentUser.schoolId || '',
+          program: result.student.program || studentUser.program || '',
+          yearSection: result.student.year_section || studentUser.yearSection || '',
+          firstName: result.student.first_name || studentUser.firstName || '',
+          lastName: result.student.last_name || studentUser.lastName || '',
+          fullName: result.student.full_name || studentUser.fullName || '',
+        };
+
+        localStorage.setItem('svms_user', JSON.stringify(nextUser));
+        setStudentUser(nextUser);
+      } catch (_error) {
+        // Keep existing local user data if profile fetch fails.
+      }
+    };
+
+    loadStudentProfile();
+  }, [studentUser?.id]);
+
+  const dashboardInfo = useMemo(() => {
+    const firstName = studentProfile?.first_name || studentUser?.firstName || '';
+    const lastName = studentProfile?.last_name || studentUser?.lastName || '';
+    const fullName = studentProfile?.full_name || studentUser?.fullName || '';
+    const schoolId = studentProfile?.school_id || studentUser?.schoolId || 'N/A';
+    const rawProgram = studentProfile?.program || studentUser?.program || '';
+    const rawYearSection =
+      studentProfile?.year_section || studentUser?.yearSection || '';
+    const violationCount = Number(
+      studentProfile?.violation_count ?? studentUser?.violationCount ?? 0,
+    );
+
+    const parsed = parseYearSection(rawYearSection);
+
+    return {
+      name: formatStudentName(lastName, firstName, fullName),
+      schoolId,
+      program: formatProgram(rawProgram),
+      section: parsed.section || 'N/A',
+      year: toOrdinalYearLabel(parsed.yearNumber),
+      violationCount: Number.isFinite(violationCount) ? violationCount : 0,
+    };
+  }, [studentProfile, studentUser]);
+
   return (
     <div className="flex flex-col gap-6">
       {/* Header */}
@@ -54,14 +167,14 @@ const StudentDashboard = () => {
           {/* Student Info */}
           <Card variant="glass" padding="lg" className="flex-1 min-w-[320px]">
             <div>
-              <span className="text-3xl font-extrabold text-white leading-tight">{studentInfo.name}</span>
+              <span className="text-3xl font-extrabold text-white leading-tight">{dashboardInfo.name}</span>
               <span className="text-lg text-white font-normal ml-1"> </span>
-              <div className="text-gray-400 font-medium text-sm mt-1">ID: {studentInfo.id}</div>
+              <div className="text-gray-400 font-medium text-sm mt-1">SCHOOL ID: {dashboardInfo.schoolId}</div>
             </div>
             <div className="mt-4 text-white text-sm space-y-1">
-              <div><span className="font-bold">PROGRAM:</span> {studentInfo.program}</div>
-              <div><span className="font-bold">SECTION:</span> {studentInfo.section}</div>
-              <div><span className="font-bold">YEAR:</span> {studentInfo.year}</div>
+              <div><span className="font-bold">PROGRAM:</span> {dashboardInfo.program}</div>
+              <div><span className="font-bold">SECTION:</span> {dashboardInfo.section}</div>
+              <div><span className="font-bold">YEAR:</span> {dashboardInfo.year}</div>
             </div>
           </Card>
 
@@ -69,7 +182,7 @@ const StudentDashboard = () => {
           <div className="flex flex-col md:flex-row gap-6 flex-1">
             <StudentStatCard
               title="Good Standing!"
-              value={0}
+              value={dashboardInfo.violationCount}
               max={10}
               color="#60A5FA"
               comparisonLabel="Violation Count"
@@ -77,7 +190,7 @@ const StudentDashboard = () => {
             />
             <StudentStatCard
               title="You are in good disciplinary standing"
-              value={0}
+              value={dashboardInfo.violationCount}
               max={10}
               color="#F59E42"
               comparisonLabel="Major Violation"
