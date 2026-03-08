@@ -44,3 +44,46 @@ Important notes:
 - `mysql.railway.internal` is typically only reachable from Railway's private network.
 - If `npm run db:test` fails locally with DNS/network errors, that can be expected outside Railway private networking.
 - GitHub pushes trigger Railway redeploys only when the service is connected to the repo/branch and auto-deploy is enabled in Railway settings.
+
+## Backend API (Node.js + Express)
+
+This repository now includes a backend API server in `server/`.
+
+Run API in development:
+
+```bash
+npm run api:dev
+```
+
+Run API in normal mode:
+
+```bash
+npm run api:start
+```
+
+Health endpoints:
+
+- `GET /api/health`
+- `GET /api/db-health`
+
+## Desktop App (Electron)
+
+Electron files are in `electron/`.
+
+Run Electron with Vite frontend:
+
+```bash
+npm run desktop:dev
+```
+
+Run API + Vite + Electron together:
+
+```bash
+npm run desktop:full
+```
+
+Run Electron against built frontend:
+
+```bash
+npm run desktop:start
+```
