@@ -13,6 +13,7 @@ import Settings from "../pages/admin/Settings";
 
 import StudentDashboard from "../pages/student/StudentDashboard";
 import StudentViolations from "../pages/student/StudentViolations";
+import StudentOffensesList from "../pages/student/StudentOffensesList";
 import StudentNotification from "../pages/student/StudentNotification.jsx";
 
 import Login from "../pages/auth/Login";
@@ -43,6 +44,7 @@ const AppRoutes = () => {
         <Route index element={<StudentDashboard />} />
         <Route path="dashboard" element={<StudentDashboard />} />
         <Route path="violations" element={<StudentViolations />} />
+        <Route path="offenses" element={<StudentOffensesList />} />
         <Route path="notifications" element={<StudentNotification />} />
         <Route path="notification" element={<Navigate to="/student/notifications" replace />} />
       </Route>
