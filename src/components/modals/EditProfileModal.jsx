@@ -71,18 +71,6 @@ const EditProfileModal = ({
       showCloseButton={false}
     >
       <form onSubmit={handleSubmit}>
-        {/* Username */}
-        <div className="mb-4">
-          <div>
-            <label className="block text-sm font-medium text-white mb-2">Username</label>
-            <GlassInput
-              value={formData.username}
-              onChange={handleChange('username')}
-              placeholder="Enter username"
-            />
-          </div>
-        </div>
-
         {/* Full Name */}
         <div className="mb-4">
           <p className="text-sm font-semibold text-white mb-2">Full Name</p>
@@ -103,6 +91,18 @@ const EditProfileModal = ({
                 placeholder="Enter last name"
               />
             </div>
+          </div>
+        </div>
+
+        {/* Username */}
+        <div className="mb-4">
+          <div>
+            <label className="block text-sm font-medium text-white mb-2">Username</label>
+            <GlassInput
+              value={formData.username}
+              onChange={handleChange('username')}
+              placeholder="Enter username"
+            />
           </div>
         </div>
 
