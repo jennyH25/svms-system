@@ -22,6 +22,9 @@ const port = Number(process.env.API_PORT || process.env.PORT || 3001);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, "../dist");
+const FORGOT_CODE_EXPIRY_MS = 10 * 60 * 1000;
+const FORGOT_RESEND_COOLDOWN_MS = 15 * 1000;
+const forgotPasswordStore = new Map();
 
 function buildCredentialEmailTemplate({ firstName, username, password }) {
   return `
@@ -41,6 +44,26 @@ function buildCredentialEmailTemplate({ firstName, username, password }) {
             <p style="margin:0;font-size:16px;color:#ffffff;font-weight:700;letter-spacing:0.02em;">${password}</p>
           </div>
           <p style="margin:18px 0 0 0;font-size:12px;color:#94a3b8;line-height:1.5;">For security, please log in and change your password immediately.</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function buildForgotPasswordEmailTemplate({ code }) {
+  return `
+    <div style="background:#0d0d0d;padding:32px;font-family:Segoe UI,Arial,sans-serif;color:#f1f5f9;">
+      <div style="max-width:620px;margin:0 auto;background:linear-gradient(135deg, rgba(42,45,53,0.92), rgba(22,24,30,0.92));border:1px solid rgba(255,255,255,0.12);border-radius:16px;overflow:hidden;">
+        <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.12);">
+          <h2 style="margin:0;font-size:20px;font-weight:800;letter-spacing:0.04em;color:#ffffff;">Student Violation System</h2>
+          <p style="margin:6px 0 0 0;color:#94a3b8;font-size:13px;">Password reset verification code</p>
+        </div>
+        <div style="padding:24px;">
+          <p style="margin:0 0 14px 0;color:#e2e8f0;font-size:14px;">Use this 6-digit code to reset your password:</p>
+          <div style="background:rgba(15,17,19,0.85);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;text-align:center;">
+            <p style="margin:0;font-size:28px;color:#ffffff;font-weight:800;letter-spacing:0.2em;">${code}</p>
+          </div>
+          <p style="margin:18px 0 0 0;font-size:12px;color:#94a3b8;line-height:1.5;">This code expires in 10 minutes.</p>
         </div>
       </div>
     </div>
@@ -86,6 +109,59 @@ async function sendStudentCredentialEmail({
   });
 
   return { sent: true };
+}
+
+async function sendForgotPasswordCodeEmail({ toEmail, code }) {
+  const transporter = getMailTransporter();
+  if (!transporter) {
+    return {
+      sent: false,
+      reason: "SMTP_USER/SMTP_PASS not configured.",
+    };
+  }
+
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: toEmail,
+    subject: "SVMS Password Reset Verification Code",
+    html: buildForgotPasswordEmailTemplate({ code }),
+  });
+
+  return { sent: true };
+}
+
+async function findUserByEmail(pool, email) {
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  const adminLookup = await pool.query(
+    `
+    SELECT u.id, u.role
+    FROM users u
+    INNER JOIN "Admins" a ON a.user_id = u.id
+    WHERE LOWER(a.email) = $1
+    LIMIT 1
+    `,
+    [normalizedEmail],
+  );
+
+  if (adminLookup.rows?.[0]) {
+    return adminLookup.rows[0];
+  }
+
+  const studentLookup = await pool.query(
+    `
+    SELECT u.id, u.role
+    FROM users u
+    INNER JOIN "Students" s ON s.user_id = u.id
+    WHERE LOWER(s.email) = $1
+    LIMIT 1
+    `,
+    [normalizedEmail],
+  );
+
+  return studentLookup.rows?.[0] || null;
 }
 
 function normalizeNamePart(value) {
@@ -320,6 +396,227 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Login unavailable: database not ready (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/auth/forgot-password/request", async (req, res) => {
+  const { email } = req.body ?? {};
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalizedEmail || !normalizedEmail.includes("@")) {
+    return res.status(400).json({
+      status: "error",
+      message: "A valid email is required.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    const existingSession = forgotPasswordStore.get(normalizedEmail);
+    const now = Date.now();
+    if (
+      existingSession?.resendAvailableAt &&
+      existingSession.resendAvailableAt > now
+    ) {
+      return res.status(429).json({
+        status: "error",
+        message: "Please wait before requesting another code.",
+        retryAfterSeconds: Math.ceil(
+          (existingSession.resendAvailableAt - now) / 1000,
+        ),
+      });
+    }
+
+    const user = await findUserByEmail(pool, normalizedEmail);
+    if (!user) {
+      return res.status(404).json({
+        status: "error",
+        message: "Email does not exist in the system.",
+      });
+    }
+
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const delivery = await sendForgotPasswordCodeEmail({
+      toEmail: normalizedEmail,
+      code,
+    });
+
+    if (!delivery.sent) {
+      return res.status(503).json({
+        status: "error",
+        message: `Unable to send verification code (${delivery.reason || "unknown reason"}).`,
+      });
+    }
+
+    forgotPasswordStore.set(normalizedEmail, {
+      userId: user.id,
+      code,
+      verified: false,
+      resetToken: null,
+      expiresAt: now + FORGOT_CODE_EXPIRY_MS,
+      resendAvailableAt: now + FORGOT_RESEND_COOLDOWN_MS,
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Verification code sent.",
+      retryAfterSeconds: Math.ceil(FORGOT_RESEND_COOLDOWN_MS / 1000),
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to process forgot password request (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/auth/forgot-password/verify", async (req, res) => {
+  const { email, code } = req.body ?? {};
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+  const normalizedCode = String(code || "").trim();
+
+  if (!normalizedEmail || !normalizedCode) {
+    return res.status(400).json({
+      status: "error",
+      message: "Email and verification code are required.",
+    });
+  }
+
+  const session = forgotPasswordStore.get(normalizedEmail);
+  if (!session) {
+    return res.status(400).json({
+      status: "error",
+      message: "No verification request found for this email.",
+    });
+  }
+
+  if (session.expiresAt < Date.now()) {
+    forgotPasswordStore.delete(normalizedEmail);
+    return res.status(400).json({
+      status: "error",
+      message: "Verification code expired. Please request a new one.",
+    });
+  }
+
+  if (session.code !== normalizedCode) {
+    return res.status(400).json({
+      status: "error",
+      message: "Invalid verification code.",
+    });
+  }
+
+  const resetToken = crypto.randomBytes(24).toString("hex");
+  forgotPasswordStore.set(normalizedEmail, {
+    ...session,
+    verified: true,
+    resetToken,
+  });
+
+  return res.status(200).json({
+    status: "ok",
+    message: "Code verified.",
+    resetToken,
+  });
+});
+
+app.post("/api/auth/forgot-password/reset", async (req, res) => {
+  const { email, newPassword, confirmPassword, resetToken } = req.body ?? {};
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalizedEmail || !newPassword || !confirmPassword || !resetToken) {
+    return res.status(400).json({
+      status: "error",
+      message: "Email, reset token, and new password fields are required.",
+    });
+  }
+
+  if (String(newPassword) !== String(confirmPassword)) {
+    return res.status(400).json({
+      status: "error",
+      message: "Passwords do not match.",
+    });
+  }
+
+  if (String(newPassword).length < 6) {
+    return res.status(400).json({
+      status: "error",
+      message: "Password must be at least 6 characters.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  const session = forgotPasswordStore.get(normalizedEmail);
+  if (!session || !session.verified || session.resetToken !== resetToken) {
+    return res.status(401).json({
+      status: "error",
+      message: "Verification is required before resetting password.",
+    });
+  }
+
+  if (session.expiresAt < Date.now()) {
+    forgotPasswordStore.delete(normalizedEmail);
+    return res.status(400).json({
+      status: "error",
+      message: "Reset session expired. Please request a new code.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const passwordHash = await bcrypt.hash(String(newPassword), 12);
+
+    const updateResult = await pool.query(
+      `
+      UPDATE users
+      SET password_hash = $1
+      WHERE id = $2
+      RETURNING id
+      `,
+      [passwordHash, session.userId],
+    );
+
+    if (!updateResult.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "Account not found.",
+      });
+    }
+
+    forgotPasswordStore.delete(normalizedEmail);
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Password reset successful.",
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to reset password (${error.message}).`,
     });
   }
 });

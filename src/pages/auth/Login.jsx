@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../../assets/css_logo.png";
 import GradientText from "../../components/ui/GradientText";
@@ -20,9 +20,24 @@ const Login = () => {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [resendTimer, setResendTimer] = useState(0);
+  const [resetToken, setResetToken] = useState("");
+  const [isSendingCode, setIsSendingCode] = useState(false);
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
   const navigate = useNavigate();
 
-  const CORRECT_VERIFICATION_CODE = "123456";
+  useEffect(() => {
+    if (resendTimer <= 0) {
+      return undefined;
+    }
+
+    const timerId = setInterval(() => {
+      setResendTimer((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+
+    return () => clearInterval(timerId);
+  }, [resendTimer]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -80,11 +95,37 @@ const Login = () => {
     setConfirmPassword("");
     setShowNewPassword(false);
     setShowConfirmPassword(false);
+    setResendTimer(0);
+    setResetToken("");
+    setIsSendingCode(false);
+    setIsVerifyingCode(false);
+    setIsResettingPassword(false);
   };
 
-  const handleSendEmail = (e) => {
+  const requestForgotPasswordCode = async () => {
+    const response = await fetch("/api/auth/forgot-password/request", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email: forgotEmail.trim() }),
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(
+        result?.message || `Unable to send verification code (${response.status})`,
+      );
+    }
+
+    return result;
+  };
+
+  const handleSendEmail = async (e) => {
     e.preventDefault();
     setForgotPasswordError("");
+    setForgotPasswordSuccess("");
+
     if (!forgotEmail.trim()) {
       setForgotPasswordError("Please enter your email");
       return;
@@ -93,36 +134,83 @@ const Login = () => {
       setForgotPasswordError("Please enter a valid email");
       return;
     }
-    setForgotPasswordSuccess(
-      "Email sent! Check your inbox for the verification code.",
-    );
-    setTimeout(() => {
+
+    setIsSendingCode(true);
+    try {
+      const result = await requestForgotPasswordCode();
+      setResetToken("");
+      setVerificationCode("");
+      setForgotPasswordSuccess("Email sent! Check your inbox for the verification code.");
+      setResendTimer(Number(result?.retryAfterSeconds) || 15);
       setForgotPasswordStep(2);
-      setForgotPasswordSuccess("");
-    }, 2000);
+    } catch (requestError) {
+      setForgotPasswordError(requestError.message || "Unable to send verification code.");
+    } finally {
+      setIsSendingCode(false);
+    }
   };
 
-  const handleVerifyCode = (e) => {
+  const handleResendCode = async () => {
+    if (resendTimer > 0 || isSendingCode) {
+      return;
+    }
+
+    setForgotPasswordError("");
+    setForgotPasswordSuccess("");
+    setIsSendingCode(true);
+
+    try {
+      const result = await requestForgotPasswordCode();
+      setForgotPasswordSuccess("A new verification code has been sent.");
+      setResendTimer(Number(result?.retryAfterSeconds) || 15);
+    } catch (requestError) {
+      setForgotPasswordError(requestError.message || "Unable to resend verification code.");
+    } finally {
+      setIsSendingCode(false);
+    }
+  };
+
+  const handleVerifyCode = async (e) => {
     e.preventDefault();
     setForgotPasswordError("");
+    setForgotPasswordSuccess("");
     if (!verificationCode.trim()) {
       setForgotPasswordError("Please enter the verification code");
       return;
     }
-    if (verificationCode !== CORRECT_VERIFICATION_CODE) {
-      setForgotPasswordError("Invalid verification code");
-      return;
-    }
-    setForgotPasswordSuccess("Code verified! Proceed to reset your password.");
-    setTimeout(() => {
+
+    setIsVerifyingCode(true);
+    try {
+      const response = await fetch("/api/auth/forgot-password/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: forgotEmail.trim(),
+          code: verificationCode.trim(),
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || "Invalid verification code");
+      }
+
+      setResetToken(result?.resetToken || "");
+      setForgotPasswordSuccess("Code verified! Proceed to reset your password.");
       setForgotPasswordStep(3);
-      setForgotPasswordSuccess("");
-    }, 2000);
+    } catch (verifyError) {
+      setForgotPasswordError(verifyError.message || "Unable to verify code.");
+    } finally {
+      setIsVerifyingCode(false);
+    }
   };
 
-  const handleNewPassword = (e) => {
+  const handleNewPassword = async (e) => {
     e.preventDefault();
     setForgotPasswordError("");
+    setForgotPasswordSuccess("");
     if (!newPassword.trim() || !confirmPassword.trim()) {
       setForgotPasswordError("Please fill in all fields");
       return;
@@ -135,11 +223,39 @@ const Login = () => {
       setForgotPasswordError("Passwords do not match");
       return;
     }
-    setForgotPasswordSuccess("Password reset successfully!");
-    setTimeout(() => {
+
+    if (!resetToken) {
+      setForgotPasswordError("Please verify your code first.");
+      return;
+    }
+
+    setIsResettingPassword(true);
+    try {
+      const response = await fetch("/api/auth/forgot-password/reset", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: forgotEmail.trim(),
+          newPassword,
+          confirmPassword,
+          resetToken,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || "Unable to reset password.");
+      }
+
+      setForgotPasswordSuccess("Password reset successfully!");
       setForgotPasswordStep(4);
-      setForgotPasswordSuccess("");
-    }, 2000);
+    } catch (resetError) {
+      setForgotPasswordError(resetError.message || "Unable to reset password.");
+    } finally {
+      setIsResettingPassword(false);
+    }
   };
 
   const handleBackToLogin = () => {
@@ -387,9 +503,10 @@ const Login = () => {
                       />
                       <button
                         type="submit"
+                        disabled={isSendingCode}
                         className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
                       >
-                        SEND EMAIL
+                        {isSendingCode ? "SENDING..." : "SEND EMAIL"}
                       </button>
                     </form>
                   </div>
@@ -406,21 +523,32 @@ const Login = () => {
                         type="text"
                         value={verificationCode}
                         onChange={(e) =>
-                          setVerificationCode(e.target.value.toUpperCase())
+                          setVerificationCode(
+                            e.target.value.replace(/\D/g, "").slice(0, 6),
+                          )
                         }
                         placeholder="000000"
                       />
-                      <p className="text-gray-500 text-xs">
-                        Hint: The code is{" "}
-                        <span className="text-gray-400 font-semibold">
-                          123456
-                        </span>
-                      </p>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleResendCode}
+                          disabled={resendTimer > 0 || isSendingCode}
+                          className="text-xs text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {resendTimer > 0
+                            ? `Resend code in ${resendTimer}s`
+                            : isSendingCode
+                              ? "Sending..."
+                              : "Resend code"}
+                        </button>
+                      </div>
                       <button
                         type="submit"
+                        disabled={isVerifyingCode}
                         className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
                       >
-                        VERIFY CODE
+                        {isVerifyingCode ? "VERIFYING..." : "VERIFY CODE"}
                       </button>
                     </form>
                   </div>
@@ -540,9 +668,10 @@ const Login = () => {
                       </div>
                       <button
                         type="submit"
+                        disabled={isResettingPassword}
                         className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
                       >
-                        RESET PASSWORD
+                        {isResettingPassword ? "SAVING..." : "RESET PASSWORD"}
                       </button>
                     </form>
                   </div>
