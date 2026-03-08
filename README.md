@@ -36,11 +36,11 @@ Use `.env` for local development and set the same variables in Railway Service V
 Railway deploy behavior:
 
 - `railway.json` config sets Railway build command to `npm run railway:build`.
-- `railway:build` runs `db:test` first, then `vite build`.
-- This ensures each Railway redeploy (including GitHub push-triggered deploys) validates DB connectivity before building the frontend.
+- `railway:build` runs `vite build` for reliable frontend deployment.
+- Run `npm run db:test` separately in an environment where MySQL variables are available.
 
 Important notes:
 
 - `mysql.railway.internal` is typically only reachable from Railway's private network.
-- If `npm run db:test` fails locally with DNS/network errors, run the same command in a Railway deployment context to verify connectivity there.
+- If `npm run db:test` fails locally with DNS/network errors, that can be expected outside Railway private networking.
 - GitHub pushes trigger Railway redeploys only when the service is connected to the repo/branch and auto-deploy is enabled in Railway settings.
