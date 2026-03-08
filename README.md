@@ -65,6 +65,27 @@ Health endpoints:
 
 - `GET /api/health`
 - `GET /api/db-health`
+- `POST /api/auth/login`
+
+## Auth Database Setup (MySQL)
+
+Create the users table and seed the required admin/student accounts:
+
+```bash
+npm run db:setup-auth
+```
+
+Seeded accounts:
+
+- Admin: `jennypatanag@gmail.com` / `jen25`
+- Student: `hermoso_lyrika@plpasig.edu.ph` / `leeRiKang`
+
+Passwords are stored as bcrypt hashes in `users.password_hash`.
+
+Important:
+
+- `mysql.railway.internal` is reachable only from Railway private networking.
+- Run `npm run db:setup-auth` in a Railway runtime context (service shell/command), not from a local machine, if local DNS cannot resolve that host.
 
 ## Desktop App (Electron)
 

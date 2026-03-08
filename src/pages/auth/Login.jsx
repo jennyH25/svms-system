@@ -22,22 +22,46 @@ const Login = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const navigate = useNavigate();
 
-  // Dummy accounts
-  const ADMIN_USERNAME = "admin";
-  const ADMIN_PASSWORD = "admin123";
-  const STUDENT_USERNAME = "student";
-  const STUDENT_PASSWORD = "student123";
   const CORRECT_VERIFICATION_CODE = "123456";
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
-    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-      navigate("/admin");
-    } else if (username === STUDENT_USERNAME && password === STUDENT_PASSWORD) {
-      navigate("/student/dashboard");
-    } else {
-      setError("Invalid username or password");
+
+    try {
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:3001";
+      const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setError(result?.message || "Invalid username or password");
+        return;
+      }
+
+      const userRole = result?.user?.role;
+
+      localStorage.setItem("svms_user", JSON.stringify(result.user));
+
+      if (userRole === "admin") {
+        navigate("/admin");
+        return;
+      }
+
+      if (userRole === "student") {
+        navigate("/student/dashboard");
+        return;
+      }
+
+      setError("Account role is not recognized.");
+    } catch (_error) {
+      setError("Unable to connect to the login server.");
     }
   };
 
@@ -209,7 +233,7 @@ const Login = () => {
               >
                 <form onSubmit={handleLogin} className="space-y-8">
                   <GlassInput
-                    label="USERNAME"
+                    label="USERNAME OR EMAIL"
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
