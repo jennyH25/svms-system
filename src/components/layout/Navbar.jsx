@@ -13,9 +13,48 @@ const Navbar = () => {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false)
   const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}')
 
-  const handleSaveProfile = (formData) => {
-    console.log('Profile saved:', formData)
+  const handleSaveProfile = async (formData) => {
+    const nextUser = {
+      ...currentUser,
+      username: formData.username,
+      email: formData.email,
+      firstName: formData.firstName,
+      lastName: formData.lastName,
+      fullName: [formData.firstName, formData.lastName].filter(Boolean).join(' '),
+    }
+
+    if (currentUser?.role === 'admin') {
+      try {
+        const response = await fetch('/api/profile/admin', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: currentUser.id,
+            username: formData.username,
+            email: formData.email,
+            firstName: formData.firstName,
+            lastName: formData.lastName,
+          }),
+        })
+
+        const result = await response.json().catch(() => ({}))
+
+        if (!response.ok) {
+          alert(result?.message || 'Failed to save admin profile.')
+          return
+        }
+
+        localStorage.setItem('svms_user', JSON.stringify(result.user))
+      } catch (_error) {
+        alert('Unable to save admin profile right now.')
+        return
+      }
+    } else {
+      localStorage.setItem('svms_user', JSON.stringify(nextUser))
+    }
+
     setIsEditProfileOpen(false)
+    window.location.reload()
   }
 
   const handleLogout = () => {
@@ -83,8 +122,9 @@ const Navbar = () => {
         isOpen={isEditProfileOpen}
         onClose={() => setIsEditProfileOpen(false)}
         initialData={{
-          fullName: currentUser?.username || 'User',
-          idNumber: '',
+          username: currentUser?.username || '',
+          firstName: currentUser?.firstName || '',
+          lastName: currentUser?.lastName || '',
           email: currentUser?.email || ''
         }}
         onSave={handleSaveProfile}

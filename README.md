@@ -15,7 +15,7 @@ The React Compiler is not enabled on this template because of its impact on dev 
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
 
-## Railway MySQL Setup
+## Supabase PostgreSQL Setup
 
 This repository includes a database connectivity check script:
 
@@ -25,26 +25,25 @@ npm run db:test
 
 Required environment variables:
 
-- `MYSQLHOST`
-- `MYSQLPORT`
-- `MYSQLUSER`
-- `MYSQLPASSWORD`
-- `MYSQLDATABASE`
+- `PGHOST`
+- `PGPORT`
+- `PGUSER`
+- `PGPASSWORD`
+- `PGDATABASE`
 
-Use `.env` for local development and set the same variables in Railway Service Variables for deployment.
+Optional single-string connection:
 
-Railway deploy behavior:
+- `SUPABASE_DB_URL` (or `DATABASE_URL`)
 
-- `railway.json` config sets Railway build command to `npm run railway:build`.
-- `railway:build` runs `vite build` for reliable frontend deployment.
-- Railway runs `npm run railway:start`, which starts Express (`server/index.js`) and serves the built frontend and `/api/*` from the same host.
-- Run `npm run db:test` separately in an environment where MySQL variables are available.
+Direct connection format:
+
+- `postgresql://postgres:[YOUR-PASSWORD]@db.emmtmzvcbzfnrbwixrld.supabase.co:5432/postgres`
+
+Use `.env` for local development and run `npm run db:test` to verify connectivity.
 
 Important notes:
 
-- `mysql.railway.internal` is typically only reachable from Railway's private network.
-- If `npm run db:test` fails locally with DNS/network errors, that can be expected outside Railway private networking.
-- GitHub pushes trigger Railway redeploys only when the service is connected to the repo/branch and auto-deploy is enabled in Railway settings.
+- Supabase direct connections typically require SSL; keep `PGSSL=true` unless your environment explicitly disables SSL.
 
 ## Backend API (Node.js + Express)
 
@@ -54,6 +53,12 @@ Run API in development:
 
 ```bash
 npm run api:dev
+```
+
+Run frontend + API together in development (recommended):
+
+```bash
+npm run dev
 ```
 
 Run API in normal mode:
@@ -68,7 +73,7 @@ Health endpoints:
 - `GET /api/db-health`
 - `POST /api/auth/login`
 
-## Auth Database Setup (MySQL)
+## Auth Database Setup (PostgreSQL)
 
 Create/update the `users` table and seed login users from environment variables:
 
@@ -76,9 +81,11 @@ Create/update the `users` table and seed login users from environment variables:
 npm run db:setup-auth
 ```
 
+If your local machine cannot reach the direct Supabase DB host, run `scripts/supabase-init.sql` in Supabase SQL Editor to create `public.users` and seed the same accounts.
+
 The same auth schema/user synchronization also runs automatically when the API server starts.
 
-Seed account env vars (set these in Railway Variables):
+Seed account env vars:
 
 - `AUTH_ADMIN_EMAIL`
 - `AUTH_ADMIN_USERNAME`
@@ -91,8 +98,7 @@ Passwords are stored as bcrypt hashes in `users.password_hash`.
 
 Important:
 
-- `mysql.railway.internal` is reachable only from Railway private networking.
-- Run `npm run db:setup-auth` in a Railway runtime context (service shell/command), not from a local machine, if local DNS cannot resolve that host.
+- Run `npm run db:setup-auth` after setting PostgreSQL/Supabase environment variables.
 
 ## Desktop App (Electron)
 

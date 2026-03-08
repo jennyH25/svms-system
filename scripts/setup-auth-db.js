@@ -21,6 +21,16 @@ async function setupAuthDatabase() {
   } catch (error) {
     console.error("Failed to setup auth database.");
     console.error(error.message);
+
+    if (
+      String(error.message).includes("ENOTFOUND") ||
+      String(error.message).includes("ENETUNREACH")
+    ) {
+      console.error(
+        "Direct DB host is unreachable from this machine. Run scripts/supabase-init.sql in Supabase SQL Editor to create public.users and seed accounts.",
+      );
+    }
+
     process.exit(1);
   } finally {
     await closeDbPool();
