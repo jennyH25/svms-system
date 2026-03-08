@@ -37,10 +37,15 @@ const Login = () => {
         body: JSON.stringify({ username, password }),
       });
 
-      const result = await response.json();
+      let result = {};
+      try {
+        result = await response.json();
+      } catch {
+        result = {};
+      }
 
       if (!response.ok) {
-        setError(result?.message || "Invalid username or password");
+        setError(result?.message || `Login failed (${response.status})`);
         return;
       }
 
