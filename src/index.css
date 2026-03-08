@@ -170,3 +170,18 @@ input:-webkit-autofill:active {
   caret-color: white !important;
   transition: background-color 5000s ease-in-out 0s;
 }
+
+/* Hide browser's native password visibility toggle */
+input[type="password"]::-webkit-reveal {
+  display: none !important;
+}
+
+/* Alternative for Chrome/Edge - hide the password visibility button */
+input[type="password"]::-webkit-credentials-auto-fill-button {
+  display: none !important;
+}
+
+/* Disable browser autocomplete/autofill password manager icons */
+input[type="password"]::-ms-reveal {
+  display: none;
+}
