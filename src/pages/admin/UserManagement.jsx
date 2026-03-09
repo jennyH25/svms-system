@@ -59,6 +59,7 @@ const UserManagement = () => {
         rows.map((student) => ({
           id: Number(student.id),
           userId: student.user_id ? Number(student.user_id) : null,
+          username: student.username || "",
           email: student.email || "",
           schoolId: student.school_id,
           studentName: student.full_name,
@@ -91,6 +92,7 @@ const UserManagement = () => {
           ...getAuditHeaders(),
         },
         body: JSON.stringify({
+          username: updatedData.username,
           schoolId: updatedData.schoolId,
           email: updatedData.email,
           firstName: updatedData.firstName,

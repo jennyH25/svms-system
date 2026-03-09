@@ -5,6 +5,7 @@ import Button from "@/components/ui/Button";
 
 const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
   const [formData, setFormData] = useState({
+    username: "",
     firstName: "",
     lastName: "",
     schoolId: "",
@@ -18,6 +19,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
   useEffect(() => {
     if (user) {
       setFormData({
+        username: user.username || "",
         firstName: user.firstName || "",
         lastName: user.lastName || "",
         schoolId: user.schoolId,
@@ -82,15 +84,39 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
           <GlassInput
             label={
               <span className="text-sm font-medium text-white mb-2">
-                Student ID
+                School ID
               </span>
             }
             name="schoolId"
             value={formData.schoolId}
             onChange={handleChange}
-            placeholder="Student ID"
+            placeholder="School ID"
           />
+          <GlassInput
+            label={
+              <span className="text-sm font-medium text-white mb-2">
+                Username
+              </span>
+            }
+            name="username"
+            value={formData.username}
+            onChange={handleChange}
+            placeholder="Username"
+          />
+        </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <GlassInput
+            label={
+              <span className="text-sm font-medium text-white mb-2">
+                Year/Section
+              </span>
+            }
+            name="yearSection"
+            value={formData.yearSection}
+            onChange={handleChange}
+            placeholder="Year/Section"
+          />
           <div>
             <label className="block text-sm font-medium text-white mb-2">
               Program
@@ -106,17 +132,6 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
               <option value="BSCS">BSCS</option>
             </select>
           </div>
-          <GlassInput
-            label={
-              <span className="text-sm font-medium text-white mb-2">
-                Year/Section
-              </span>
-            }
-            name="yearSection"
-            value={formData.yearSection}
-            onChange={handleChange}
-            placeholder="Year/Section"
-          />
         </div>
 
         <div className="mb-4">

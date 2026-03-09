@@ -357,6 +357,11 @@ export async function syncStudentsDatabase() {
   `);
 
   await dbPool.query(`
+    ALTER TABLE "Students"
+    ADD COLUMN IF NOT EXISTS school_id VARCHAR(50)
+  `);
+
+  await dbPool.query(`
     UPDATE "Students"
     SET email = COALESCE(NULLIF(email, ''), school_id || '@plpasig.edu.ph')
     WHERE email IS NULL OR email = ''
@@ -370,6 +375,11 @@ export async function syncStudentsDatabase() {
   await dbPool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS students_email_unique_idx
     ON "Students" (email)
+  `);
+
+  await dbPool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS students_school_id_unique_idx
+    ON "Students" (school_id)
   `);
 
   await dbPool.query(`

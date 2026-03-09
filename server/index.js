@@ -1084,19 +1084,21 @@ app.get("/api/students", async (_req, res) => {
     const pool = getDbPool();
     const result = await pool.query(`
       SELECT
-        id,
-        user_id,
-        email,
-        school_id,
-        full_name,
-        first_name,
-        last_name,
-        program,
-        year_section,
-        status,
-        violation_count
-      FROM "Students"
-      ORDER BY id ASC
+        s.id,
+        s.user_id,
+        u.username,
+        s.email,
+        s.school_id,
+        s.full_name,
+        s.first_name,
+        s.last_name,
+        s.program,
+        s.year_section,
+        s.status,
+        s.violation_count
+      FROM "Students" s
+      LEFT JOIN users u ON u.id = s.user_id
+      ORDER BY s.id ASC
     `);
 
     return res.status(200).json({
@@ -1272,6 +1274,7 @@ app.post("/api/students", async (req, res) => {
 app.put("/api/students/:id", async (req, res) => {
   const { id } = req.params;
   const {
+    username,
     schoolId,
     email,
     firstName,
@@ -1297,6 +1300,25 @@ app.put("/api/students/:id", async (req, res) => {
     const cleanedFirst = String(firstName || "").trim();
     const cleanedLast = String(lastName || "").trim();
     const fullName = `${cleanedFirst} ${cleanedLast}`.trim();
+
+    if (username != null) {
+      const existingStudent = await pool.query(
+        `SELECT user_id FROM "Students" WHERE id = $1 LIMIT 1`,
+        [id],
+      );
+      const userId = existingStudent.rows?.[0]?.user_id;
+
+      if (userId) {
+        await pool.query(
+          `
+          UPDATE users
+          SET username = COALESCE(NULLIF($1, ''), username)
+          WHERE id = $2 AND role = 'student'
+          `,
+          [username || null, userId],
+        );
+      }
+    }
 
     const result = await pool.query(
       `
