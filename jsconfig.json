@@ -1,9 +1,14 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
+    "typeRoots": ["./node_modules/@types"],
     "paths": {
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"]
+  "typeAcquisition": {
+    "enable": false
+  },
+  "include": ["src", "vite.config.js"],
+  "exclude": ["node_modules", "dist", "server", "electron"]
 }

@@ -19,6 +19,7 @@ const Violations = () => {
   const [selectedViolation, setSelectedViolation] = useState(null)
   const [categoryFilter, setCategoryFilter] = useState('minor') 
   const [specificDegree, setSpecificDegree] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   const [formData, setFormData] = useState({
     category: '',
     degree: '',
@@ -117,7 +118,17 @@ const Violations = () => {
 
     let degreeMatch = !specificDegree || item.degree === specificDegree
 
-    return categoryMatch && degreeMatch
+    const query = searchQuery.trim().toLowerCase()
+    const searchMatch =
+      !query ||
+      String(item.name || '').toLowerCase().includes(query) ||
+      String(item.degree || '').toLowerCase().includes(query) ||
+      String(item.category || '').toLowerCase().includes(query) ||
+      (item.children || []).some((child) =>
+        String(child.name || '').toLowerCase().includes(query)
+      )
+
+    return categoryMatch && degreeMatch && searchMatch
   })
 
   const columns = [
@@ -322,7 +333,12 @@ const Violations = () => {
       {/* Search and Filters */}
       <AnimatedContent distance={40} delay={0.1}>
         <div className="flex gap-4 mb-6 items-center">
-          <SearchBar placeholder="Search Violation" className="flex-1 max-w-xs" />
+          <SearchBar
+            placeholder="Search Violation"
+            className="flex-1 max-w-xs"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -500,7 +516,11 @@ const Violations = () => {
                   </svg>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-full">
+              <DropdownMenuContent
+                align="start"
+                sideOffset={6}
+                className="z-[80] w-[var(--radix-dropdown-menu-trigger-width)] min-w-[var(--radix-dropdown-menu-trigger-width)]"
+              >
                 <DropdownMenuItem onClick={() => {
                     const category = 'Minor Offenses';
                     setFormData({
@@ -536,7 +556,11 @@ const Violations = () => {
                   </svg>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-full">
+              <DropdownMenuContent
+                align="start"
+                sideOffset={6}
+                className="z-[80] w-[var(--radix-dropdown-menu-trigger-width)] min-w-[var(--radix-dropdown-menu-trigger-width)]"
+              >
                 {getFormDegrees(formData.category).map(degree => (
                   <DropdownMenuItem
                     key={degree}
@@ -634,7 +658,11 @@ const Violations = () => {
                   </svg>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-full">
+              <DropdownMenuContent
+                align="start"
+                sideOffset={6}
+                className="z-[80] w-[var(--radix-dropdown-menu-trigger-width)] min-w-[var(--radix-dropdown-menu-trigger-width)]"
+              >
                 <DropdownMenuItem onClick={() => {
                     const category = 'Minor Offenses';
                     setEditFormData({
@@ -670,7 +698,11 @@ const Violations = () => {
                   </svg>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-full">
+              <DropdownMenuContent
+                align="start"
+                sideOffset={6}
+                className="z-[80] w-[var(--radix-dropdown-menu-trigger-width)] min-w-[var(--radix-dropdown-menu-trigger-width)]"
+              >
                 {getFormDegrees(editFormData.category).map(degree => (
                   <DropdownMenuItem
                     key={degree}

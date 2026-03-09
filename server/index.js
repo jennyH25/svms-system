@@ -227,10 +227,10 @@ const upload = multer({
   storage: storage,
   fileFilter: (_req, file, cb) => {
     // Accept any image MIME type
-    if (file.mimetype.startsWith('image/')) {
+    if (file.mimetype.startsWith("image/")) {
       cb(null, true);
     } else {
-      cb(new Error('Only image files are allowed.'));
+      cb(new Error("Only image files are allowed."));
     }
   },
   limits: {
@@ -1321,7 +1321,7 @@ app.get("/api/settings", async (req, res) => {
       `SELECT id, setting_key, display_name, logo_path, theme, theme_color, updated_at
        FROM "SystemSettings"
        WHERE setting_key = 'system_config'
-       LIMIT 1`
+       LIMIT 1`,
     );
 
     if (!result.rows?.[0]) {
@@ -1345,7 +1345,7 @@ app.get("/api/settings", async (req, res) => {
         if (shouldReencrypt) {
           await pool.query(
             `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
-            [encryptImagePath(tried), settings.id]
+            [encryptImagePath(tried), settings.id],
           );
         }
       } else {
@@ -1360,7 +1360,8 @@ app.get("/api/settings", async (req, res) => {
       settings: {
         id: settings.id,
         settingKey: settings.setting_key,
-        displayName: settings.display_name || "Student Violation Management System",
+        displayName:
+          settings.display_name || "Student Violation Management System",
         logoPath: decryptedLogoPath,
         theme: settings.theme || "dark",
         themeColor: settings.theme_color || "#000000",
@@ -1395,7 +1396,11 @@ app.post("/api/settings", async (req, res) => {
        SET display_name = $1, theme = $2, theme_color = $3
        WHERE setting_key = 'system_config'
        RETURNING id, setting_key, display_name, logo_path, theme, theme_color, updated_at`,
-      [displayName || "Student Violation Management System", theme || "dark", themeColor || "#000000"]
+      [
+        displayName || "Student Violation Management System",
+        theme || "dark",
+        themeColor || "#000000",
+      ],
     );
 
     if (!result.rows?.[0]) {
@@ -1415,7 +1420,7 @@ app.post("/api/settings", async (req, res) => {
         if (shouldReencrypt) {
           await pool.query(
             `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
-            [encryptImagePath(tried), settings.id]
+            [encryptImagePath(tried), settings.id],
           );
         }
       } else {
@@ -1444,78 +1449,82 @@ app.post("/api/settings", async (req, res) => {
 });
 
 // POST logo upload
-app.post("/api/settings/logo", (req, res, next) => {
-  // wrap multer so we can catch its errors instead of letting them bubble
-  upload.single("logo")(req, res, (err) => {
-    if (err) {
-      // multer errors are typically fileFilter or limit related
+app.post(
+  "/api/settings/logo",
+  (req, res, next) => {
+    // wrap multer so we can catch its errors instead of letting them bubble
+    upload.single("logo")(req, res, (err) => {
+      if (err) {
+        // multer errors are typically fileFilter or limit related
+        return res.status(400).json({
+          status: "error",
+          message: err.message || "Invalid file upload.",
+        });
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    if (!req.file) {
       return res.status(400).json({
         status: "error",
-        message: err.message || "Invalid file upload.",
+        message: "No file provided.",
       });
     }
-    next();
-  });
-}, async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({
-      status: "error",
-      message: "No file provided.",
-    });
-  }
 
-  if (!hasDbConfig()) {
-    return res.status(500).json({
-      status: "error",
-      message: "Database is not configured.",
-    });
-  }
+    if (!hasDbConfig()) {
+      return res.status(500).json({
+        status: "error",
+        message: "Database is not configured.",
+      });
+    }
 
-  try {
-    await ensureAuthDatabaseReady();
-    const pool = getDbPool();
+    try {
+      await ensureAuthDatabaseReady();
+      const pool = getDbPool();
 
-    // Construct the logo path and encrypt it for the database
-    const logoPath = `/uploads/${req.file.filename}`;
-    const encryptedPath = encryptImagePath(logoPath);
+      // Construct the logo path and encrypt it for the database
+      const logoPath = `/uploads/${req.file.filename}`;
+      const encryptedPath = encryptImagePath(logoPath);
 
-    const result = await pool.query(
-      `UPDATE "SystemSettings"
+      const result = await pool.query(
+        `UPDATE "SystemSettings"
        SET logo_path = $1
        WHERE setting_key = 'system_config'
        RETURNING id, setting_key, display_name, logo_path, theme, theme_color, updated_at`,
-      [encryptedPath]
-    );
+        [encryptedPath],
+      );
 
-    if (!result.rows?.[0]) {
-      return res.status(404).json({
+      if (!result.rows?.[0]) {
+        return res.status(404).json({
+          status: "error",
+          message: "System settings not found.",
+        });
+      }
+
+      const settings = result.rows[0];
+
+      return res.status(200).json({
+        status: "ok",
+        message: "Logo uploaded successfully.",
+        settings: {
+          id: settings.id,
+          settingKey: settings.setting_key,
+          displayName: settings.display_name,
+          logoPath: logoPath, // Return the actual (decrypted) path for display
+          theme: settings.theme,
+          themeColor: settings.theme_color,
+          updatedAt: settings.updated_at,
+        },
+      });
+    } catch (error) {
+      return res.status(503).json({
         status: "error",
-        message: "System settings not found.",
+        message: `Unable to upload logo (${error.message}).`,
       });
     }
-
-    const settings = result.rows[0];
-
-    return res.status(200).json({
-      status: "ok",
-      message: "Logo uploaded successfully.",
-      settings: {
-        id: settings.id,
-        settingKey: settings.setting_key,
-        displayName: settings.display_name,
-        logoPath: logoPath, // Return the actual (decrypted) path for display
-        theme: settings.theme,
-        themeColor: settings.theme_color,
-        updatedAt: settings.updated_at,
-      },
-    });
-  } catch (error) {
-    return res.status(503).json({
-      status: "error",
-      message: `Unable to upload logo (${error.message}).`,
-    });
-  }
-});
+  },
+);
 
 // DELETE logo
 app.delete("/api/settings/logo", async (req, res) => {
@@ -1535,7 +1544,7 @@ app.delete("/api/settings/logo", async (req, res) => {
        SET logo_path = NULL
        WHERE setting_key = 'system_config'
        RETURNING id, setting_key, display_name, logo_path, theme, theme_color, updated_at`,
-      []
+      [],
     );
 
     if (!result.rows?.[0]) {
@@ -1641,7 +1650,7 @@ app.post("/api/violations", async (req, res) => {
       VALUES ($1, $2, $3, $4)
       RETURNING id, category, degree, name, parent_id, created_at, updated_at
       `,
-      [category, degree, name, parentId || null]
+      [category, degree, name, parentId || null],
     );
 
     const parent = result.rows[0];
@@ -1655,7 +1664,7 @@ app.post("/api/violations", async (req, res) => {
           VALUES ($1, $2, $3, $4)
           ON CONFLICT (category, degree, name) DO NOTHING
           `,
-          [category, degree, childName, parent.id]
+          [category, degree, childName, parent.id],
         );
       }
     }
@@ -1699,7 +1708,7 @@ app.put("/api/violations/:id", async (req, res) => {
       WHERE id = $5
       RETURNING id, category, degree, name, parent_id, created_at, updated_at
       `,
-      [category || null, degree || null, name || null, parentId || null, id]
+      [category || null, degree || null, name || null, parentId || null, id],
     );
 
     // if editing parent and children provided, wipe existing children then insert new list
@@ -1712,7 +1721,12 @@ app.put("/api/violations/:id", async (req, res) => {
           VALUES ($1, $2, $3, $4)
           ON CONFLICT (category, degree, name) DO NOTHING
           `,
-          [category || result.rows[0].category, degree || result.rows[0].degree, childName, id]
+          [
+            category || result.rows[0].category,
+            degree || result.rows[0].degree,
+            childName,
+            id,
+          ],
         );
       }
     }
@@ -1757,7 +1771,7 @@ app.delete("/api/violations/:id", async (req, res) => {
     // Then delete the violation
     const result = await pool.query(
       `DELETE FROM violations WHERE id = $1 RETURNING id`,
-      [id]
+      [id],
     );
 
     if (!result.rows?.[0]) {
@@ -1812,31 +1826,38 @@ async function ensureAuthDatabaseReady() {
 }
 
 async function startServer() {
+  server = app.listen(port, () => {
+    console.log(`SVMS API running on port ${port}`);
+  });
+
   if (hasDbConfig()) {
-    try {
-      const seedAccounts = getSeedAccountsFromEnv();
-      await ensureAuthDatabaseReady();
-      console.log("Auth database synchronized.");
-      if (seedAccounts.length === 0) {
-        console.log("No account seed variables detected during startup.");
-      }
-    } catch (error) {
-      console.error("Failed to synchronize auth database on startup.");
-      console.error(error.message);
-    }
+    const seedAccounts = getSeedAccountsFromEnv();
+    ensureAuthDatabaseReady()
+      .then(() => {
+        console.log("Auth database synchronized.");
+        if (seedAccounts.length === 0) {
+          console.log("No account seed variables detected during startup.");
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to synchronize auth database on startup.");
+        console.error(error.message);
+      });
   } else {
     console.warn(
       "Database variables are missing. Login API will not work until DB config is set.",
     );
   }
-
-  server = app.listen(port, () => {
-    console.log(`SVMS API running on port ${port}`);
-  });
 }
 
 async function shutdown(signal) {
   console.log(`Received ${signal}, shutting down...`);
+
+  if (!server) {
+    await closeDbPool();
+    process.exit(0);
+    return;
+  }
 
   server.close(async () => {
     await closeDbPool();

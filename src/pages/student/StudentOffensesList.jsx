@@ -13,38 +13,85 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 const StudentOffensesList = () => {
   const [categoryFilter, setCategoryFilter] = useState('minor') 
   const [specificDegree, setSpecificDegree] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   const [violationsData, setViolationsData] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [expandedRows, setExpandedRows] = useState(new Set())
   
   useEffect(() => {
-    fetchViolations()
+    let isMounted = true
+
+    const refresh = async (options = {}) => {
+      await fetchViolations({ ...options, isMounted })
+    }
+
+    refresh()
+
+    const intervalId = setInterval(() => {
+      refresh({ silent: true })
+    }, 10000)
+
+    const handleWindowFocus = () => {
+      refresh({ silent: true })
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refresh({ silent: true })
+      }
+    }
+
+    window.addEventListener('focus', handleWindowFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      isMounted = false
+      clearInterval(intervalId)
+      window.removeEventListener('focus', handleWindowFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [])
 
-  const fetchViolations = async () => {
+  const fetchViolations = async ({ silent = false, isMounted = true } = {}) => {
+    if (!silent) {
+      setLoading(true)
+    }
     setError('')
+
     try {
-      const response = await fetch('/api/violations')
+      const response = await fetch(`/api/violations?t=${Date.now()}`, {
+        cache: 'no-store',
+      })
       const data = await response.json()
+
+      if (!isMounted) {
+        return
+      }
+
       if (data.status === 'ok') {
-        const degreeOrder = ['First Degree','Second Degree','Third Degree','Fourth Degree','Fifth Degree','Sixth Degree','Seventh Degree'];
+        const degreeOrder = ['First Degree','Second Degree','Third Degree','Fourth Degree','Fifth Degree','Sixth Degree','Seventh Degree']
         const sorted = [...data.violations].sort((a, b) => {
-          const da = degreeOrder.indexOf(a.degree);
-          const db = degreeOrder.indexOf(b.degree);
-          if (da !== db) return da - db;
-          if (a.category !== b.category) return a.category.localeCompare(b.category);
-          return a.name.localeCompare(b.name);
-        });
+          const da = degreeOrder.indexOf(a.degree)
+          const db = degreeOrder.indexOf(b.degree)
+          if (da !== db) return da - db
+          if (a.category !== b.category) return a.category.localeCompare(b.category)
+          return a.name.localeCompare(b.name)
+        })
         setViolationsData(sorted)
       } else {
         setError(data.message || 'Unknown error')
       }
     } catch (error) {
+      if (!isMounted) {
+        return
+      }
       console.error('Error fetching violations:', error)
       setError(error.message || 'Network error')
     } finally {
-      setLoading(false)
+      if (isMounted) {
+        setLoading(false)
+      }
     }
   }
 
@@ -86,7 +133,17 @@ const StudentOffensesList = () => {
 
     let degreeMatch = !specificDegree || item.degree === specificDegree
 
-    return categoryMatch && degreeMatch
+    const query = searchQuery.trim().toLowerCase()
+    const searchMatch =
+      !query ||
+      String(item.name || '').toLowerCase().includes(query) ||
+      String(item.degree || '').toLowerCase().includes(query) ||
+      String(item.category || '').toLowerCase().includes(query) ||
+      (item.children || []).some((child) =>
+        String(child.name || '').toLowerCase().includes(query)
+      )
+
+    return categoryMatch && degreeMatch && searchMatch
   })
 
   const columns = [
@@ -170,7 +227,12 @@ const StudentOffensesList = () => {
       {/* Search and Filters */}
       <AnimatedContent distance={40} delay={0.1}>
         <div className="flex gap-4 mb-6 items-center">
-          <SearchBar placeholder="Search Violation" className="flex-1 max-w-xs" />
+          <SearchBar
+            placeholder="Search Violation"
+            className="flex-1 max-w-xs"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
