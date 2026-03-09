@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import DataTable from '@/components/ui/DataTable'
 import Button from '@/components/ui/Button'
 import Modal, { ModalFooter } from '@/components/ui/Modal'
 import SearchBar from '@/components/ui/SearchBar'
@@ -446,8 +445,13 @@ const Violations = () => {
                               <DropdownMenuItem
                                 key={actionIndex}
                                 className={`
-                                  flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors ${
-                                    action.variant === 'danger' ? 'text-red-600' : 'text-blue-600'
+                                  flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors
+                                  data-[highlighted]:bg-gray-100
+                                  data-[highlighted]:text-gray-900
+                                  ${
+                                    action.variant === 'danger'
+                                      ? 'text-red-600 data-[highlighted]:bg-red-100 data-[highlighted]:text-red-700'
+                                      : 'text-gray-700'
                                   }
                                 `}
                                 onClick={() => action.onClick(row)}
