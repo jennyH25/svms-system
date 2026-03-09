@@ -23,6 +23,7 @@ import {
 import Modal, { ModalFooter } from "../../components/ui/Modal";
 import EditUserModal from "@/components/modals/EditUserModal";
 import AddUserModal from "@/components/modals/AddUserModal";
+import { getAuditHeaders } from "@/lib/auditHeaders";
 
 const UserManagement = () => {
   const [activeTab, setActiveTab] = useState("regular");
@@ -85,7 +86,10 @@ const UserManagement = () => {
     try {
       const response = await fetch(`/api/students/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuditHeaders(),
+        },
         body: JSON.stringify({
           schoolId: updatedData.schoolId,
           email: updatedData.email,
@@ -117,7 +121,10 @@ const UserManagement = () => {
     try {
       const response = await fetch("/api/students", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuditHeaders(),
+        },
         body: JSON.stringify({
           schoolId: userData.schoolId,
           email: userData.email,
@@ -154,6 +161,9 @@ const UserManagement = () => {
     try {
       const response = await fetch(`/api/students/${deleteCandidate.id}`, {
         method: "DELETE",
+        headers: {
+          ...getAuditHeaders(),
+        },
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {

@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { getAuditHeaders } from '@/lib/auditHeaders'
 
 const Navbar = () => {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false)
@@ -29,7 +30,10 @@ const Navbar = () => {
       try {
         const response = await fetch('/api/profile/admin', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuditHeaders(),
+          },
           body: JSON.stringify({
             id: currentUser.id,
             username: formData.username,

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Card from "../../components/ui/Card";
 import AdminStatCard from "../../components/ui/AdminStatCard";
@@ -40,6 +40,8 @@ const Dashboard = () => {
   const [programFilter, setProgramFilter] = useState("All");
   const [yearLevelFilter, setYearLevelFilter] = useState("All");
   const [sectionFilter, setSectionFilter] = useState("All");
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [isLoadingActivity, setIsLoadingActivity] = useState(true);
 
   const rankingData = [
     {
@@ -177,48 +179,83 @@ const Dashboard = () => {
     return matchesSearch && matchesProgram && matchesYear && matchesSection;
   });
 
-  const recentActivity = [
-    {
-      date: "02/02/26",
-      time: "12:00AM",
-      name: "Edrianne Lumabas",
-      id: "23-0001",
-      program: "BSIT - 1A",
-      type: "Academic",
-    },
-    {
-      date: "02/02/26",
-      time: "11:00AM",
-      name: "Jenny Hernandez",
-      id: "23-0002",
-      program: "BSIT - 2A",
-      type: "Behavioral",
-    },
-    {
-      date: "02/02/26",
-      time: "10:00AM",
-      name: "Lyrika Hermozo",
-      id: "23-0003",
-      program: "BSCS - 3A",
-      type: "Academic",
-    },
-    {
-      date: "02/02/26",
-      time: "9:00AM",
-      name: "Jessa Marie Balnig",
-      id: "23-0004",
-      program: "BSCS - 4A",
-      type: "Behavioral",
-    },
-    {
-      date: "02/02/26",
-      time: "8:00AM",
-      name: "Raiza Roces",
-      id: "23-0005",
-      program: "BSIT - 1A",
-      type: "Academic",
-    },
-  ];
+  useEffect(() => {
+    let isMounted = true;
+
+    const formatAuditDateTime = (isoValue) => {
+      const dateObj = isoValue ? new Date(isoValue) : new Date();
+      if (Number.isNaN(dateObj.getTime())) {
+        return { date: "-", time: "-" };
+      }
+
+      return {
+        date: dateObj.toLocaleDateString("en-GB"),
+        time: dateObj.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true,
+        }),
+      };
+    };
+
+    const fetchRecentActivity = async ({ silent = false } = {}) => {
+      if (!silent && isMounted) {
+        setIsLoadingActivity(true);
+      }
+
+      try {
+        const response = await fetch("/api/audit-logs?limit=25");
+        const result = await response.json().catch(() => ({}));
+
+        if (!response.ok || result?.status !== "ok") {
+          throw new Error(result?.message || "Failed to load activity logs.");
+        }
+
+        if (!isMounted) {
+          return;
+        }
+
+        const logs = Array.isArray(result.logs) ? result.logs : [];
+        const mapped = logs.map((log) => {
+          const { date, time } = formatAuditDateTime(log.created_at);
+          return {
+            id: log.id,
+            date,
+            time,
+            actorName: log.actor_name || "Admin User",
+            actorRole: log.actor_role || "admin",
+            action: String(log.action || "").replaceAll("_", " "),
+            target:
+              log.target_id != null && String(log.target_id).length > 0
+                ? `${log.target_type} #${log.target_id}`
+                : log.target_type || "system",
+            details: log.details || "No additional details",
+          };
+        });
+
+        setRecentActivity(mapped);
+      } catch (_error) {
+        if (isMounted) {
+          setRecentActivity([]);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingActivity(false);
+        }
+      }
+    };
+
+    fetchRecentActivity();
+
+    const intervalId = setInterval(() => {
+      fetchRecentActivity({ silent: true });
+    }, 15000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, []);
 
   return (
     <div className="text-white">
@@ -485,25 +522,38 @@ const Dashboard = () => {
                 ),
               },
               {
-                key: "name",
-                label: "Student Name",
+                key: "actorName",
+                label: "Admin",
                 render: (_, row) => (
-                  <TableCellText primary={row.name} secondary={row.id} />
-                ),
-              },
-              { key: "program", label: "Program/Year/Section" },
-              {
-                key: "type",
-                label: "Type",
-                render: (value) => (
-                  <TableCellBadge
-                    label={value}
-                    variant={value === "Academic" ? "primary" : "warning"}
+                  <TableCellText
+                    primary={row.actorName}
+                    secondary={String(row.actorRole || "").toUpperCase()}
                   />
                 ),
               },
+              { key: "target", label: "Target" },
+              {
+                key: "action",
+                label: "Action",
+                render: (value) => (
+                  <TableCellBadge
+                    label={value}
+                    variant={
+                      String(value || "").includes("DELETE")
+                        ? "danger"
+                        : String(value || "").includes("CREATE") ||
+                            String(value || "").includes("UPLOAD")
+                          ? "success"
+                          : String(value || "").includes("UPDATE")
+                            ? "warning"
+                            : "info"
+                    }
+                  />
+                ),
+              },
+              { key: "details", label: "Details" },
             ]}
-            data={recentActivity}
+            data={isLoadingActivity ? [] : recentActivity}
             onRowClick={(row) => console.log("Row clicked", row)}
           />
         </Card>

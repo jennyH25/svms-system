@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
+import { getAuditHeaders } from '@/lib/auditHeaders'
 
 const SettingsContext = createContext()
 
@@ -66,6 +67,7 @@ export const SettingsProvider = ({ children }) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAuditHeaders(),
         },
         body: JSON.stringify({
           displayName,
@@ -101,6 +103,9 @@ export const SettingsProvider = ({ children }) => {
 
       const response = await fetch('/api/settings/logo', {
         method: 'POST',
+        headers: {
+          ...getAuditHeaders(),
+        },
         body: formData,
       })
 
@@ -128,6 +133,9 @@ export const SettingsProvider = ({ children }) => {
     try {
       const response = await fetch('/api/settings/logo', {
         method: 'DELETE',
+        headers: {
+          ...getAuditHeaders(),
+        },
       })
 
       const data = await response.json()

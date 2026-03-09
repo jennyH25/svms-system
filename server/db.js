@@ -560,120 +560,359 @@ export async function syncViolationsDatabase() {
   // Seed violations data
   const violationsData = [
     // Minor Offenses - First Degree
-    { category: 'Minor Offenses', degree: 'First Degree', name: 'Loitering', children: [] },
-    { category: 'Minor Offenses', degree: 'First Degree', name: 'Littering', children: [] },
-    { category: 'Minor Offenses', degree: 'First Degree', name: 'Classroom Disturbance', children: [] },
-    { category: 'Minor Offenses', degree: 'First Degree', name: 'Eating/Drinking in Academic Facilities', children: [] },
-    { category: 'Minor Offenses', degree: 'First Degree', name: 'Improper disposal of waste/littering', children: [] },
-    { category: 'Minor Offenses', degree: 'First Degree', name: 'Not wearing a school ID', children: [] },
-    { category: 'Minor Offenses', degree: 'First Degree', name: 'Unauthorized use of school property', children: [] },
-    { category: 'Minor Offenses', degree: 'First Degree', name: 'Inappropriate Attire', children: [
-      'Shorts, skirts, or dresses that are above mid-thigh or excessively short',
-      'Low-rise, tattered, or ripped jeans',
-      'Lounge wear, pajamas, leggings worn as outwear',
-      'Sleeveless tops, tube tops, plunging necklines, or low-cut shirts',
-      'Midriff-exposing tops or see-through garments',
-      'Shirts or blouses that promote alcohol, tobacco, hatred, drugs, any illegal act, or offensive content',
-      'Unnaturally bright or extreme hair colors',
-      'Wearing multiple or oversized accessories',
-      'Slippers, flip-flops',
-      'Slip-on clogs with open backs, excessive holes',
-      'Open-toe and strappy sandals',
-      'Step-ins or slip-on shoes without heel supports'
-    ] },
-    { category: 'Minor Offenses', degree: 'First Degree', name: 'Sitting on the stairs', children: [] },
+    {
+      category: "Minor Offenses",
+      degree: "First Degree",
+      name: "Loitering",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "First Degree",
+      name: "Littering",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "First Degree",
+      name: "Classroom Disturbance",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "First Degree",
+      name: "Eating/Drinking in Academic Facilities",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "First Degree",
+      name: "Improper disposal of waste/littering",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "First Degree",
+      name: "Not wearing a school ID",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "First Degree",
+      name: "Unauthorized use of school property",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "First Degree",
+      name: "Inappropriate Attire",
+      children: [
+        "Shorts, skirts, or dresses that are above mid-thigh or excessively short",
+        "Low-rise, tattered, or ripped jeans",
+        "Lounge wear, pajamas, leggings worn as outwear",
+        "Sleeveless tops, tube tops, plunging necklines, or low-cut shirts",
+        "Midriff-exposing tops or see-through garments",
+        "Shirts or blouses that promote alcohol, tobacco, hatred, drugs, any illegal act, or offensive content",
+        "Unnaturally bright or extreme hair colors",
+        "Wearing multiple or oversized accessories",
+        "Slippers, flip-flops",
+        "Slip-on clogs with open backs, excessive holes",
+        "Open-toe and strappy sandals",
+        "Step-ins or slip-on shoes without heel supports",
+      ],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "First Degree",
+      name: "Sitting on the stairs",
+      children: [],
+    },
 
     // Minor Offenses - Second Degree
-    { category: 'Minor Offenses', degree: 'Second Degree', name: 'Courting/Coupling', children: [
-      'PDA',
-      'Holding or Touching'
-    ] },
-    { category: 'Minor Offenses', degree: 'Second Degree', name: 'Rough games / Quarreling / Boisterous behavior', children: [] },
-    { category: 'Minor Offenses', degree: 'Second Degree', name: 'Use of Vulgar Expressions', children: [] },
-    { category: 'Minor Offenses', degree: 'Second Degree', name: 'Unauthorized use of gadgets within class hours', children: [] },
-    { category: 'Minor Offenses', degree: 'Second Degree', name: 'Cutting classes', children: [] },
+    {
+      category: "Minor Offenses",
+      degree: "Second Degree",
+      name: "Courting/Coupling",
+      children: ["PDA", "Holding or Touching"],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "Second Degree",
+      name: "Rough games / Quarreling / Boisterous behavior",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "Second Degree",
+      name: "Use of Vulgar Expressions",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "Second Degree",
+      name: "Unauthorized use of gadgets within class hours",
+      children: [],
+    },
+    {
+      category: "Minor Offenses",
+      degree: "Second Degree",
+      name: "Cutting classes",
+      children: [],
+    },
 
     // Major Offenses - Third Degree
-    { category: 'Major Offenses', degree: 'Third Degree', name: 'Lending or using somebody else\'s ID', children: [] },
-    { category: 'Major Offenses', degree: 'Third Degree', name: 'Insubordination', children: [] },
-    { category: 'Major Offenses', degree: 'Third Degree', name: 'Vandalism', children: [] },
-    { category: 'Major Offenses', degree: 'Third Degree', name: 'Pornographic Materials / Obscenity', children: [] },
-    { category: 'Major Offenses', degree: 'Third Degree', name: 'Disrespect to Authority', children: [] },
-    { category: 'Major Offenses', degree: 'Third Degree', name: 'Unauthorized Use of School Name/Representation', children: [] },
-    { category: 'Major Offenses', degree: 'Third Degree', name: 'Cat calling / name calling', children: [] },
+    {
+      category: "Major Offenses",
+      degree: "Third Degree",
+      name: "Lending or using somebody else's ID",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Third Degree",
+      name: "Insubordination",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Third Degree",
+      name: "Vandalism",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Third Degree",
+      name: "Pornographic Materials / Obscenity",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Third Degree",
+      name: "Disrespect to Authority",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Third Degree",
+      name: "Unauthorized Use of School Name/Representation",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Third Degree",
+      name: "Cat calling / name calling",
+      children: [],
+    },
 
     // Major Offenses - Fourth Degree
-    { category: 'Major Offenses', degree: 'Fourth Degree', name: 'Cheating', children: [] },
-    { category: 'Major Offenses', degree: 'Fourth Degree', name: 'Stealing', children: [] },
+    {
+      category: "Major Offenses",
+      degree: "Fourth Degree",
+      name: "Cheating",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Fourth Degree",
+      name: "Stealing",
+      children: [],
+    },
 
     // Major Offenses - Fifth Degree
-    { category: 'Major Offenses', degree: 'Fifth Degree', name: 'Possession or Passing of Fireworks', children: [] },
-    { category: 'Major Offenses', degree: 'Fifth Degree', name: 'Improper behavior', children: [
-      'Bribery',
-      'Theft',
-      'Extortion',
-      'Acts of Violence',
-      'Falsification',
-      'Deceitful acts',
-      'Slander',
-      'Gambling'
-    ] },
-    { category: 'Major Offenses', degree: 'Fifth Degree', name: 'Violence', children: [
-      'Fist fighting',
-      'Physical injury',
-      'Choking',
-      'Threatening',
-      'Intimidating others'
-    ] },
-    { category: 'Major Offenses', degree: 'Fifth Degree', name: 'Bullying', children: [
-      'Written or Action'
-    ] },
-    { category: 'Major Offenses', degree: 'Fifth Degree', name: 'Possession or Passing of Deadly Weapons', children: [] },
-    { category: 'Major Offenses', degree: 'Fifth Degree', name: 'Alcohol', children: [
-      'Bringing or drinking alcoholic beverages'
-    ] },
-    { category: 'Major Offenses', degree: 'Fifth Degree', name: 'Coming to school intoxicated or under the influence of alcohol', children: [] },
-    { category: 'Major Offenses', degree: 'Fifth Degree', name: 'Smoking or Vaping', children: [] },
+    {
+      category: "Major Offenses",
+      degree: "Fifth Degree",
+      name: "Possession or Passing of Fireworks",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Fifth Degree",
+      name: "Improper behavior",
+      children: [
+        "Bribery",
+        "Theft",
+        "Extortion",
+        "Acts of Violence",
+        "Falsification",
+        "Deceitful acts",
+        "Slander",
+        "Gambling",
+      ],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Fifth Degree",
+      name: "Violence",
+      children: [
+        "Fist fighting",
+        "Physical injury",
+        "Choking",
+        "Threatening",
+        "Intimidating others",
+      ],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Fifth Degree",
+      name: "Bullying",
+      children: ["Written or Action"],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Fifth Degree",
+      name: "Possession or Passing of Deadly Weapons",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Fifth Degree",
+      name: "Alcohol",
+      children: ["Bringing or drinking alcoholic beverages"],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Fifth Degree",
+      name: "Coming to school intoxicated or under the influence of alcohol",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Fifth Degree",
+      name: "Smoking or Vaping",
+      children: [],
+    },
 
     // Major Offenses - Sixth Degree
-    { category: 'Major Offenses', degree: 'Sixth Degree', name: 'Any act of dishonesty', children: [] },
-    { category: 'Major Offenses', degree: 'Sixth Degree', name: 'Defamation', children: [] },
-    { category: 'Major Offenses', degree: 'Sixth Degree', name: 'Immoralities', children: [] },
-    { category: 'Major Offenses', degree: 'Sixth Degree', name: 'Sexual Harassment', children: [] },
-    { category: 'Major Offenses', degree: 'Sixth Degree', name: 'Malicious acts', children: [] },
+    {
+      category: "Major Offenses",
+      degree: "Sixth Degree",
+      name: "Any act of dishonesty",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Sixth Degree",
+      name: "Defamation",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Sixth Degree",
+      name: "Immoralities",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Sixth Degree",
+      name: "Sexual Harassment",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Sixth Degree",
+      name: "Malicious acts",
+      children: [],
+    },
 
     // Major Offenses - Seventh Degree
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Unrecognized Organizations', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Drug Possession/Distribution', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Acts of Harm', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Explosives', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Unauthorized Strikes', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Dishonor to PLP', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Public Misconduct', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Defamatory/Obscene Content', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Vandalism', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Unauthorized Representation', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Unauthorized Media Statements', children: [] },
-    { category: 'Major Offenses', degree: 'Seventh Degree', name: 'Event Disruption', children: [] }
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Unrecognized Organizations",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Drug Possession/Distribution",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Acts of Harm",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Explosives",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Unauthorized Strikes",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Dishonor to PLP",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Public Misconduct",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Defamatory/Obscene Content",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Vandalism",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Unauthorized Representation",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Unauthorized Media Statements",
+      children: [],
+    },
+    {
+      category: "Major Offenses",
+      degree: "Seventh Degree",
+      name: "Event Disruption",
+      children: [],
+    },
   ];
 
   for (const violation of violationsData) {
     // Insert parent violation
-    const parentResult = await dbPool.query(`
+    const parentResult = await dbPool.query(
+      `
       INSERT INTO violations (category, degree, name, parent_id)
       VALUES ($1, $2, $3, $4)
       ON CONFLICT (category, degree, name) DO NOTHING
       RETURNING id
-    `, [violation.category, violation.degree, violation.name, null]);
+    `,
+      [violation.category, violation.degree, violation.name, null],
+    );
 
     let parentId = null;
     if (parentResult.rows.length > 0) {
       parentId = parentResult.rows[0].id;
     } else {
       // Get existing parent ID
-      const existingResult = await dbPool.query(`
+      const existingResult = await dbPool.query(
+        `
         SELECT id FROM violations WHERE category = $1 AND degree = $2 AND name = $3 AND parent_id IS NULL
-      `, [violation.category, violation.degree, violation.name]);
+      `,
+        [violation.category, violation.degree, violation.name],
+      );
       if (existingResult.rows.length > 0) {
         parentId = existingResult.rows[0].id;
       }
@@ -682,14 +921,54 @@ export async function syncViolationsDatabase() {
     // Insert child violations
     if (parentId && violation.children.length > 0) {
       for (const childName of violation.children) {
-        await dbPool.query(`
+        await dbPool.query(
+          `
           INSERT INTO violations (category, degree, name, parent_id)
           VALUES ($1, $2, $3, $4)
           ON CONFLICT (category, degree, name) DO NOTHING
-        `, [violation.category, violation.degree, childName, parentId]);
+        `,
+          [violation.category, violation.degree, childName, parentId],
+        );
       }
     }
   }
+
+  return { synced: true };
+}
+
+export async function syncAuditLogsDatabase() {
+  if (!hasDbConfig()) {
+    throw new Error(
+      `Missing required environment variables: ${getMissingDbVars().join(", ")}`,
+    );
+  }
+
+  const dbPool = getDbPool();
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+      actor_user_id BIGINT,
+      actor_name VARCHAR(255),
+      actor_role VARCHAR(50) NOT NULL DEFAULT 'admin',
+      action VARCHAR(100) NOT NULL,
+      target_type VARCHAR(100) NOT NULL,
+      target_id VARCHAR(100),
+      details TEXT,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx
+    ON audit_logs (created_at DESC)
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS audit_logs_actor_user_id_idx
+    ON audit_logs (actor_user_id)
+  `);
 
   return { synced: true };
 }

@@ -9,6 +9,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
+import { getAuditHeaders } from '@/lib/auditHeaders'
 import { Plus, Edit, Trash2, ChevronDown, ChevronRight, MoreVertical } from 'lucide-react'
 
 const Violations = () => {
@@ -182,7 +183,10 @@ const Violations = () => {
 
     try {
       const response = await fetch(`/api/violations/${deleteTarget.id}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: {
+          ...getAuditHeaders(),
+        },
       })
       if (response.ok) {
         fetchViolations()
@@ -233,7 +237,8 @@ const Violations = () => {
       const response = await fetch('/api/violations', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuditHeaders(),
         },
         body: JSON.stringify(formData)
       })
@@ -262,7 +267,8 @@ const Violations = () => {
       const response = await fetch(`/api/violations/${editFormData.id}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuditHeaders(),
         },
         body: JSON.stringify(editFormData)
       })

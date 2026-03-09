@@ -18,6 +18,7 @@ import {
   syncStudentsFromUsers,
   syncStudentsDatabase,
   syncSystemSettingsDatabase,
+  syncAuditLogsDatabase,
   syncViolationsDatabase,
 } from "./db.js";
 import { encryptImagePath, decryptImagePath } from "./encryption.js";
@@ -30,6 +31,67 @@ const distPath = path.resolve(__dirname, "../dist");
 const FORGOT_CODE_EXPIRY_MS = 10 * 60 * 1000;
 const FORGOT_RESEND_COOLDOWN_MS = 15 * 1000;
 const forgotPasswordStore = new Map();
+
+function getAuditActor(req) {
+  const actorUserIdRaw = req.get("x-actor-user-id");
+  const actorUserId = Number(actorUserIdRaw);
+  const actorName =
+    String(req.get("x-actor-name") || "").trim() || "Admin User";
+  const actorRole =
+    String(req.get("x-actor-role") || "admin").trim() || "admin";
+
+  return {
+    actorUserId: Number.isFinite(actorUserId) ? actorUserId : null,
+    actorName,
+    actorRole,
+  };
+}
+
+async function logAuditEvent(
+  req,
+  { action, targetType, targetId = null, details = null, metadata = null },
+) {
+  try {
+    if (!hasDbConfig()) {
+      return;
+    }
+
+    const pool = getDbPool();
+    if (!pool) {
+      return;
+    }
+
+    const { actorUserId, actorName, actorRole } = getAuditActor(req);
+
+    await pool.query(
+      `
+      INSERT INTO audit_logs (
+        actor_user_id,
+        actor_name,
+        actor_role,
+        action,
+        target_type,
+        target_id,
+        details,
+        metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+      `,
+      [
+        actorUserId,
+        actorName,
+        actorRole,
+        action,
+        targetType,
+        targetId ? String(targetId) : null,
+        details,
+        metadata ? JSON.stringify(metadata) : null,
+      ],
+    );
+  } catch (error) {
+    console.warn(`Audit log failed: ${error.message}`);
+  }
+}
 
 function buildCredentialEmailTemplate({ firstName, username, password }) {
   return `
@@ -793,6 +855,17 @@ app.put("/api/profile/admin", async (req, res) => {
       });
     }
 
+    await logAuditEvent(req, {
+      action: "UPDATE_ADMIN_PROFILE",
+      targetType: "admin_profile",
+      targetId: updatedUser.id,
+      details: `Updated admin profile for ${updatedUser.username}.`,
+      metadata: {
+        username: updatedUser.username,
+        email: updatedAdmin.email,
+      },
+    });
+
     return res.status(200).json({
       status: "ok",
       user: {
@@ -1141,9 +1214,22 @@ app.post("/api/students", async (req, res) => {
       });
     }
 
+    const createdStudent = result.rows?.[0] || null;
+    await logAuditEvent(req, {
+      action: "CREATE_STUDENT",
+      targetType: "student",
+      targetId: createdStudent?.id,
+      details: `Added student ${createdStudent?.full_name || fullName}.`,
+      metadata: {
+        schoolId: createdStudent?.school_id || schoolId,
+        program: createdStudent?.program || program,
+        yearSection: createdStudent?.year_section || yearSection,
+      },
+    });
+
     return res.status(201).json({
       status: "ok",
-      student: result.rows?.[0] || null,
+      student: createdStudent,
       credentials: {
         username: generatedUsername,
         password: generatedPassword,
@@ -1249,6 +1335,18 @@ app.put("/api/students/:id", async (req, res) => {
       });
     }
 
+    await logAuditEvent(req, {
+      action: "UPDATE_STUDENT",
+      targetType: "student",
+      targetId: result.rows[0].id,
+      details: `Updated student ${result.rows[0].full_name}.`,
+      metadata: {
+        schoolId: result.rows[0].school_id,
+        program: result.rows[0].program,
+        yearSection: result.rows[0].year_section,
+      },
+    });
+
     return res.status(200).json({
       status: "ok",
       student: result.rows[0],
@@ -1288,11 +1386,22 @@ app.delete("/api/students/:id", async (req, res) => {
     }
 
     const deletedUserId = result.rows?.[0]?.user_id;
+    const deletedStudentId = result.rows?.[0]?.id;
     if (deletedUserId) {
       await pool.query(`DELETE FROM users WHERE id = $1 AND role = 'student'`, [
         deletedUserId,
       ]);
     }
+
+    await logAuditEvent(req, {
+      action: "DELETE_STUDENT",
+      targetType: "student",
+      targetId: deletedStudentId,
+      details: `Deleted student record #${deletedStudentId}.`,
+      metadata: {
+        userId: deletedUserId,
+      },
+    });
 
     return res.status(200).json({ status: "ok" });
   } catch (error) {
@@ -1428,6 +1537,18 @@ app.post("/api/settings", async (req, res) => {
       }
     }
 
+    await logAuditEvent(req, {
+      action: "UPDATE_SYSTEM_SETTINGS",
+      targetType: "system_settings",
+      targetId: settings.id,
+      details: "Updated system display name/theme settings.",
+      metadata: {
+        displayName: settings.display_name,
+        theme: settings.theme,
+        themeColor: settings.theme_color,
+      },
+    });
+
     return res.status(200).json({
       status: "ok",
       settings: {
@@ -1504,6 +1625,16 @@ app.post(
 
       const settings = result.rows[0];
 
+      await logAuditEvent(req, {
+        action: "UPLOAD_LOGO",
+        targetType: "system_settings",
+        targetId: settings.id,
+        details: "Uploaded a new system logo.",
+        metadata: {
+          logoPath,
+        },
+      });
+
       return res.status(200).json({
         status: "ok",
         message: "Logo uploaded successfully.",
@@ -1556,6 +1687,13 @@ app.delete("/api/settings/logo", async (req, res) => {
 
     const settings = result.rows[0];
 
+    await logAuditEvent(req, {
+      action: "REMOVE_LOGO",
+      targetType: "system_settings",
+      targetId: settings.id,
+      details: "Removed system logo.",
+    });
+
     return res.status(200).json({
       status: "ok",
       message: "Logo removed successfully.",
@@ -1573,6 +1711,54 @@ app.delete("/api/settings/logo", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Unable to remove logo (${error.message}).`,
+    });
+  }
+});
+
+app.get("/api/audit-logs", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  const limitRaw = Number(req.query.limit);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(Math.max(limitRaw, 1), 100)
+    : 25;
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        actor_user_id,
+        actor_name,
+        actor_role,
+        action,
+        target_type,
+        target_id,
+        details,
+        metadata,
+        created_at
+      FROM audit_logs
+      ORDER BY created_at DESC, id DESC
+      LIMIT $1
+      `,
+      [limit],
+    );
+
+    return res.status(200).json({
+      status: "ok",
+      logs: result.rows || [],
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to load audit logs (${error.message}).`,
     });
   }
 });
@@ -1669,6 +1855,18 @@ app.post("/api/violations", async (req, res) => {
       }
     }
 
+    await logAuditEvent(req, {
+      action: "CREATE_VIOLATION",
+      targetType: "violation",
+      targetId: parent.id,
+      details: `Created violation ${parent.name}.`,
+      metadata: {
+        category,
+        degree,
+        childCount: Array.isArray(children) ? children.length : 0,
+      },
+    });
+
     return res.status(201).json({
       status: "ok",
       violation: parent,
@@ -1738,6 +1936,18 @@ app.put("/api/violations/:id", async (req, res) => {
       });
     }
 
+    await logAuditEvent(req, {
+      action: "UPDATE_VIOLATION",
+      targetType: "violation",
+      targetId: result.rows[0].id,
+      details: `Updated violation ${result.rows[0].name}.`,
+      metadata: {
+        category: result.rows[0].category,
+        degree: result.rows[0].degree,
+        childCount: Array.isArray(children) ? children.length : undefined,
+      },
+    });
+
     return res.status(200).json({
       status: "ok",
       violation: result.rows[0],
@@ -1781,6 +1991,13 @@ app.delete("/api/violations/:id", async (req, res) => {
       });
     }
 
+    await logAuditEvent(req, {
+      action: "DELETE_VIOLATION",
+      targetType: "violation",
+      targetId: id,
+      details: `Deleted violation #${id}.`,
+    });
+
     return res.status(200).json({ status: "ok" });
   } catch (error) {
     return res.status(503).json({
@@ -1814,6 +2031,7 @@ async function ensureAuthDatabaseReady() {
       await syncStudentsFromUsers();
       await syncSystemSettingsDatabase();
       await syncViolationsDatabase();
+      await syncAuditLogsDatabase();
     })();
   }
 
