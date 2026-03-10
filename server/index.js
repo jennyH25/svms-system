@@ -2032,6 +2032,21 @@ app.delete("/api/violations/:id", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
+    // Fetch violation details before delete so we can notify students
+    const violationRes = await pool.query(
+      `SELECT id, category, degree, name FROM violations WHERE id = $1`,
+      [id],
+    );
+
+    if (!violationRes.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "Violation not found.",
+      });
+    }
+
+    const violation = violationRes.rows[0];
+
     // First delete children
     await pool.query(`DELETE FROM violations WHERE parent_id = $1`, [id]);
 
@@ -2052,8 +2067,25 @@ app.delete("/api/violations/:id", async (req, res) => {
       action: "DELETE_VIOLATION",
       targetType: "violation",
       targetId: id,
-      details: `Deleted violation #${id}.`,
+      details: `Deleted violation ${violation.name} (ID: ${id}).`,
     });
+
+    // Create a student notification for violation deletion
+    try {
+      const notifTitle = "Violation deleted";
+      const notifDesc = `A violation has been removed: "${violation.name}" (${violation.category} / ${violation.degree}).`;
+      await pool.query(
+        `
+        INSERT INTO notifications (student_user_id, title, description, metadata)
+        SELECT u.id, $1, $2, $3
+        FROM users u
+        WHERE u.role = 'student'
+        `,
+        [notifTitle, notifDesc, JSON.stringify({ type: 'violation_deleted', violationId: id, violationName: violation.name })],
+      );
+    } catch (notifErr) {
+      console.warn('Failed to insert violation delete notifications', notifErr);
+    }
 
     return res.status(200).json({ status: "ok" });
   } catch (error) {
