@@ -42,6 +42,7 @@ const Dashboard = () => {
   const [sectionFilter, setSectionFilter] = useState("All");
   const [recentActivity, setRecentActivity] = useState([]);
   const [isLoadingActivity, setIsLoadingActivity] = useState(true);
+  const [activityModalOpen, setActivityModalOpen] = useState(false);
 
   const rankingData = [
     {
@@ -204,7 +205,7 @@ const Dashboard = () => {
       }
 
       try {
-        const response = await fetch("/api/audit-logs?limit=25");
+        const response = await fetch("/api/audit-logs?limit=100");
         const result = await response.json().catch(() => ({}));
 
         if (!response.ok || result?.status !== "ok") {
@@ -256,6 +257,47 @@ const Dashboard = () => {
       clearInterval(intervalId);
     };
   }, []);
+
+  const recentActivityColumns = [
+    {
+      key: "date",
+      label: "Date",
+      render: (_, row) => <TableCellDateTime date={row.date} time={row.time} />,
+    },
+    {
+      key: "actorName",
+      label: "Admin",
+      render: (_, row) => (
+        <TableCellText
+          primary={row.actorName}
+          secondary={String(row.actorRole || "").toUpperCase()}
+        />
+      ),
+    },
+    { key: "target", label: "Target" },
+    {
+      key: "action",
+      label: "Action",
+      render: (value) => (
+        <TableCellBadge
+          label={value}
+          variant={
+            String(value || "").includes("DELETE")
+              ? "danger"
+              : String(value || "").includes("CREATE") ||
+                String(value || "").includes("UPLOAD")
+                ? "success"
+                : String(value || "").includes("UPDATE")
+                  ? "warning"
+                  : "info"
+          }
+        />
+      ),
+    },
+    { key: "details", label: "Details" },
+  ];
+
+  const recentActivityPreview = recentActivity.slice(0, 5);
 
   return (
     <div className="text-white">
@@ -506,54 +548,18 @@ const Dashboard = () => {
         <Card variant="glass" padding="md">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-section-title">Recent Activity</h3>
-            <button className="text-gray-400">
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
-              </svg>
+            <button
+              type="button"
+              onClick={() => setActivityModalOpen(true)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 border border-white/15 text-gray-200 hover:text-white hover:bg-white/15 transition-colors"
+            >
+              <Maximize2 className="w-4 h-4" />
+              View All
             </button>
           </div>
           <DataTable
-            columns={[
-              {
-                key: "date",
-                label: "Date",
-                render: (_, row) => (
-                  <TableCellDateTime date={row.date} time={row.time} />
-                ),
-              },
-              {
-                key: "actorName",
-                label: "Admin",
-                render: (_, row) => (
-                  <TableCellText
-                    primary={row.actorName}
-                    secondary={String(row.actorRole || "").toUpperCase()}
-                  />
-                ),
-              },
-              { key: "target", label: "Target" },
-              {
-                key: "action",
-                label: "Action",
-                render: (value) => (
-                  <TableCellBadge
-                    label={value}
-                    variant={
-                      String(value || "").includes("DELETE")
-                        ? "danger"
-                        : String(value || "").includes("CREATE") ||
-                            String(value || "").includes("UPLOAD")
-                          ? "success"
-                          : String(value || "").includes("UPDATE")
-                            ? "warning"
-                            : "info"
-                    }
-                  />
-                ),
-              },
-              { key: "details", label: "Details" },
-            ]}
-            data={isLoadingActivity ? [] : recentActivity}
+            columns={recentActivityColumns}
+            data={isLoadingActivity ? [] : recentActivityPreview}
             onRowClick={(row) => console.log("Row clicked", row)}
           />
         </Card>
@@ -893,6 +899,25 @@ const Dashboard = () => {
               </div>
             </div>
           )}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={activityModalOpen}
+        onClose={() => setActivityModalOpen(false)}
+        title={"Recent Activity"}
+        size="2xl"
+        className="max-w-[1200px] max-h-[80vh]"
+      >
+        <p className="text-sm text-gray-400 mb-4">
+          Full audit trail of recent admin actions.
+        </p>
+        <div className="max-h-[60vh] overflow-auto rounded-xl">
+          <DataTable
+            columns={recentActivityColumns}
+            data={isLoadingActivity ? [] : recentActivity}
+            onRowClick={(row) => console.log("Row clicked", row)}
+          />
         </div>
       </Modal>
     </div>

@@ -31,6 +31,8 @@ const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, "../dist");
 const FORGOT_CODE_EXPIRY_MS = 10 * 60 * 1000;
 const FORGOT_RESEND_COOLDOWN_MS = 15 * 1000;
+const AUDIT_LOG_RETENTION_DAYS = 15;
+const AUDIT_LOG_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const forgotPasswordStore = new Map();
 
 function getAuditActor(req) {
@@ -91,6 +93,36 @@ async function logAuditEvent(
     );
   } catch (error) {
     console.warn(`Audit log failed: ${error.message}`);
+  }
+}
+
+async function purgeExpiredAuditLogs() {
+  if (!hasDbConfig()) {
+    return;
+  }
+
+  try {
+    const pool = getDbPool();
+    if (!pool) {
+      return;
+    }
+
+    const result = await pool.query(
+      `
+      DELETE FROM audit_logs
+      WHERE created_at < NOW() - ($1::text || ' days')::interval
+      `,
+      [String(AUDIT_LOG_RETENTION_DAYS)],
+    );
+
+    const removedCount = Number(result.rowCount || 0);
+    if (removedCount > 0) {
+      console.log(
+        `Audit cleanup: removed ${removedCount} log(s) older than ${AUDIT_LOG_RETENTION_DAYS} days.`,
+      );
+    }
+  } catch (error) {
+    console.warn(`Audit cleanup failed: ${error.message}`);
   }
 }
 
@@ -2241,6 +2273,7 @@ app.get("/{*path}", (req, res, next) => {
 
 let server;
 let authSyncPromise = null;
+let auditCleanupTimer = null;
 
 async function ensureAuthDatabaseReady() {
   if (!authSyncPromise) {
@@ -2274,6 +2307,11 @@ async function startServer() {
     ensureAuthDatabaseReady()
       .then(() => {
         console.log("Auth database synchronized.");
+        purgeExpiredAuditLogs();
+        auditCleanupTimer = setInterval(() => {
+          purgeExpiredAuditLogs();
+        }, AUDIT_LOG_CLEANUP_INTERVAL_MS);
+
         if (seedAccounts.length === 0) {
           console.log("No account seed variables detected during startup.");
         }
@@ -2291,6 +2329,11 @@ async function startServer() {
 
 async function shutdown(signal) {
   console.log(`Received ${signal}, shutting down...`);
+
+  if (auditCleanupTimer) {
+    clearInterval(auditCleanupTimer);
+    auditCleanupTimer = null;
+  }
 
   if (!server) {
     await closeDbPool();
