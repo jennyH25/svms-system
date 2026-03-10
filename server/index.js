@@ -20,6 +20,7 @@ import {
   syncSystemSettingsDatabase,
   syncAuditLogsDatabase,
   syncViolationsDatabase,
+  syncNotificationsDatabase,
 } from "./db.js";
 import { encryptImagePath, decryptImagePath } from "./encryption.js";
 
@@ -1889,6 +1890,23 @@ app.post("/api/violations", async (req, res) => {
       },
     });
 
+    // create notifications for all students informing them about the new violation
+    try {
+      const notifTitle = "New violation added";
+      const notifDesc = `A new violation \"${parent.name}\" (${parent.category} / ${parent.degree}) has been added.`;
+      await pool.query(
+        `
+        INSERT INTO notifications (student_user_id, title, description, metadata)
+        SELECT u.id, $1, $2, $3
+        FROM users u
+        WHERE u.role = 'student'
+        `,
+        [notifTitle, notifDesc, JSON.stringify({ type: 'violation_added', violationId: parent.id })],
+      );
+    } catch (notifErr) {
+      console.warn('Failed to insert violation notifications', notifErr);
+    }
+
     return res.status(201).json({
       status: "ok",
       violation: parent,
@@ -1970,6 +1988,23 @@ app.put("/api/violations/:id", async (req, res) => {
       },
     });
 
+    // notify students about the change
+    try {
+      const notifTitle = "Violation updated";
+      const notifDesc = `The violation \"${result.rows[0].name}\" has been updated.`;
+      await pool.query(
+        `
+        INSERT INTO notifications (student_user_id, title, description, metadata)
+        SELECT u.id, $1, $2, $3
+        FROM users u
+        WHERE u.role = 'student'
+        `,
+        [notifTitle, notifDesc, JSON.stringify({ type: 'violation_updated', violationId: result.rows[0].id })],
+      );
+    } catch (notifErr) {
+      console.warn('Failed to insert violation update notifications', notifErr);
+    }
+
     return res.status(200).json({
       status: "ok",
       violation: result.rows[0],
@@ -2029,6 +2064,137 @@ app.delete("/api/violations/:id", async (req, res) => {
   }
 });
 
+// -----------------------------------------
+// NOTIFICATIONS API (student-facing)
+// -----------------------------------------
+
+// helper to resolve current user from headers
+function getCurrentUserId(req) {
+  const { actorUserId } = getAuditActor(req);
+  return actorUserId || null;
+}
+
+// GET notifications for logged-in student
+app.get("/api/notifications", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const userId = getCurrentUserId(req);
+    if (!userId) {
+      return res.status(400).json({ status: "error", message: "User not identified." });
+    }
+
+    const result = await pool.query(
+      `
+      SELECT id, title, description, metadata, created_at, read_at
+      FROM notifications
+      WHERE student_user_id = $1
+      ORDER BY created_at DESC
+      `,
+      [userId],
+    );
+
+    return res.status(200).json({ status: "ok", notifications: result.rows || [] });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to load notifications (${error.message}).`,
+    });
+  }
+});
+
+// count unread notifications
+app.get("/api/notifications/unread-count", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({ status: "error", message: "Database is not configured." });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const userId = getCurrentUserId(req);
+    if (!userId) {
+      return res.status(400).json({ status: "error", message: "User not identified." });
+    }
+
+    const result = await pool.query(
+      `SELECT COUNT(*) AS count
+       FROM notifications
+       WHERE student_user_id = $1 AND read_at IS NULL`,
+      [userId],
+    );
+    const count = Number(result.rows[0]?.count || 0);
+    return res.status(200).json({ status: "ok", count });
+  } catch (error) {
+    return res.status(503).json({ status: "error", message: `Unable to count notifications (${error.message}).` });
+  }
+});
+
+// mark all notifications as read
+app.put("/api/notifications/mark-read-all", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({ status: "error", message: "Database is not configured." });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const userId = getCurrentUserId(req);
+    if (!userId) {
+      return res.status(400).json({ status: "error", message: "User not identified." });
+    }
+
+    await pool.query(
+      `UPDATE notifications SET read_at = NOW()
+       WHERE student_user_id = $1 AND read_at IS NULL`,
+      [userId],
+    );
+
+    return res.status(200).json({ status: "ok" });
+  } catch (error) {
+    return res.status(503).json({ status: "error", message: `Unable to mark notifications read (${error.message}).` });
+  }
+});
+
+// mark specific notification as read
+app.put("/api/notifications/:id/mark-read", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({ status: "error", message: "Database is not configured." });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const userId = getCurrentUserId(req);
+    const { id } = req.params;
+    if (!userId) {
+      return res.status(400).json({ status: "error", message: "User not identified." });
+    }
+
+    const result = await pool.query(
+      `UPDATE notifications SET read_at = NOW()
+       WHERE id = $1 AND student_user_id = $2 AND read_at IS NULL
+       RETURNING id`,
+      [id, userId],
+    );
+
+    if (!result.rows?.[0]) {
+      return res.status(404).json({ status: "error", message: "Notification not found or already read." });
+    }
+
+    return res.status(200).json({ status: "ok" });
+  } catch (error) {
+    return res.status(503).json({ status: "error", message: `Unable to mark notification read (${error.message}).` });
+  }
+});
+
 // In production, serve the built frontend from the same Express app.
 app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(distPath));
@@ -2053,6 +2219,7 @@ async function ensureAuthDatabaseReady() {
       await syncStudentsFromUsers();
       await syncSystemSettingsDatabase();
       await syncViolationsDatabase();
+      await syncNotificationsDatabase();
       await syncAuditLogsDatabase();
     })();
   }

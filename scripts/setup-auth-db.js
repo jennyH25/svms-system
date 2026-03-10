@@ -4,6 +4,8 @@ import {
   getSeedAccountsFromEnv,
   syncAuthDatabase,
   syncStudentsDatabase,
+  syncViolationsDatabase,
+  syncNotificationsDatabase,
 } from "../server/db.js";
 
 async function setupAuthDatabase() {
@@ -11,6 +13,9 @@ async function setupAuthDatabase() {
     const seedAccounts = getSeedAccountsFromEnv();
     const result = await syncAuthDatabase({ seedAccounts });
     await syncStudentsDatabase();
+    // also ensure the violations and notification tables exist when preparing the auth database
+    await syncViolationsDatabase();
+    await syncNotificationsDatabase();
 
     console.log("Auth database setup completed successfully.");
     if (result.accounts.length > 0) {

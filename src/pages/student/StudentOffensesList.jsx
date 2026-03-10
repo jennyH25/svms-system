@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import Button from '@/components/ui/Button'
 import SearchBar from '@/components/ui/SearchBar'
 import AnimatedContent from '@/components/ui/AnimatedContent'
@@ -18,6 +19,8 @@ const StudentOffensesList = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [expandedRows, setExpandedRows] = useState(new Set())
+  const [highlightedViolation, setHighlightedViolation] = useState(null)
+  const [searchParams, setSearchParams] = useSearchParams()
   
   useEffect(() => {
     let isMounted = true
@@ -52,6 +55,19 @@ const StudentOffensesList = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [])
+
+  useEffect(() => {
+    const highlightId = searchParams.get('highlight')
+    if (highlightId) {
+      setHighlightedViolation(highlightId)
+      // Clear the highlight after 10 seconds or when navigating away
+      const timer = setTimeout(() => {
+        setHighlightedViolation(null)
+        setSearchParams({})
+      }, 10000)
+      return () => clearTimeout(timer)
+    }
+  }, [searchParams, setSearchParams])
 
   const fetchViolations = async ({ silent = false, isMounted = true } = {}) => {
     if (!silent) {
@@ -196,7 +212,9 @@ const StudentOffensesList = () => {
     if (!expandedRows.has(parentId)) return null
 
     return children.map(child => (
-      <tr key={child.id} className="bg-gray-50">
+      <tr key={child.id} className={`bg-gray-50 ${
+        highlightedViolation === child.id ? "bg-blue-50 border-l-4 border-blue-500 font-bold" : ""
+      }`}>
         <td className="py-2 px-4 pl-12">
           <span className="text-[13px] text-[#666] font-medium">• {child.name}</span>
         </td>
@@ -318,7 +336,11 @@ const StudentOffensesList = () => {
                 {filteredData.map((row) => (
                   <React.Fragment key={row.id}>
                     <tr
-                      className={`border-b border-gray-100 hover:bg-gray-100 transition-colors text-[#1a1a1a] ${row.children && row.children.length > 0 ? "cursor-pointer" : ""}`}
+                      className={`border-b border-gray-100 hover:bg-gray-100 transition-colors text-[#1a1a1a] ${
+                        row.children && row.children.length > 0 ? "cursor-pointer" : ""
+                      } ${
+                        highlightedViolation === row.id ? "bg-blue-50 border-l-4 border-blue-500 font-bold" : ""
+                      }`}
                       onClick={() => handleViolationRowClick(row)}
                     >
                       {columns.map((column) => (

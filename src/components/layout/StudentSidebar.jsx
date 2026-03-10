@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { NavLink } from "react-router-dom";
 import logo from "../../assets/css_logo.png";
 import { useSettings } from "../../context/SettingsContext";
+import { getAuditHeaders } from '@/lib/auditHeaders';
 
 const StudentSidebar = () => {
   const { settings } = useSettings();
@@ -12,6 +13,38 @@ const StudentSidebar = () => {
   const firstTwoWords = nameParts.slice(0, 2).join(" ") || "";
   const secondLine = nameParts[2] || "";
   const thirdLine = nameParts[3] || "";
+
+  const [hasUnread, setHasUnread] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function checkUnread() {
+      try {
+        const res = await fetch('/api/notifications/unread-count', {
+          headers: { ...getAuditHeaders() },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && isMounted) {
+          setHasUnread((Number(data.count) || 0) > 0);
+        }
+      } catch (err) {
+        console.error('failed to fetch notif count', err);
+      }
+    }
+    checkUnread();
+    const iv = setInterval(checkUnread, 15000);
+    const onRead = () => {
+      if (isMounted) setHasUnread(false);
+    };
+    window.addEventListener('notificationsRead', onRead);
+    window.addEventListener('notificationRead', onRead);
+    return () => {
+      isMounted = false;
+      clearInterval(iv);
+      window.removeEventListener('notificationsRead', onRead);
+      window.removeEventListener('notificationRead', onRead);
+    };
+  }, []);
 
   const menuItems = [
     {
@@ -47,10 +80,15 @@ const StudentSidebar = () => {
       path: "/student/notifications",
       label: "Notification",
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0a3 3 0 11-6 0" />
-        </svg>
+        <div className="relative">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0a3 3 0 11-6 0" />
+          </svg>
+          {hasUnread && (
+            <span className="absolute top-0 right-0 bg-blue-500 w-2 h-2 rounded-full"></span>
+          )}
+        </div>
       ),
     },
   ];

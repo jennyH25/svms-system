@@ -1,5 +1,6 @@
 import { Search, UserPen } from 'lucide-react'
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import SearchBar from '../ui/SearchBar'
 import EditProfileModal from '../modals/EditProfileModal'
 import {
@@ -12,8 +13,62 @@ import { getAuditHeaders } from '@/lib/auditHeaders'
 
 const Navbar = () => {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false)
+  const [notifCount, setNotifCount] = useState(0)
+  const [recentNotifications, setRecentNotifications] = useState([])
   const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}')
   const welcomeRole = currentUser?.role === 'student' ? 'Student' : 'Admin'
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    let isMounted = true
+    async function loadData() {
+      if (currentUser?.role !== 'student') return
+      try {
+        // Fetch unread count
+        const countRes = await fetch('/api/notifications/unread-count', {
+          headers: { ...getAuditHeaders() },
+        })
+        const countData = await countRes.json().catch(() => ({}))
+        if (countRes.ok && isMounted) {
+          setNotifCount(Number(countData.count) || 0)
+        }
+
+        // Fetch recent notifications (top 5)
+        const notifRes = await fetch('/api/notifications', {
+          headers: { ...getAuditHeaders() },
+        })
+        const notifData = await notifRes.json().catch(() => ({}))
+        if (notifRes.ok && isMounted) {
+          const notifications = (notifData.notifications || []).map(note => ({
+            ...note,
+            metadata: note.metadata ? JSON.parse(note.metadata) : null
+          }));
+          setRecentNotifications(notifications.slice(0, 5))
+        }
+      } catch (err) {
+        console.error('failed to fetch notif data', err)
+      }
+    }
+    loadData()
+    const interval = setInterval(loadData, 15000) // refresh periodically
+
+    // mark badge cleared when notified (all or single)
+    const onReadAll = () => {
+      if (isMounted) setNotifCount(0)
+    };
+    const onReadSingle = () => {
+      if (isMounted) setNotifCount(prev => Math.max(0, prev - 1))
+    };
+    window.addEventListener('notificationsRead', onReadAll)
+    window.addEventListener('notificationRead', onReadSingle)
+
+    return () => {
+      isMounted = false
+      clearInterval(interval)
+      window.removeEventListener('notificationsRead', onReadAll)
+      window.removeEventListener('notificationRead', onReadSingle)
+    }
+  }, [currentUser])
 
   const handleSaveProfile = async (formData) => {
     const nextUser = {
@@ -114,11 +169,83 @@ const Navbar = () => {
           <SearchBar placeholder="Search" className="w-80" />
 
           {/* Notification Bell */}
-          <button className="text-gray-400 hover:text-white transition-colors">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-            </svg>
-          </button>
+          {currentUser?.role === 'student' ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="text-gray-400 hover:text-white transition-colors relative">
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                    />
+                  </svg>
+                  {notifCount > 0 && (
+                    <span className="absolute top-0 right-0 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                      {notifCount > 9 ? '9+' : notifCount}
+                    </span>
+                  )}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-[#1E1F22]/95 backdrop-blur-md border border-white/10 rounded-xl shadow-lg w-80 max-h-96 overflow-y-auto">
+                <div className="p-4">
+                  <h3 className="text-white font-semibold mb-2">Notifications</h3>
+                  {recentNotifications.length === 0 ? (
+                    <p className="text-gray-400 text-sm">No notifications</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {recentNotifications.map((note) => (
+                        <div
+                          key={note.id}
+                          className={`p-2 rounded-lg cursor-pointer hover:bg-white/10 ${!note.read_at ? 'bg-blue-500/20 border-l-2 border-blue-500' : ''}`}
+                          onClick={async () => {
+                            // Mark as read
+                            try {
+                              await fetch(`/api/notifications/${note.id}/mark-read`, {
+                                method: 'PUT',
+                                headers: { ...getAuditHeaders() },
+                              });
+                              // Update local state
+                              setRecentNotifications(prev => prev.map(n => n.id === note.id ? { ...n, read_at: new Date().toISOString() } : n));
+                              setNotifCount(prev => Math.max(0, prev - 1));
+                            } catch (err) {
+                              console.error('Failed to mark read', err);
+                            }
+                            // Navigate based on metadata
+                            if (note.metadata?.type === 'violation_added' || note.metadata?.type === 'violation_updated') {
+                              navigate(`/student/offenses?highlight=${note.metadata.violationId}`);
+                            }
+                          }}
+                        >
+                          <div className="font-bold text-white text-sm">{note.title}</div>
+                          <div className="text-gray-400 text-xs">{note.description}</div>
+                          <div className="text-gray-500 text-xs mt-1">{new Date(note.created_at).toLocaleString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    className="w-full mt-4 text-center text-blue-400 hover:text-blue-300 text-sm font-medium"
+                    onClick={() => navigate('/student/notifications')}
+                  >
+                    View all
+                  </button>
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <button className="text-gray-400 hover:text-white transition-colors">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+            </button>
+          )}
 
           {/* Profile Avatar with Dropdown */}
           <DropdownMenu>
