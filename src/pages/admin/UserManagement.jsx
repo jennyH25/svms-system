@@ -46,30 +46,66 @@ const UserManagement = () => {
 
   const fetchStudents = async () => {
     setIsLoading(true);
-    try {
-      const response = await fetch("/api/students");
-      const result = await response.json().catch(() => ({}));
 
-      if (!response.ok) {
-        throw new Error(result?.message || "Failed to load students.");
+    const degreeRank = {
+      "First Degree": 1,
+      "Second Degree": 2,
+      "Third Degree": 3,
+      "Fourth Degree": 4,
+      "Fifth Degree": 5,
+      "Sixth Degree": 6,
+      "Seventh Degree": 7,
+    };
+
+    try {
+      const [studentsRes, violationsRes] = await Promise.all([
+        fetch("/api/students"),
+        fetch("/api/student-violations"),
+      ]);
+
+      const studentsResult = await studentsRes.json().catch(() => ({}));
+      const violationsResult = await violationsRes.json().catch(() => ({}));
+
+      if (!studentsRes.ok) {
+        throw new Error(studentsResult?.message || "Failed to load students.");
       }
 
-      const rows = Array.isArray(result.students) ? result.students : [];
+      if (!violationsRes.ok) {
+        throw new Error(violationsResult?.message || "Failed to load violations.");
+      }
+
+      const violations = Array.isArray(violationsResult.records) ? violationsResult.records : [];
+      const studentDegreeMap = violations.reduce((acc, record) => {
+        if (record.student_id == null) return acc;
+        if (record.cleared_at) return acc; // only active violations adjust risk color
+
+        const rank = degreeRank[String(record.violation_degree)] || 0;
+        acc[record.student_id] = Math.max(acc[record.student_id] || 0, rank);
+        return acc;
+      }, {});
+
+      const rows = Array.isArray(studentsResult.students) ? studentsResult.students : [];
       setStudentData(
-        rows.map((student) => ({
-          id: Number(student.id),
-          userId: student.user_id ? Number(student.user_id) : null,
-          username: student.username || "",
-          email: student.email || "",
-          schoolId: student.school_id,
-          studentName: student.full_name,
-          firstName: student.first_name,
-          lastName: student.last_name,
-          program: student.program,
-          yearSection: student.year_section,
-          status: student.status,
-          violationCount: Number(student.violation_count) || 0,
-        })),
+        rows.map((student) => {
+          const maxDegreeRank = studentDegreeMap[student.id] || 0;
+          const degreeName = Object.keys(degreeRank).find((key) => degreeRank[key] === maxDegreeRank) || "";
+          return {
+            id: Number(student.id),
+            userId: student.user_id ? Number(student.user_id) : null,
+            username: student.username || "",
+            email: student.email || "",
+            schoolId: student.school_id,
+            studentName: student.full_name,
+            firstName: student.first_name,
+            lastName: student.last_name,
+            program: student.program,
+            yearSection: student.year_section,
+            status: student.status,
+            violationCount: Number(student.violation_count) || 0,
+            maxViolationDegreeRank: maxDegreeRank,
+            maxViolationDegree: degreeName,
+          };
+        }),
       );
     } catch (error) {
       alert(error.message || "Unable to fetch students.");
@@ -252,11 +288,20 @@ const UserManagement = () => {
     const withViolations = filteredStudents.filter(
       (s) => s.violationCount > 0,
     ).length;
-    const highRisk = filteredStudents.filter(
-      (s) => s.violationCount >= 5,
+    const warning = filteredStudents.filter((s) => s.maxViolationDegreeRank === 2).length;
+
+    // At-risk based on Degrees of Offenses table:
+    // 3rd Degree = Last Warning, 4th Degree = 3 Days Suspension.
+    const atRisk = filteredStudents.filter(
+      (s) => s.maxViolationDegreeRank >= 3 && s.maxViolationDegreeRank < 5,
     ).length;
 
-    return { total, withViolations, highRisk };
+    // High-risk when reaching 5th degree or more (1 week+ suspension).
+    const highRisk = filteredStudents.filter(
+      (s) => s.maxViolationDegreeRank >= 5,
+    ).length;
+
+    return { total, withViolations, warning, atRisk, highRisk };
   }, [filteredStudents]);
 
   const columns = [
@@ -281,10 +326,24 @@ const UserManagement = () => {
     {
       key: "violationCount",
       label: "Violation Count",
-      render: (value) => {
-        let bgColor = "bg-green-700";
-        if (value >= 5) bgColor = "bg-red-700";
-        else if (value >= 2) bgColor = "bg-yellow-700";
+      render: (value, row) => {
+        const degreeRank = row.maxViolationDegreeRank || 0;
+        let bgColor = "bg-green-500";
+
+        if (degreeRank >= 5) {
+          bgColor = "bg-red-500";
+        } else if (degreeRank >= 3) {
+          bgColor = "bg-orange-500";
+        } else if (degreeRank === 2) {
+          bgColor = "bg-yellow-500";
+        } else if (value >= 5) {
+          bgColor = "bg-red-500";
+        } else if (value >= 3) {
+          bgColor = "bg-orange-500";
+        } else if (value === 2) {
+          bgColor = "bg-yellow-500";
+        }
+
         return (
           <span
             className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-white text-sm font-medium ${bgColor}`}
@@ -499,6 +558,18 @@ const UserManagement = () => {
               Students with Violations:{" "}
               <span className="text-white font-medium">
                 {statistics.withViolations}
+              </span>
+            </span>
+            <span className="text-gray-400">
+              Warning:{" "}
+              <span className="text-white font-medium">
+                {statistics.warning}
+              </span>
+            </span>
+            <span className="text-gray-400">
+              At-Risk Students:{" "}
+              <span className="text-white font-medium">
+                {statistics.atRisk}
               </span>
             </span>
             <span className="text-gray-400">

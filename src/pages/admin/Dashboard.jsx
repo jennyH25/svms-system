@@ -46,6 +46,7 @@ const Dashboard = () => {
   const [violationMetrics, setViolationMetrics] = useState({
     activeViolations: 0,
     atRiskStudents: 0,
+    highRiskStudents: 0,
   });
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
 
@@ -192,27 +193,47 @@ const Dashboard = () => {
       setIsLoadingMetrics(true);
 
       try {
-        const response = await fetch("/api/student-violations");
+        const response = await fetch("/api/students");
         const result = await response.json().catch(() => ({}));
 
-        if (!response.ok || !Array.isArray(result?.records)) {
+        if (!response.ok || !Array.isArray(result?.students)) {
           throw new Error("Failed to load violation metrics.");
         }
 
-        const activeRecords = result.records.filter((record) => !record.cleared_at);
-        const activeViolations = activeRecords.length;
-        const atRiskStudents = new Set(
-          activeRecords
-            .map((record) => record.student_id)
-            .filter((studentId) => studentId != null),
-        ).size;
+        const students = result.students;
+        const activeViolations = students.reduce(
+          (sum, student) => sum + (Number(student.violation_count) || 0),
+          0,
+        );
+
+        const atRiskStudents = students.filter(
+          (student) => {
+            const count = Number(student.violation_count) || 0;
+            return count >= 3 && count < 5;
+          },
+        ).length;
+
+        const highRiskStudents = students.filter(
+          (student) => {
+            const count = Number(student.violation_count) || 0;
+            return count >= 5;
+          },
+        ).length;
 
         if (isMounted) {
-          setViolationMetrics({ activeViolations, atRiskStudents });
+          setViolationMetrics({
+            activeViolations,
+            atRiskStudents,
+            highRiskStudents,
+          });
         }
       } catch (_error) {
         if (isMounted) {
-          setViolationMetrics({ activeViolations: 0, atRiskStudents: 0 });
+          setViolationMetrics({
+            activeViolations: 0,
+            atRiskStudents: 0,
+            highRiskStudents: 0,
+          });
         }
       } finally {
         if (isMounted) {
@@ -394,6 +415,17 @@ const Dashboard = () => {
               comparisonLabel="vs last semester"
               icon={<Users className="w-5 h-5 text-cyan-400" />}
               iconBgColor="bg-cyan-500/20"
+              className="flex-1"
+            />
+            <AdminStatCard
+              title="High-Risk Students"
+              value={
+                isLoadingMetrics ? "-" : violationMetrics.highRiskStudents.toString()
+              }
+              percentage={0}
+              comparisonLabel="vs last semester"
+              icon={<AlertTriangle className="w-5 h-5 text-red-400" />}
+              iconBgColor="bg-red-500/20"
               className="flex-1"
             />
           </div>
