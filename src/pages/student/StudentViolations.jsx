@@ -5,6 +5,7 @@ import DataTable from '../../components/ui/DataTable';
 import Modal, { ModalFooter } from '../../components/ui/Modal';
 import AnimatedContent from '../../components/ui/AnimatedContent';
 import SearchBar from '../../components/ui/SearchBar';
+import Button from '../../components/ui/Button';
 import { Bell, Download, Filter } from 'lucide-react';
 import { getAuditHeaders } from '@/lib/auditHeaders';
 
