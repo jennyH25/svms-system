@@ -29,12 +29,7 @@ import EditViolationModal from "@/components/modals/EditViolationModal";
 import Modal, { ModalFooter } from "@/components/ui/Modal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
 
-const EXPORT_HEADER_IMAGE_CANDIDATES = [
-  "/plpasig_header.png",
-  "/system-logo.jpg",
-];
-
-const csvEscape = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+const EXPORT_HEADER_IMAGE_PATH = "/plpasig_header.png";
 
 const blobToDataUrl = (blob) =>
   new Promise((resolve, reject) => {
@@ -42,6 +37,26 @@ const blobToDataUrl = (blob) =>
     reader.onload = () => resolve(reader.result);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
+  });
+
+const detectDataUrlImageFormat = (dataUrl) => {
+  if (String(dataUrl || "").startsWith("data:image/jpeg")) {
+    return "JPEG";
+  }
+  return "PNG";
+};
+
+const EXCEL_HEADER_IMAGE_WIDTH_PX = 560;
+const EXCEL_HEADER_IMAGE_HEIGHT_PX = 82;
+
+const getDataUrlDimensions = (dataUrl) =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height });
+    };
+    img.onerror = () => reject(new Error("Unable to load image dimensions."));
+    img.src = dataUrl;
   });
 
 const StudentViolation = () => {
@@ -332,6 +347,21 @@ const StudentViolation = () => {
     return parts[parts.length - 1].toLowerCase();
   };
 
+  const hasActiveFilters =
+    Boolean(searchTerm.trim()) ||
+    sortOrder !== "A-Z" ||
+    Boolean(selectedYear) ||
+    Boolean(selectedDate) ||
+    Boolean(selectedStatus);
+
+  const resetFilters = () => {
+    setSearchTerm("");
+    setSortOrder("A-Z");
+    setSelectedYear("");
+    setSelectedDate("");
+    setSelectedStatus("");
+  };
+
   const filteredRecords = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
 
@@ -533,6 +563,7 @@ const StudentViolation = () => {
         violation: row.violation || "",
         reportedBy: row.reportedBy || "-",
         remarks: row.remarks || "-",
+        signatureImage: row.signatureImage || "",
         status: row.clearedAt ? `Cleared (${row.clearedAt})` : "Pending",
       })),
     [tableData],
@@ -558,136 +589,237 @@ const StudentViolation = () => {
   }, []);
 
   const resolveHeaderImage = useCallback(async () => {
-    for (const candidate of EXPORT_HEADER_IMAGE_CANDIDATES) {
-      try {
-        const response = await fetch(candidate);
-        if (!response.ok) continue;
-        const blob = await response.blob();
-        const dataUrl = await blobToDataUrl(blob);
-        const imageFormat = String(blob.type || "").toLowerCase().includes("jpeg")
-          ? "JPEG"
-          : "PNG";
-        return { dataUrl, sourcePath: candidate, imageFormat };
-      } catch (_error) {
-        // Try next candidate.
+    const response = await fetch(EXPORT_HEADER_IMAGE_PATH);
+    if (!response.ok) {
+      throw new Error(`Required header image not found: ${EXPORT_HEADER_IMAGE_PATH}`);
+    }
+
+    const blob = await response.blob();
+    const dataUrl = await blobToDataUrl(blob);
+    const imageFormat = String(blob.type || "").toLowerCase().includes("jpeg")
+      ? "JPEG"
+      : "PNG";
+
+    return { dataUrl, imageFormat };
+  }, []);
+
+  const exportAsExcel = useCallback(async () => {
+    const [{ Workbook }, { dataUrl }] = await Promise.all([
+      import("exceljs"),
+      resolveHeaderImage(),
+    ]);
+
+    const workbook = new Workbook();
+    const sheet = workbook.addWorksheet("Student Violations", {
+      views: [{ state: "frozen", ySplit: 6 }],
+    });
+
+    sheet.columns = [
+      { key: "no", width: 6 },
+      { key: "date", width: 13 },
+      { key: "studentName", width: 22 },
+      { key: "schoolId", width: 14 },
+      { key: "yearSection", width: 12 },
+      { key: "violation", width: 38 },
+      { key: "reportedBy", width: 17 },
+      { key: "remarks", width: 24 },
+      { key: "signature", width: 16 },
+      { key: "status", width: 14 },
+    ];
+
+    // Header image space and report header rows (compact, PDF-like spacing).
+    sheet.mergeCells("A1:J3");
+    sheet.mergeCells("A4:J4");
+    sheet.mergeCells("A5:J5");
+    sheet.getRow(1).height = 26;
+    sheet.getRow(2).height = 26;
+    sheet.getRow(3).height = 26;
+    sheet.getRow(4).height = 28;
+    sheet.getRow(5).height = 18;
+
+    const titleCell = sheet.getCell("A4");
+    titleCell.value = "Student Violation Report";
+    titleCell.font = { name: "Calibri", size: 18, bold: true };
+    titleCell.alignment = { horizontal: "center", vertical: "middle" };
+
+    const subtitleCell = sheet.getCell("A5");
+    subtitleCell.value = `Generated: ${new Date().toLocaleString()}`;
+    subtitleCell.font = { name: "Calibri", size: 11, color: { argb: "FF4B5563" } };
+    subtitleCell.alignment = { horizontal: "center", vertical: "middle" };
+
+    // Deterministic centered header image placement in A1:J3 region.
+    const headerRegionWidthPx = sheet.columns.reduce(
+      (total, column) => total + (Number(column.width || 10) * 7.5),
+      0,
+    );
+    const headerRegionHeightPx = [1, 2, 3].reduce(
+      (total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
+      0,
+    );
+    const leftOffsetPx = Math.max(
+      (headerRegionWidthPx - EXCEL_HEADER_IMAGE_WIDTH_PX) / 2,
+      0,
+    );
+    const topOffsetPx = Math.max(
+      (headerRegionHeightPx - EXCEL_HEADER_IMAGE_HEIGHT_PX) / 2,
+      0,
+    );
+    const toColCoordinate = (pixelOffset) => {
+      let remaining = pixelOffset;
+      for (let colIndex = 0; colIndex < sheet.columns.length; colIndex += 1) {
+        const colPx = Number(sheet.columns[colIndex]?.width || 10) * 7.5;
+        if (remaining <= colPx) {
+          return colIndex + remaining / colPx;
+        }
+        remaining -= colPx;
+      }
+      return sheet.columns.length - 1;
+    };
+
+    const toRowCoordinate = (pixelOffset) => {
+      let remaining = pixelOffset;
+      for (let rowIndex = 1; rowIndex <= 3; rowIndex += 1) {
+        const rowPx = Number(sheet.getRow(rowIndex).height || 15) * 1.333;
+        if (remaining <= rowPx) {
+          return (rowIndex - 1) + remaining / rowPx;
+        }
+        remaining -= rowPx;
+      }
+      return 2;
+    };
+
+    const imageId = workbook.addImage({ base64: dataUrl, extension: "png" });
+    sheet.addImage(imageId, {
+      tl: {
+        col: toColCoordinate(leftOffsetPx),
+        row: toRowCoordinate(topOffsetPx),
+      },
+      ext: {
+        width: EXCEL_HEADER_IMAGE_WIDTH_PX,
+        height: EXCEL_HEADER_IMAGE_HEIGHT_PX,
+      },
+    });
+
+    // Table header.
+    const headerRowNumber = 6;
+    const headerRow = sheet.getRow(headerRowNumber);
+    headerRow.values = [
+      "No",
+      "Date",
+      "Student Name",
+      "School ID",
+      "Year/Section",
+      "Violation",
+      "Reported By",
+      "Remarks",
+      "Signature",
+      "Status",
+    ];
+    headerRow.height = 24;
+
+    headerRow.eachCell((cell) => {
+      cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF0F172A" },
+      };
+      cell.alignment = {
+        horizontal: "left",
+        vertical: "middle",
+        wrapText: true,
+        indent: 1,
+      };
+      cell.border = {
+        top: { style: "thin", color: { argb: "FFCBD5E1" } },
+        left: { style: "thin", color: { argb: "FFCBD5E1" } },
+        bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
+        right: { style: "thin", color: { argb: "FFCBD5E1" } },
+      };
+    });
+
+    // Data rows.
+    const firstDataRow = headerRowNumber + 1;
+    for (const [index, row] of exportRows.entries()) {
+      const excelRowNumber = firstDataRow + index;
+      const excelRow = sheet.getRow(excelRowNumber);
+      excelRow.values = [
+        row.no,
+        row.date,
+        row.studentName,
+        row.schoolId,
+        row.yearSection,
+        row.violation,
+        row.reportedBy,
+        row.remarks,
+        "",
+        row.status,
+      ];
+      excelRow.height = 34;
+
+      excelRow.eachCell((cell) => {
+        cell.font = { name: "Calibri", size: 11, color: { argb: "FF1F2937" } };
+        cell.alignment = {
+          horizontal: "left",
+          vertical: "middle",
+          wrapText: true,
+          indent: 1,
+        };
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFCBD5E1" } },
+          left: { style: "thin", color: { argb: "FFCBD5E1" } },
+          bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
+          right: { style: "thin", color: { argb: "FFCBD5E1" } },
+        };
+        if (excelRowNumber % 2 === 0) {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFF8FAFC" },
+          };
+        }
+      });
+
+      // Place signature image in the Signature cell (I column) for this row.
+      if (row.signatureImage) {
+        const sigExt = String(row.signatureImage).startsWith("data:image/jpeg")
+          ? "jpeg"
+          : "png";
+        const sigDims = await getDataUrlDimensions(row.signatureImage);
+        const signatureColWidthUnits = sheet.columns[8]?.width || 16;
+        const signatureColWidthPx = signatureColWidthUnits * 7.5;
+        const rowHeightPx = (excelRow.height || 34) * 1.333;
+        const maxSigWidth = Math.max(signatureColWidthPx - 12, 8);
+        const maxSigHeight = Math.max(rowHeightPx - 8, 8);
+        const sigScale = Math.min(
+          maxSigWidth / sigDims.width,
+          maxSigHeight / sigDims.height,
+          1,
+        );
+        const drawWidth = Math.max(8, Math.round(sigDims.width * sigScale));
+        const drawHeight = Math.max(8, Math.round(sigDims.height * sigScale));
+        const xOffsetPx = (signatureColWidthPx - drawWidth) / 2;
+        const yOffsetPx = (rowHeightPx - drawHeight) / 2;
+        const signatureImageId = workbook.addImage({
+          base64: row.signatureImage,
+          extension: sigExt,
+        });
+
+        sheet.addImage(signatureImageId, {
+          tl: {
+            col: 8 + xOffsetPx / 7.5,
+            row: excelRowNumber - 1 + yOffsetPx / rowHeightPx,
+          },
+          ext: { width: drawWidth, height: drawHeight },
+        });
       }
     }
 
-    return {
-      dataUrl: null,
-      sourcePath: EXPORT_HEADER_IMAGE_CANDIDATES[0],
-      imageFormat: "PNG",
-    };
-  }, []);
-
-  const exportAsCsv = useCallback(() => {
-    const lines = [
-      csvEscape("Pamantasan ng Lungsod ng Pasig"),
-      csvEscape("Alkalde Jose St. Kapasigan, Pasig City"),
-      csvEscape("College of Computer Studies"),
-      "",
-      [
-        "No",
-        "Date",
-        "Student Name",
-        "School ID",
-        "Year/Section",
-        "Violation",
-        "Reported By",
-        "Remarks",
-        "Status",
-      ]
-        .map(csvEscape)
-        .join(","),
-      ...exportRows.map((row) =>
-        [
-          row.no,
-          row.date,
-          row.studentName,
-          row.schoolId,
-          row.yearSection,
-          row.violation,
-          row.reportedBy,
-          row.remarks,
-          row.status,
-        ]
-          .map(csvEscape)
-          .join(","),
-      ),
-    ];
-
-    const csvContent = `\ufeff${lines.join("\n")}`;
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const filename = `student_violations_${formatDateForFileName()}.csv`;
-    downloadBlob(blob, filename);
-  }, [downloadBlob, exportRows]);
-
-  const exportAsExcel = useCallback(async () => {
-    const { dataUrl, sourcePath } = await resolveHeaderImage();
-    const headerImageHtml = dataUrl
-      ? `<img src="${dataUrl}" alt="PLP Header" style="width:100%;max-width:1000px;height:auto;display:block;margin:0 auto 8px auto;" />`
-      : `<div style="text-align:center;font-size:12px;color:#6b7280;margin-bottom:8px;">Header image not found at ${sourcePath}</div>`;
-
-    const rowsHtml = exportRows
-      .map(
-        (row) => `
-          <tr>
-            <td>${row.no}</td>
-            <td>${row.date}</td>
-            <td>${row.studentName}</td>
-            <td>${row.schoolId}</td>
-            <td>${row.yearSection}</td>
-            <td>${row.violation}</td>
-            <td>${row.reportedBy}</td>
-            <td>${row.remarks}</td>
-            <td>${row.status}</td>
-          </tr>
-        `,
-      )
-      .join("");
-
-    const html = `
-      <html>
-        <head>
-          <meta charset="UTF-8" />
-          <style>
-            body { font-family: Calibri, Arial, sans-serif; padding: 16px; color: #111827; }
-            .title { font-size: 18px; font-weight: 700; margin: 6px 0 4px; text-align: center; }
-            .subtitle { font-size: 12px; color: #4b5563; text-align: center; margin-bottom: 14px; }
-            table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-            th, td { border: 1px solid #cbd5e1; padding: 8px; font-size: 12px; vertical-align: top; word-wrap: break-word; }
-            th { background: #f1f5f9; font-weight: 700; }
-            tr:nth-child(even) td { background: #f8fafc; }
-          </style>
-        </head>
-        <body>
-          ${headerImageHtml}
-          <div class="title">Student Violation Report</div>
-          <div class="subtitle">Generated: ${new Date().toLocaleString()}</div>
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 4%;">No</th>
-                <th style="width: 9%;">Date</th>
-                <th style="width: 17%;">Student Name</th>
-                <th style="width: 10%;">School ID</th>
-                <th style="width: 9%;">Year/Section</th>
-                <th style="width: 17%;">Violation</th>
-                <th style="width: 11%;">Reported By</th>
-                <th style="width: 15%;">Remarks</th>
-                <th style="width: 8%;">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rowsHtml}
-            </tbody>
-          </table>
-        </body>
-      </html>
-    `;
-
-    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
-    const filename = `student_violations_${formatDateForFileName()}.xls`;
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const filename = `student_violations_${formatDateForFileName()}.xlsx`;
     downloadBlob(blob, filename);
   }, [downloadBlob, exportRows, resolveHeaderImage]);
 
@@ -699,11 +831,17 @@ const StudentViolation = () => {
 
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     const { dataUrl, imageFormat } = await resolveHeaderImage();
-    let startY = 28;
+    let startY = 22;
 
     if (dataUrl) {
-      doc.addImage(dataUrl, imageFormat, 10, 8, 277, 22);
-      startY = 34;
+      const imgProps = doc.getImageProperties(dataUrl);
+      const maxHeaderWidth = 220;
+      const calculatedHeight = (imgProps.height * maxHeaderWidth) / imgProps.width;
+      const headerWidth = Math.min(maxHeaderWidth, 260);
+      const headerHeight = calculatedHeight;
+      const headerX = (doc.internal.pageSize.getWidth() - headerWidth) / 2;
+      doc.addImage(dataUrl, imageFormat, headerX, 8, headerWidth, headerHeight);
+      startY = 8 + headerHeight + 8;
     }
 
     doc.setFont("helvetica", "bold");
@@ -727,6 +865,7 @@ const StudentViolation = () => {
           "Violation",
           "Reported By",
           "Remarks",
+          "Signature",
           "Status",
         ],
       ],
@@ -739,18 +878,22 @@ const StudentViolation = () => {
         row.violation,
         row.reportedBy,
         row.remarks,
+        "",
         row.status,
       ]),
       theme: "grid",
       styles: {
         fontSize: 8,
-        cellPadding: 2.3,
+        cellPadding: 2.4,
         textColor: [31, 41, 55],
+        halign: "left",
+        valign: "middle",
       },
       headStyles: {
         fillColor: [15, 23, 42],
         textColor: [255, 255, 255],
         fontStyle: "bold",
+        halign: "left",
       },
       alternateRowStyles: {
         fillColor: [248, 250, 252],
@@ -759,13 +902,34 @@ const StudentViolation = () => {
       columnStyles: {
         0: { cellWidth: 10 },
         1: { cellWidth: 22 },
-        2: { cellWidth: 40 },
+        2: { cellWidth: 36 },
         3: { cellWidth: 26 },
         4: { cellWidth: 22 },
-        5: { cellWidth: 50 },
-        6: { cellWidth: 28 },
-        7: { cellWidth: 58 },
-        8: { cellWidth: 24 },
+        5: { cellWidth: 40 },
+        6: { cellWidth: 26 },
+        7: { cellWidth: 50 },
+        8: { cellWidth: 22, minCellHeight: 12 },
+        9: { cellWidth: 22 },
+      },
+      didDrawCell: (data) => {
+        if (data.section !== "body" || data.column.index !== 8) {
+          return;
+        }
+
+        const signatureImage = exportRows[data.row.index]?.signatureImage;
+        if (!signatureImage) {
+          return;
+        }
+
+        const imgFormat = detectDataUrlImageFormat(signatureImage);
+        const maxW = Math.max(data.cell.width - 2, 2);
+        const maxH = Math.max(data.cell.height - 2, 2);
+        const imgW = Math.min(maxW, 18);
+        const imgH = Math.min(maxH, 8);
+        const imgX = data.cell.x + (data.cell.width - imgW) / 2;
+        const imgY = data.cell.y + (data.cell.height - imgH) / 2;
+
+        data.doc.addImage(signatureImage, imgFormat, imgX, imgY, imgW, imgH);
       },
     });
 
@@ -780,9 +944,7 @@ const StudentViolation = () => {
 
     setIsExporting(true);
     try {
-      if (exportFormat === "csv") {
-        exportAsCsv();
-      } else if (exportFormat === "excel") {
+      if (exportFormat === "excel") {
         await exportAsExcel();
       } else {
         await exportAsPdf();
@@ -958,6 +1120,17 @@ const StudentViolation = () => {
                 <DropdownMenuItem onClick={() => setSelectedStatus("Pending")}>Pending</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {hasActiveFilters ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={resetFilters}
+                className="gap-2 bg-[#4A5568] hover:bg-[#3d4654] border-0"
+              >
+                Reset Filters
+              </Button>
+            ) : null}
           </div>
 
           <Button
@@ -1013,22 +1186,21 @@ const StudentViolation = () => {
           <p className="text-xs text-gray-300">
             Rows to export: <span className="font-semibold text-white">{exportRows.length}</span>
           </p>
-          <p className="text-xs text-gray-400 mt-1">
-            The report uses <span className="font-semibold text-white">plpasig_header.png</span> for the header when available.
-          </p>
         </div>
 
         <label className="block text-sm font-medium text-white mb-2">Format</label>
-        <select
-          value={exportFormat}
-          onChange={(event) => setExportFormat(event.target.value)}
-          disabled={isExporting}
-          className="w-full backdrop-blur-md border border-white/10 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] focus:outline-none focus:border-white/20 transition-all appearance-none"
-        >
-          <option value="csv">CSV</option>
-          <option value="excel">Excel (.xls)</option>
-          <option value="pdf">PDF</option>
-        </select>
+        <div className="relative">
+          <select
+            value={exportFormat}
+            onChange={(event) => setExportFormat(event.target.value)}
+            disabled={isExporting}
+            className="w-full cursor-pointer backdrop-blur-md border border-white/20 rounded-xl px-4 pr-11 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] focus:outline-none focus:border-cyan-300/60 focus:ring-1 focus:ring-cyan-300/30 transition-all appearance-none"
+          >
+            <option value="excel">Excel (.xlsx)</option>
+            <option value="pdf">PDF</option>
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-cyan-300" />
+        </div>
 
         <ModalFooter>
           <Button
