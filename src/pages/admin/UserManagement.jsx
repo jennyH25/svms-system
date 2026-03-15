@@ -8,6 +8,7 @@ import {
   Trash2,
   Eye,
   Gift,
+  CheckCircle,
 } from "lucide-react";
 import Button from "../../components/ui/Button";
 import SearchBar from "../../components/ui/SearchBar";
@@ -119,6 +120,25 @@ const UserManagement = () => {
     fetchStudents();
   }, []);
 
+  // Maps a raw student object from the API to the shape used in state.
+  // Preserves violation-derived fields from the existing row when available.
+  const mapStudentRow = (student, existing = null) => ({
+    id: Number(student.id),
+    userId: student.user_id ? Number(student.user_id) : null,
+    username: student.username || "",
+    email: student.email || "",
+    schoolId: student.school_id,
+    studentName: student.full_name,
+    firstName: student.first_name,
+    lastName: student.last_name,
+    program: student.program,
+    yearSection: student.year_section,
+    status: student.status,
+    violationCount: Number(student.violation_count) || 0,
+    maxViolationDegreeRank: existing?.maxViolationDegreeRank ?? 0,
+    maxViolationDegree: existing?.maxViolationDegree ?? "",
+  });
+
   const handleSaveEdit = async (id, updatedData) => {
     try {
       const response = await fetch(`/api/students/${id}`, {
@@ -145,7 +165,15 @@ const UserManagement = () => {
         throw new Error(result?.message || "Failed to update student.");
       }
 
-      await fetchStudents();
+      if (result.student) {
+        setStudentData((prev) =>
+          prev.map((s) =>
+            s.id === Number(result.student.id)
+              ? mapStudentRow(result.student, s)
+              : s,
+          ),
+        );
+      }
       setShowEditSuccessModal(true);
       return true;
     } catch (error) {
@@ -179,7 +207,9 @@ const UserManagement = () => {
         throw new Error(result?.message || "Failed to add student.");
       }
 
-      await fetchStudents();
+      if (result.student) {
+        setStudentData((prev) => [mapStudentRow(result.student), ...prev]);
+      }
       setShowCreateSuccessModal(true);
       return true;
     } catch (error) {
@@ -208,7 +238,7 @@ const UserManagement = () => {
         throw new Error(result?.message || "Failed to delete student.");
       }
 
-      await fetchStudents();
+      setStudentData((prev) => prev.filter((s) => s.id !== deleteCandidate.id));
       setDeleteCandidate(null);
     } catch (error) {
       alert(error.message || "Unable to delete student.");
@@ -676,10 +706,20 @@ const UserManagement = () => {
       <Modal
         isOpen={showEditSuccessModal}
         onClose={() => setShowEditSuccessModal(false)}
-        title={<span className="font-black font-inter">Saved Successfully</span>}
+        title={
+          <span className="font-black font-inter flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-green-400" />
+            Saved Successfully
+          </span>
+        }
         size="sm"
+        showCloseButton
       >
-        <p className="text-sm text-gray-300">User changes were saved to the database.</p>
+        <div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-green-300">
+            User changes were saved to the database.
+          </p>
+        </div>
         <ModalFooter>
           <Button
             type="button"
@@ -695,10 +735,20 @@ const UserManagement = () => {
       <Modal
         isOpen={showCreateSuccessModal}
         onClose={() => setShowCreateSuccessModal(false)}
-        title={<span className="font-black font-inter">Successfully Created</span>}
+        title={
+          <span className="font-black font-inter flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-green-400" />
+            Successfully Created
+          </span>
+        }
         size="sm"
+        showCloseButton
       >
-        <p className="text-sm text-gray-300">Student account was created and credentials were sent.</p>
+        <div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-green-300">
+            Student account was created and credentials were sent.
+          </p>
+        </div>
         <ModalFooter>
           <Button
             type="button"

@@ -1399,21 +1399,31 @@ app.put("/api/students/:id", async (req, res) => {
       });
     }
 
+    const updatedStudent = result.rows[0];
+
+    // Fetch username separately since RETURNING doesn't join users table.
+    const userRow = updatedStudent.user_id
+      ? await pool.query(`SELECT username FROM users WHERE id = $1 LIMIT 1`, [
+          updatedStudent.user_id,
+        ])
+      : null;
+    updatedStudent.username = userRow?.rows?.[0]?.username || null;
+
     await logAuditEvent(req, {
       action: "UPDATE_STUDENT",
       targetType: "student",
-      targetId: result.rows[0].id,
-      details: `Updated student ${result.rows[0].full_name}.`,
+      targetId: updatedStudent.id,
+      details: `Updated student ${updatedStudent.full_name}.`,
       metadata: {
-        schoolId: result.rows[0].school_id,
-        program: result.rows[0].program,
-        yearSection: result.rows[0].year_section,
+        schoolId: updatedStudent.school_id,
+        program: updatedStudent.program,
+        yearSection: updatedStudent.year_section,
       },
     });
 
     return res.status(200).json({
       status: "ok",
-      student: result.rows[0],
+      student: updatedStudent,
     });
   } catch (error) {
     return res.status(503).json({
@@ -3049,14 +3059,21 @@ async function ensureAuthDatabaseReady() {
   if (!authSyncPromise) {
     const seedAccounts = getSeedAccountsFromEnv();
     authSyncPromise = (async () => {
-      await syncAuthDatabase({ seedAccounts });
-      await syncStudentsDatabase();
-      await syncStudentsFromUsers();
-      await syncSystemSettingsDatabase();
-      await syncViolationsDatabase();
-      await syncNotificationsDatabase();
-      await syncAuditLogsDatabase();
-      await syncStudentViolationLogsDatabase();
+      // Group 1: all independent — create base tables in parallel.
+      await Promise.all([
+        syncAuthDatabase({ seedAccounts }),
+        syncStudentsDatabase(),
+        syncSystemSettingsDatabase(),
+        syncViolationsDatabase(),
+        syncAuditLogsDatabase(),
+      ]);
+
+      // Group 2: depend on Group 1 tables — run in parallel after Group 1.
+      await Promise.all([
+        syncStudentsFromUsers(),
+        syncNotificationsDatabase(),
+        syncStudentViolationLogsDatabase(),
+      ]);
     })();
   }
 
