@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
 /**
@@ -59,7 +60,7 @@ const Modal = ({
     '2xl': 'max-w-2xl',
   };
 
-  return (
+  const modalMarkup = (
     <div className={`fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-4 sm:items-center sm:py-6 transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
       {/* Backdrop */}
       <div 
@@ -93,6 +94,9 @@ const Modal = ({
       </div>
     </div>
   )
+
+  if (typeof document === 'undefined') return null
+  return createPortal(modalMarkup, document.body)
 }
 
 // Modal Footer for action buttons
