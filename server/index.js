@@ -10,10 +10,12 @@ import { access, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
   closeDbPool,
+  getAppStateSnapshot,
   getSeedAccountsFromEnv,
   getDbPool,
   getMissingDbVars,
   hasDbConfig,
+  syncAppStateDatabase,
   syncAuthDatabase,
   isAuthSchemaCurrent,
   syncStudentsFromUsers,
@@ -36,6 +38,14 @@ const FORGOT_CODE_EXPIRY_MS = 10 * 60 * 1000;
 const FORGOT_RESEND_COOLDOWN_MS = 15 * 1000;
 const AUDIT_LOG_RETENTION_DAYS = 15;
 const AUDIT_LOG_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const NOTIFICATION_RETENTION_DAYS = Number(
+  process.env.NOTIFICATION_RETENTION_DAYS || 60,
+);
+const NOTIFICATION_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const API_GET_CACHE_TTL_MS = Number(process.env.API_GET_CACHE_TTL_MS || 8000);
+const API_GET_CACHE_MAX_ENTRIES = Number(
+  process.env.API_GET_CACHE_MAX_ENTRIES || 400,
+);
 const HISTORICAL_VIOLATION_RECORDS_PATH = path.resolve(
   __dirname,
   "../ViolationRecords1.xlsx",
@@ -48,6 +58,31 @@ const isServerlessRuntime =
   process.env.VERCEL === "1" ||
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
   process.env.NODE_ENV === "serverless";
+
+const apiGetResponseCache = new Map();
+
+function buildApiGetCacheKey(req) {
+  const actorUserId = String(req.headers["x-actor-user-id"] || "");
+  const actorRole = String(req.headers["x-actor-role"] || "");
+  return `${req.method}|${req.originalUrl}|${actorUserId}|${actorRole}`;
+}
+
+function evictApiGetCacheIfNeeded() {
+  while (apiGetResponseCache.size > API_GET_CACHE_MAX_ENTRIES) {
+    const oldest = apiGetResponseCache.keys().next();
+    if (oldest.done) break;
+    apiGetResponseCache.delete(oldest.value);
+  }
+}
+
+function purgeExpiredApiGetCacheEntries() {
+  const now = Date.now();
+  for (const [key, entry] of apiGetResponseCache.entries()) {
+    if (!entry || entry.expiresAt <= now) {
+      apiGetResponseCache.delete(key);
+    }
+  }
+}
 
 const DEGREE_WORD_TO_RANK = {
   first: 1,
@@ -743,20 +778,22 @@ function buildAnalyticsFromRecords({
   });
 
   const trendTermBySemester = Object.fromEntries(
-    Object.entries(latestTermKeyBySemester).map(([displaySemester, termKey]) => {
-      if (!termKey) {
-        return [displaySemester, { semester: "", schoolYear: "", label: "" }];
-      }
-      const { semester, schoolYear } = parseTermKey(termKey);
-      return [
-        displaySemester,
-        {
-          semester,
-          schoolYear,
-          label: `${displaySemester} (S.Y. ${schoolYear})`,
-        },
-      ];
-    }),
+    Object.entries(latestTermKeyBySemester).map(
+      ([displaySemester, termKey]) => {
+        if (!termKey) {
+          return [displaySemester, { semester: "", schoolYear: "", label: "" }];
+        }
+        const { semester, schoolYear } = parseTermKey(termKey);
+        return [
+          displaySemester,
+          {
+            semester,
+            schoolYear,
+            label: `${displaySemester} (S.Y. ${schoolYear})`,
+          },
+        ];
+      },
+    ),
   );
 
   const trendBySemester = Object.fromEntries(
@@ -968,6 +1005,37 @@ async function purgeExpiredAuditLogs() {
   }
 }
 
+async function purgeExpiredNotifications() {
+  if (!hasDbConfig()) {
+    return;
+  }
+
+  try {
+    const pool = getDbPool();
+    if (!pool) {
+      return;
+    }
+
+    const result = await pool.query(
+      `
+      DELETE FROM notifications
+      WHERE read_at IS NOT NULL
+        AND created_at < NOW() - ($1::text || ' days')::interval
+      `,
+      [String(NOTIFICATION_RETENTION_DAYS)],
+    );
+
+    const removedCount = Number(result.rowCount || 0);
+    if (removedCount > 0) {
+      console.log(
+        `Notification cleanup: removed ${removedCount} read notification(s) older than ${NOTIFICATION_RETENTION_DAYS} days.`,
+      );
+    }
+  } catch (error) {
+    console.warn(`Notification cleanup failed: ${error.message}`);
+  }
+}
+
 function buildCredentialEmailTemplate({ firstName, username, password }) {
   return `
     <div style="background:#0d0d0d;padding:32px;font-family:Segoe UI,Arial,sans-serif;color:#f1f5f9;">
@@ -992,24 +1060,107 @@ function buildCredentialEmailTemplate({ firstName, username, password }) {
   `;
 }
 
-function buildForgotPasswordEmailTemplate({ code }) {
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildSystemEmailShell({
+  eyebrow,
+  heading,
+  lead,
+  contentHtml,
+  footerNote,
+}) {
   return `
-    <div style="background:#0d0d0d;padding:32px;font-family:Segoe UI,Arial,sans-serif;color:#f1f5f9;">
-      <div style="max-width:620px;margin:0 auto;background:linear-gradient(135deg, rgba(42,45,53,0.92), rgba(22,24,30,0.92));border:1px solid rgba(255,255,255,0.12);border-radius:16px;overflow:hidden;">
-        <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.12);">
-          <h2 style="margin:0;font-size:20px;font-weight:800;letter-spacing:0.04em;color:#ffffff;">Student Violation System</h2>
-          <p style="margin:6px 0 0 0;color:#94a3b8;font-size:13px;">Password reset verification code</p>
+    <div style="background:linear-gradient(180deg,#eaf6fb 0%,#f4f8fc 45%,#f8fafc 100%);padding:36px 18px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
+      <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 12px 36px rgba(2,6,23,0.08);">
+        <div style="padding:22px 26px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);border-bottom:1px solid rgba(255,255,255,0.12);">
+          <p style="margin:0 0 8px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">${escapeHtml(eyebrow || "SVMS")}</p>
+          <h2 style="margin:0;color:#f8fafc;font-size:22px;font-weight:800;line-height:1.3;">${escapeHtml(heading || "Student Violation Management System")}</h2>
+          ${lead ? `<p style="margin:10px 0 0 0;color:#cbd5e1;font-size:14px;line-height:1.6;">${escapeHtml(lead)}</p>` : ""}
         </div>
-        <div style="padding:24px;">
-          <p style="margin:0 0 14px 0;color:#e2e8f0;font-size:14px;">Use this 6-digit code to reset your password:</p>
-          <div style="background:rgba(15,17,19,0.85);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;text-align:center;">
-            <p style="margin:0;font-size:28px;color:#ffffff;font-weight:800;letter-spacing:0.2em;">${code}</p>
-          </div>
-          <p style="margin:18px 0 0 0;font-size:12px;color:#94a3b8;line-height:1.5;">This code expires in 10 minutes.</p>
+        <div style="padding:24px 26px;background:#ffffff;">
+          ${contentHtml}
+          ${footerNote ? `<p style="margin:22px 0 0 0;font-size:12px;color:#64748b;line-height:1.6;">${escapeHtml(footerNote)}</p>` : ""}
         </div>
       </div>
     </div>
   `;
+}
+
+function buildForgotPasswordEmailTemplate({ code }) {
+  const safeCode = escapeHtml(code);
+  return buildSystemEmailShell({
+    eyebrow: "SVMS Security",
+    heading: "Password Reset Verification",
+    lead: "Use the one-time code below to continue resetting your account password.",
+    contentHtml: `
+      <div style="background:linear-gradient(180deg,#eff8ff 0%,#f8fbff 100%);border:1px solid #cfe9ff;border-radius:14px;padding:18px;">
+        <p style="margin:0 0 10px 0;color:#0f172a;font-size:14px;line-height:1.6;">Enter this 6-digit code in the app:</p>
+        <p style="margin:0;padding:12px 10px;text-align:center;border-radius:12px;background:#0f172a;color:#f8fafc;font-size:34px;font-weight:800;letter-spacing:0.18em;">${safeCode}</p>
+      </div>
+      <div style="margin-top:14px;padding:12px 14px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;">
+        <p style="margin:0;color:#334155;font-size:13px;line-height:1.6;">This code expires in 10 minutes. If you did not request a password reset, you can safely ignore this email.</p>
+      </div>
+    `,
+    footerNote:
+      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+  });
+}
+
+function buildAdminAlertEmailTemplate({
+  studentName,
+  alertType,
+  message,
+  activeViolationCount,
+  program,
+  yearSection,
+}) {
+  const safeStudentName = escapeHtml(studentName || "Student");
+  const safeAlertType = escapeHtml(alertType || "Admin Alert");
+  const safeMessage = escapeHtml(message || "No message provided.");
+  const safeProgram = escapeHtml(program || "-");
+  const safeYearSection = escapeHtml(yearSection || "-");
+  const safeViolationCount = Number.isFinite(Number(activeViolationCount))
+    ? Number(activeViolationCount)
+    : 0;
+
+  return buildSystemEmailShell({
+    eyebrow: "SVMS Notification",
+    heading: "New Alert From Administrator",
+    lead: `Hello ${safeStudentName}, you have received a new alert from the Student Violation Management System.`,
+    contentHtml: `
+      <div style="display:block;margin-bottom:14px;padding:12px 14px;border-radius:12px;background:#f8fafc;border:1px solid #dbe7f2;">
+        <p style="margin:0 0 8px 0;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#0369a1;">Alert Type</p>
+        <p style="margin:0;font-size:18px;font-weight:800;color:#0f172a;">${safeAlertType}</p>
+      </div>
+      <div style="margin-bottom:14px;padding:14px;border-radius:12px;background:#f0f9ff;border:1px solid #bae6fd;">
+        <p style="margin:0 0 8px 0;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#0369a1;">Message</p>
+        <p style="margin:0;color:#0f172a;font-size:14px;line-height:1.65;white-space:pre-line;">${safeMessage}</p>
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#ffffff;">
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;">Program</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;">${safeProgram}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;">Year/Section</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;">${safeYearSection}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;">Active Violations</td>
+          <td style="padding:10px 12px;color:#0f172a;font-size:13px;">${safeViolationCount}</td>
+        </tr>
+      </table>
+    `,
+    footerNote:
+      "You can also view this alert in your SVMS student notifications panel.",
+  });
 }
 
 // Cached transporter — created once, reused for all emails.
@@ -1078,6 +1229,47 @@ async function sendForgotPasswordCodeEmail({ toEmail, code }) {
   });
 
   return { sent: true };
+}
+
+async function sendStudentAdminAlertEmail({
+  toEmail,
+  studentName,
+  alertType,
+  message,
+  activeViolationCount,
+  program,
+  yearSection,
+}) {
+  const transporter = getMailTransporter();
+  if (!transporter) {
+    return {
+      sent: false,
+      reason: "SMTP_USER/SMTP_PASS not configured.",
+    };
+  }
+
+  try {
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: toEmail,
+      subject: `SVMS Alert: ${String(alertType || "Admin Alert")}`,
+      html: buildAdminAlertEmailTemplate({
+        studentName,
+        alertType,
+        message,
+        activeViolationCount,
+        program,
+        yearSection,
+      }),
+    });
+
+    return { sent: true };
+  } catch (error) {
+    return {
+      sent: false,
+      reason: error?.message || "Unable to send alert email.",
+    };
+  }
 }
 
 async function findUserByEmail(pool, email) {
@@ -1169,6 +1361,52 @@ const upload = multer({
 app.use(cors());
 app.use(express.json());
 
+// Lightweight response caching for GET /api requests to speed up tab switches.
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/")) {
+    return next();
+  }
+
+  if (req.method !== "GET") {
+    if (apiGetResponseCache.size > 0) {
+      apiGetResponseCache.clear();
+    }
+    return next();
+  }
+
+  const cacheControl = String(req.headers["cache-control"] || "").toLowerCase();
+  if (cacheControl.includes("no-cache") || cacheControl.includes("no-store")) {
+    return next();
+  }
+
+  purgeExpiredApiGetCacheEntries();
+  const cacheKey = buildApiGetCacheKey(req);
+  const now = Date.now();
+  const cached = apiGetResponseCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > now) {
+    res.setHeader("x-api-cache", "HIT");
+    return res.status(cached.statusCode).json(cached.payload);
+  }
+
+  const originalJson = res.json.bind(res);
+  res.json = (payload) => {
+    if (res.statusCode >= 200 && res.statusCode < 500) {
+      apiGetResponseCache.set(cacheKey, {
+        statusCode: res.statusCode,
+        payload,
+        expiresAt: Date.now() + API_GET_CACHE_TTL_MS,
+      });
+      evictApiGetCacheIfNeeded();
+      res.setHeader("x-api-cache", "MISS");
+    }
+
+    return originalJson(payload);
+  };
+
+  return next();
+});
+
 app.get("/api/health", (_req, res) => {
   res.status(200).json({
     status: "ok",
@@ -1211,6 +1449,44 @@ app.get("/api/db-health", async (_req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Database unavailable or sync failed: ${error.message}`,
+    });
+  }
+});
+
+app.get("/api/app-state/snapshot", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+
+    const keys = String(req.query.keys || "")
+      .split(",")
+      .map((key) => key.trim())
+      .filter(Boolean);
+
+    const snapshotRows = await getAppStateSnapshot(keys);
+    const snapshot = {};
+    snapshotRows.forEach((entry) => {
+      snapshot[entry.state_key] = {
+        value: entry.state_value,
+        updatedAt: entry.updated_at,
+      };
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      snapshot,
+      serverTime: new Date().toISOString(),
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to load app state snapshot (${error.message}).`,
     });
   }
 });
@@ -2590,11 +2866,13 @@ app.post("/api/students/alerts", async (req, res) => {
 
     const insertedNotifications = [];
     const skippedStudents = [];
+    const emailDelivered = [];
+    const emailFailures = [];
 
     for (const studentId of normalizedStudentIds) {
       const studentLookup = await pool.query(
         `
-        SELECT id, user_id, school_id, full_name, program, year_section, violation_count
+        SELECT id, user_id, school_id, full_name, program, year_section, violation_count, email
         FROM "Students"
         WHERE id = $1
         LIMIT 1
@@ -2644,6 +2922,41 @@ app.post("/api/students/alerts", async (req, res) => {
         createdAt: insertResult.rows?.[0]?.created_at || null,
         studentId: Number(student.id),
       });
+
+      const studentEmail = String(student.email || "")
+        .trim()
+        .toLowerCase();
+
+      if (!studentEmail || !studentEmail.includes("@")) {
+        emailFailures.push({
+          studentId: Number(student.id),
+          reason: "Student email address is missing or invalid.",
+        });
+        continue;
+      }
+
+      const emailResult = await sendStudentAdminAlertEmail({
+        toEmail: studentEmail,
+        studentName: student.full_name,
+        alertType: normalizedAlertType,
+        message: normalizedMessage,
+        activeViolationCount,
+        program: student.program,
+        yearSection: student.year_section,
+      });
+
+      if (emailResult.sent) {
+        emailDelivered.push({
+          studentId: Number(student.id),
+          email: studentEmail,
+        });
+      } else {
+        emailFailures.push({
+          studentId: Number(student.id),
+          email: studentEmail,
+          reason: emailResult.reason || "Unable to send student alert email.",
+        });
+      }
     }
 
     if (insertedNotifications.length === 0) {
@@ -2662,6 +2975,8 @@ app.post("/api/students/alerts", async (req, res) => {
         alertType: normalizedAlertType,
         messageLength: normalizedMessage.length,
         recipients: insertedNotifications.map((entry) => entry.studentId),
+        emailedRecipients: emailDelivered.map((entry) => entry.studentId),
+        emailFailureCount: emailFailures.length,
         skippedStudents,
       },
     });
@@ -2669,8 +2984,11 @@ app.post("/api/students/alerts", async (req, res) => {
     return res.status(201).json({
       status: "ok",
       sentCount: insertedNotifications.length,
+      emailSentCount: emailDelivered.length,
+      emailFailedCount: emailFailures.length,
       notifications: insertedNotifications,
       skippedStudents,
+      emailFailures,
     });
   } catch (error) {
     return res.status(503).json({
@@ -2731,7 +3049,9 @@ async function getFullViolationRecord(pool, id) {
 }
 
 app.get("/api/violation-analytics", async (req, res) => {
-  const requestedSchoolYear = req.query.schoolYear ? String(req.query.schoolYear).trim() : null;
+  const requestedSchoolYear = req.query.schoolYear
+    ? String(req.query.schoolYear).trim()
+    : null;
   const requestedSemester = req.query.semester
     ? normalizeSemester(String(req.query.semester).trim())
     : null;
@@ -2763,13 +3083,15 @@ app.get("/api/violation-analytics", async (req, res) => {
       currentSchoolYear = String(settings.current_school_year || "").trim();
 
       const targetSchoolYear = requestedSchoolYear || currentSchoolYear;
-      const targetSemester = requestedSemester ||
+      const targetSemester =
+        requestedSemester ||
         (requestedSchoolYear ? null : normalizeSemester(currentSemester));
 
       if (!targetSchoolYear) {
         return res.status(400).json({
           status: "error",
-          message: "No school year specified and no current school year configured.",
+          message:
+            "No school year specified and no current school year configured.",
         });
       }
 
@@ -2896,8 +3218,12 @@ app.get("/api/violation-analytics", async (req, res) => {
       const schoolYear = normalizeSchoolYear(record.schoolYear);
       const hasTerm = semester && schoolYear;
       const hasValidDate = !Number.isNaN(new Date(record.date).getTime());
-      const matchesYear = requestedSchoolYear ? schoolYear === requestedSchoolYear : true;
-      const matchesSemester = requestedSemester ? semester === requestedSemester : true;
+      const matchesYear = requestedSchoolYear
+        ? schoolYear === requestedSchoolYear
+        : true;
+      const matchesSemester = requestedSemester
+        ? semester === requestedSemester
+        : true;
       return hasTerm && hasValidDate && matchesYear && matchesSemester;
     });
 
@@ -2921,7 +3247,9 @@ app.get("/api/violation-analytics", async (req, res) => {
       requestedSemester &&
       normalizeSemester(currentSemester) === requestedSemester
     ) {
-      ongoingSemesters[SEMESTER_DISPLAY_MAP[requestedSemester] || requestedSemester] = true;
+      ongoingSemesters[
+        SEMESTER_DISPLAY_MAP[requestedSemester] || requestedSemester
+      ] = true;
     }
 
     return res.status(200).json({
@@ -5744,7 +6072,11 @@ app.get("/api/archive/school-years", async (req, res) => {
     const currentSchoolYear = String(settings.current_school_year || "").trim();
 
     const combinedYears = Array.from(
-      new Set([...schoolYears, ...workbookSchoolYears, currentSchoolYear].filter(Boolean)),
+      new Set(
+        [...schoolYears, ...workbookSchoolYears, currentSchoolYear].filter(
+          Boolean,
+        ),
+      ),
     ).sort((left, right) => right.localeCompare(left));
 
     return res.status(200).json({
@@ -6375,21 +6707,13 @@ if (!isServerlessRuntime) {
 let server;
 let authSyncPromise = null;
 let auditCleanupTimer = null;
+let notificationCleanupTimer = null;
 
 async function ensureAuthDatabaseReady() {
   if (!authSyncPromise) {
     const seedAccounts = getSeedAccountsFromEnv();
-    authSyncPromise = (async () => {
-      const schemaIsCurrent = await isAuthSchemaCurrent();
 
-      if (schemaIsCurrent) {
-        await Promise.all([
-          syncAuthDatabase({ seedAccounts, skipSchemaCheck: true }),
-          syncStudentsFromUsers(),
-        ]);
-        return;
-      }
-
+    const runFullSynchronization = async () => {
       // Group 1: all independent — create base tables in parallel.
       await Promise.all([
         syncAuthDatabase({ seedAccounts }),
@@ -6406,6 +6730,43 @@ async function ensureAuthDatabaseReady() {
         syncPasswordResetDatabase(),
         syncStudentViolationLogsDatabase(),
       ]);
+
+      await syncAppStateDatabase();
+    };
+
+    authSyncPromise = (async () => {
+      const schemaIsCurrent = await isAuthSchemaCurrent();
+
+      if (schemaIsCurrent) {
+        try {
+          // Keep this fast but resilient: refresh core schemas first, then dependent tables, then app_state triggers.
+          await Promise.all([
+            syncAuthDatabase({ seedAccounts, skipSchemaCheck: true }),
+            syncStudentsDatabase(),
+            syncSystemSettingsDatabase(),
+            syncViolationsDatabase(),
+            syncAuditLogsDatabase(),
+          ]);
+
+          await Promise.all([
+            syncStudentsFromUsers(),
+            syncNotificationsDatabase(),
+            syncPasswordResetDatabase(),
+            syncStudentViolationLogsDatabase(),
+          ]);
+
+          await syncAppStateDatabase();
+          return;
+        } catch (fastPathError) {
+          console.warn(
+            `Fast startup sync failed, retrying with full synchronization: ${fastPathError.message}`,
+          );
+          await runFullSynchronization();
+          return;
+        }
+      }
+
+      await runFullSynchronization();
     })();
   }
 
@@ -6432,6 +6793,11 @@ async function startServer() {
           purgeExpiredAuditLogs();
         }, AUDIT_LOG_CLEANUP_INTERVAL_MS);
 
+        purgeExpiredNotifications();
+        notificationCleanupTimer = setInterval(() => {
+          purgeExpiredNotifications();
+        }, NOTIFICATION_CLEANUP_INTERVAL_MS);
+
         if (seedAccounts.length === 0) {
           console.log("No account seed variables detected during startup.");
         }
@@ -6453,6 +6819,11 @@ async function shutdown(signal) {
   if (auditCleanupTimer) {
     clearInterval(auditCleanupTimer);
     auditCleanupTimer = null;
+  }
+
+  if (notificationCleanupTimer) {
+    clearInterval(notificationCleanupTimer);
+    notificationCleanupTimer = null;
   }
 
   if (!server) {

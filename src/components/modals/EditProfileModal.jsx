@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
+import { Eye, EyeOff, Loader2, CheckCircle } from 'lucide-react'
 import Modal, { ModalFooter, ModalDivider } from '../ui/Modal'
 import GlassInput from '../ui/GlassInput'
 import Button from '../ui/Button'
@@ -16,7 +16,10 @@ const EditProfileModal = ({
   isOpen, 
   onClose, 
   initialData = {},
-  onSave 
+  onSave,
+  isSaving = false,
+  showSuccessModal = false,
+  onCloseSuccessModal,
 }) => {
   const buildInitialFormData = () => ({
     username: initialData.username || '',
@@ -207,6 +210,7 @@ const EditProfileModal = ({
             type="button"
             variant="outline"
             onClick={handleCancel}
+            disabled={isSaving}
             className="px-6 py-2.5 rounded-lg bg-white text-[#1a1a1a] border-0 hover:bg-gray-100"
           >
             Cancel
@@ -214,12 +218,49 @@ const EditProfileModal = ({
           <Button
             type="submit"
             variant="primary"
+            disabled={isSaving}
             className="px-6 py-2.5 rounded-lg bg-[#4A5568] text-white hover:bg-[#3d4654]"
           >
-            Save Changes
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              'Save Changes'
+            )}
           </Button>
         </ModalFooter>
       </form>
+
+      <Modal
+        isOpen={showSuccessModal}
+        onClose={onCloseSuccessModal}
+        title={
+          <span className="font-black font-inter flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-green-400" />
+            Profile Saved
+          </span>
+        }
+        size="sm"
+        showCloseButton
+      >
+        <div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-green-300">
+            Your profile changes were saved successfully.
+          </p>
+        </div>
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={onCloseSuccessModal}
+            className="px-6 py-2.5"
+          >
+            OK
+          </Button>
+        </ModalFooter>
+      </Modal>
     </Modal>
   )
 }

@@ -12,6 +12,8 @@ import { getAuditHeaders } from '@/lib/auditHeaders'
 
 const Navbar = ({ onRequestLogout }) => {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false)
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [showProfileSaveSuccessModal, setShowProfileSaveSuccessModal] = useState(false)
   const [notifCount, setNotifCount] = useState(0)
   const [allNotifications, setAllNotifications] = useState([])
   const [dropdownNotifications, setDropdownNotifications] = useState([])
@@ -123,79 +125,84 @@ const Navbar = ({ onRequestLogout }) => {
   }
 
   const handleSaveProfile = async (formData) => {
-    const nextUser = {
-      ...currentUser,
-      username: formData.username,
-      schoolId: formData.schoolId,
-      email: formData.email,
-      firstName: formData.firstName,
-      lastName: formData.lastName,
-      fullName: [formData.firstName, formData.lastName].filter(Boolean).join(' '),
-    }
-
-    if (currentUser?.role === 'admin') {
-      try {
-        const response = await fetch('/api/profile/admin', {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...getAuditHeaders(),
-          },
-          body: JSON.stringify({
-            id: currentUser.id,
-            username: formData.username,
-            email: formData.email,
-            firstName: formData.firstName,
-            lastName: formData.lastName,
-          }),
-        })
-
-        const result = await response.json().catch(() => ({}))
-
-        if (!response.ok) {
-          alert(result?.message || 'Failed to save admin profile.')
-          return
-        }
-
-        localStorage.setItem('svms_user', JSON.stringify(result.user))
-      } catch (_error) {
-        alert('Unable to save admin profile right now.')
-        return
+    setIsSavingProfile(true)
+    try {
+      const nextUser = {
+        ...currentUser,
+        username: formData.username,
+        schoolId: formData.schoolId,
+        email: formData.email,
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        fullName: [formData.firstName, formData.lastName].filter(Boolean).join(' '),
       }
-    } else {
-      try {
-        const response = await fetch('/api/profile/student', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: currentUser.id,
-            username: formData.username,
-            schoolId: formData.schoolId,
-            email: formData.email,
-            firstName: formData.firstName,
-            lastName: formData.lastName,
-            currentPassword: formData.currentPassword,
-            newPassword: formData.newPassword,
-            confirmPassword: formData.confirmPassword,
-          }),
-        })
 
-        const result = await response.json().catch(() => ({}))
+      if (currentUser?.role === 'admin') {
+        try {
+          const response = await fetch('/api/profile/admin', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              ...getAuditHeaders(),
+            },
+            body: JSON.stringify({
+              id: currentUser.id,
+              username: formData.username,
+              email: formData.email,
+              firstName: formData.firstName,
+              lastName: formData.lastName,
+            }),
+          })
 
-        if (!response.ok) {
-          alert(result?.message || 'Failed to save student profile.')
-          return
+          const result = await response.json().catch(() => ({}))
+
+          if (!response.ok) {
+            alert(result?.message || 'Failed to save admin profile.')
+            return false
+          }
+
+          localStorage.setItem('svms_user', JSON.stringify(result.user))
+        } catch (_error) {
+          alert('Unable to save admin profile right now.')
+          return false
         }
+      } else {
+        try {
+          const response = await fetch('/api/profile/student', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: currentUser.id,
+              username: formData.username,
+              schoolId: formData.schoolId,
+              email: formData.email,
+              firstName: formData.firstName,
+              lastName: formData.lastName,
+              currentPassword: formData.currentPassword,
+              newPassword: formData.newPassword,
+              confirmPassword: formData.confirmPassword,
+            }),
+          })
 
-        localStorage.setItem('svms_user', JSON.stringify(result.user || nextUser))
-      } catch (_error) {
-        alert('Unable to save student profile right now.')
-        return
+          const result = await response.json().catch(() => ({}))
+
+          if (!response.ok) {
+            alert(result?.message || 'Failed to save student profile.')
+            return false
+          }
+
+          localStorage.setItem('svms_user', JSON.stringify(result.user || nextUser))
+        } catch (_error) {
+          alert('Unable to save student profile right now.')
+          return false
+        }
       }
-    }
 
-    setIsEditProfileOpen(false)
-    window.location.reload()
+      setShowProfileSaveSuccessModal(true)
+      return true
+    } finally {
+      setIsSavingProfile(false)
+    }
   }
 
   const handleLogout = () => {
@@ -382,6 +389,9 @@ const Navbar = ({ onRequestLogout }) => {
       <EditProfileModal
         isOpen={isEditProfileOpen}
         onClose={() => setIsEditProfileOpen(false)}
+        isSaving={isSavingProfile}
+        showSuccessModal={showProfileSaveSuccessModal}
+        onCloseSuccessModal={() => setShowProfileSaveSuccessModal(false)}
         initialData={{
           role: currentUser?.role || '',
           username: currentUser?.username || '',

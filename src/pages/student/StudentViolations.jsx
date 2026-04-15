@@ -9,6 +9,7 @@ import SearchBar from '../../components/ui/SearchBar';
 import Button from '../../components/ui/Button';
 import { Bell, Download, Filter, ChevronDown } from 'lucide-react';
 import { getAuditHeaders } from '@/lib/auditHeaders';
+import { cachedFetchJSON } from '@/lib/fetchHelper';
 
 const EXPORT_HEADER_IMAGE_PATH = '/plpasig_header.png';
 
@@ -182,22 +183,30 @@ const StudentViolations = () => {
 				}
 
 				const [recordsResp, notificationsResp] = await Promise.all([
-					fetch('/api/student-violations/me', { headers: { ...getAuditHeaders() } }),
-					fetch('/api/notifications', { headers: { ...getAuditHeaders() } }),
+					cachedFetchJSON('/api/student-violations/me', { headers: { ...getAuditHeaders() } }, {
+						ttlMs: 12000,
+						staleWhileRevalidate: true,
+						forceRefresh: false,
+					}),
+					cachedFetchJSON('/api/notifications', { headers: { ...getAuditHeaders() } }, {
+						ttlMs: 10000,
+						staleWhileRevalidate: true,
+						forceRefresh: false,
+					}),
 				]);
 
-				const recordsData = await recordsResp.json().catch(() => ({}));
-				const notificationsData = await notificationsResp.json().catch(() => ({}));
+				const recordsData = recordsResp.data || {};
+				const notificationsData = notificationsResp.data || {};
 
 				if (isMounted) {
-					if (recordsResp.ok) {
+					if (recordsResp.status === 'ok') {
 						setRecords(Array.isArray(recordsData.records) ? recordsData.records : []);
 						setHasLoadedOnce(true);
 					} else {
-						setError(recordsData.message || 'Unable to refresh your violations.');
+						setError(recordsResp.error || recordsData.message || 'Unable to refresh your violations.');
 					}
 
-					if (notificationsResp.ok) {
+					if (notificationsResp.status === 'ok') {
 						const unreadViolationUpdates = (notificationsData.notifications || []).filter(
 							(note) => {
 								const metadata = parseNotificationMetadata(note?.metadata);

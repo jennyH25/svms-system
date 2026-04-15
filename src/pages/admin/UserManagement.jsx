@@ -28,7 +28,7 @@ import EditUserModal from "@/components/modals/EditUserModal";
 import AddUserModal from "@/components/modals/AddUserModal";
 import EditSemesterYearModal from "@/components/modals/EditSemesterYearModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
-import { fetchMultiple } from "@/lib/fetchHelper";
+import { cachedFetchJSON, fetchMultiple } from "@/lib/fetchHelper";
 
 const EXPORT_HEADER_IMAGE_PATH = "/plpasig_header.png";
 const EXCEL_HEADER_IMAGE_WIDTH_PX = 560;
@@ -84,6 +84,7 @@ const UserManagement = () => {
   const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isAddingUser, setIsAddingUser] = useState(false);
+  const [isSavingEditUser, setIsSavingEditUser] = useState(false);
   const [showEditSuccessModal, setShowEditSuccessModal] = useState(false);
   const [showCreateSuccessModal, setShowCreateSuccessModal] = useState(false);
   const [showDuplicateSchoolIdModal, setShowDuplicateSchoolIdModal] = useState(false);
@@ -217,9 +218,12 @@ const UserManagement = () => {
   useEffect(() => {
     const loadCurrentSettings = async () => {
       try {
-        const response = await fetch("/api/archive/current-settings");
-        const data = await response.json();
-        if (response.ok && data.status === "ok") {
+        const result = await cachedFetchJSON("/api/archive/current-settings", {}, {
+          ttlMs: 30000,
+          staleWhileRevalidate: true,
+        });
+        const data = result.data || {};
+        if (result.status === "ok" && data.status === "ok") {
           setCurrentSemester(getDisplaySemester(data.currentSemester || "1ST SEM", data.currentSchoolYear || "2025-2026"));
           setCurrentSchoolYear(data.currentSchoolYear || "2025-2026");
         }
@@ -268,6 +272,7 @@ const UserManagement = () => {
       return false;
     }
 
+    setIsSavingEditUser(true);
     try {
       const response = await fetch(`/api/students/${id}`, {
         method: "PUT",
@@ -315,6 +320,8 @@ const UserManagement = () => {
         alert(error.message || "Unable to update student.");
       }
       return false;
+    } finally {
+      setIsSavingEditUser(false);
     }
   };
 
@@ -709,6 +716,13 @@ const UserManagement = () => {
       const skippedCount = Array.isArray(data?.skippedStudents)
         ? data.skippedStudents.length
         : 0;
+      const emailSentCount = Number(data?.emailSentCount || 0);
+      const emailFailedCount = Number(data?.emailFailedCount || 0);
+
+      const deliverySummary =
+        emailFailedCount > 0
+          ? `Email delivered to ${emailSentCount} student(s); ${emailFailedCount} email delivery issue(s).`
+          : `Email delivered to ${emailSentCount} student(s).`;
 
       setShowSendAlertModal(false);
       resetAlertForm();
@@ -718,8 +732,8 @@ const UserManagement = () => {
         title: "Alert Sent",
         message:
           skippedCount > 0
-            ? `Alert sent to ${sentCount} student(s). ${skippedCount} student(s) were skipped.`
-            : "Alert successfully sent to selected student(s).",
+            ? `Alert sent to ${sentCount} student(s). ${skippedCount} student(s) were skipped. ${deliverySummary}`
+            : `Alert successfully sent to selected student(s). ${deliverySummary}`,
       });
     } catch (error) {
       setAlertResultModal({
@@ -1646,6 +1660,7 @@ const UserManagement = () => {
         onClose={() => setIsEditOpen(false)}
         user={selectedUser}
         onSave={handleSaveEdit}
+        isSaving={isSavingEditUser}
       />
 
       <EditSemesterYearModal

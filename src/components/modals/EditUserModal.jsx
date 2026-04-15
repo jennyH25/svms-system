@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
+import { Loader2 } from "lucide-react";
 import Modal, { ModalFooter, ModalDivider } from "@/components/ui/Modal";
 import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
 
-const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
+const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
   const [formData, setFormData] = useState({
     username: "",
     firstName: "",
@@ -39,10 +40,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const saved = await onSave(user.id, formData);
-    if (saved) {
-      onClose();
-    }
+    await onSave(user.id, formData);
   };
 
   return (
@@ -184,6 +182,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
             variant="outline"
             type="button"
             onClick={onClose}
+            disabled={isSaving}
             className="px-8 py-2 bg-white text-[#1a1a1a] border-0 hover:bg-gray-100"
           >
             Cancel
@@ -191,9 +190,17 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
           <Button
             variant="primary"
             type="submit"
+            disabled={isSaving}
             className="px-8 py-2 bg-[#556987] text-white hover:bg-[#3d4654]"
           >
-            Save Changes
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              "Save Changes"
+            )}
           </Button>
         </ModalFooter>
       </form>

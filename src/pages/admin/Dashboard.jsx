@@ -32,6 +32,7 @@ import {
   Download,
   Search,
 } from "lucide-react";
+import { cachedFetchJSON } from "@/lib/fetchHelper";
 
 const RANKING_EXPORT_HEADER_IMAGE_PATH = "/plpasig_header.jpg";
 const EXCEL_HEADER_IMAGE_WIDTH_PX = 560;
@@ -1162,14 +1163,17 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchSchoolYears = async () => {
       try {
-        const response = await fetch("/api/archive/school-years");
-        if (response.ok) {
-          const result = await response.json();
-          if (result.status === "ok" && Array.isArray(result.schoolYears)) {
-            setAvailableSchoolYears(result.schoolYears);
+        const result = await cachedFetchJSON("/api/archive/school-years", {}, {
+          ttlMs: 30000,
+          staleWhileRevalidate: true,
+        });
+        if (result.status === "ok") {
+          const payload = result.data || {};
+          if (payload.status === "ok" && Array.isArray(payload.schoolYears)) {
+            setAvailableSchoolYears(payload.schoolYears);
             // Set default to current year if available
-            if (result.schoolYears.length > 0 && !selectedSchoolYear) {
-              setSelectedSchoolYear(result.schoolYears[0]);
+            if (payload.schoolYears.length > 0 && !selectedSchoolYear) {
+              setSelectedSchoolYear(payload.schoolYears[0]);
             }
           }
         }
@@ -1208,16 +1212,25 @@ const Dashboard = () => {
 
       try {
         const [currentSettingsRes, studentsRes, violationsRes] = await Promise.all([
-          fetch("/api/archive/current-settings"),
-          fetch("/api/students"),
-          fetch("/api/student-violations"),
+          cachedFetchJSON("/api/archive/current-settings", {}, {
+            ttlMs: 30000,
+            staleWhileRevalidate: true,
+          }),
+          cachedFetchJSON("/api/students", {}, {
+            ttlMs: 12000,
+            staleWhileRevalidate: true,
+          }),
+          cachedFetchJSON("/api/student-violations", {}, {
+            ttlMs: 12000,
+            staleWhileRevalidate: true,
+          }),
         ]);
 
-        const currentSettings = await currentSettingsRes.json().catch(() => ({}));
+        const currentSettings = currentSettingsRes.data || {};
         const normalizedCurrentSem = String(currentSettings.currentSemester || "").trim();
         const currentSY = String(currentSettings.currentSchoolYear || "").trim();
 
-        if (currentSettingsRes.ok && currentSettings?.status === "ok") {
+        if (currentSettingsRes.status === "ok" && currentSettings?.status === "ok") {
           setCurrentSemester(normalizedCurrentSem);
           setCurrentSchoolYear(currentSY);
         }
@@ -1226,11 +1239,14 @@ const Dashboard = () => {
           ? `/api/violation-analytics?schoolYear=${encodeURIComponent(selectedSchoolYear)}&semester=${encodeURIComponent(selectedSemester)}`
           : "/api/violation-analytics";
 
-        const analyticsRes = await fetch(analyticsUrl);
+        const analyticsRes = await cachedFetchJSON(analyticsUrl, {}, {
+          ttlMs: 12000,
+          staleWhileRevalidate: true,
+        });
 
-        const studentsResult = await studentsRes.json().catch(() => ({}));
-        const violationsResult = await violationsRes.json().catch(() => ({}));
-        const analyticsResult = await analyticsRes.json().catch(() => ({}));
+        const studentsResult = studentsRes.data || {};
+        const violationsResult = violationsRes.data || {};
+        const analyticsResult = analyticsRes.data || {};
 
         const isSelectedCurrentTerm =
           selectedSchoolYear &&
@@ -1249,10 +1265,10 @@ const Dashboard = () => {
           analyticsStatus: analyticsResult?.status,
         });
 
-        if (!studentsRes.ok || !Array.isArray(studentsResult?.students)) {
+        if (studentsRes.status !== "ok" || !Array.isArray(studentsResult?.students)) {
           throw new Error("Failed to load students.");
         }
-        if (!violationsRes.ok || !Array.isArray(violationsResult?.records)) {
+        if (violationsRes.status !== "ok" || !Array.isArray(violationsResult?.records)) {
           throw new Error("Failed to load violations.");
         }
 
@@ -1429,18 +1445,20 @@ const Dashboard = () => {
       }
 
       try {
-        const response = await fetch("/api/audit-logs?limit=100");
-        const result = await response.json().catch(() => ({}));
+        const result = await cachedFetchJSON("/api/audit-logs?limit=100", {}, {
+          ttlMs: 10000,
+          staleWhileRevalidate: true,
+        });
 
-        if (!response.ok || result?.status !== "ok") {
-          throw new Error(result?.message || "Failed to load activity logs.");
+        if (result.status !== "ok" || result?.data?.status !== "ok") {
+          throw new Error(result?.error || result?.data?.message || "Failed to load activity logs.");
         }
 
         if (!isMounted) {
           return;
         }
 
-        const logs = Array.isArray(result.logs) ? result.logs : [];
+        const logs = Array.isArray(result.data?.logs) ? result.data.logs : [];
         const mapped = logs.map((log) => {
           const { date, time } = formatAuditDateTime(log.created_at);
           return {

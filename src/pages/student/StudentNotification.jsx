@@ -6,6 +6,7 @@ import Card from '../../components/ui/Card';
 import Modal, { ModalFooter } from '../../components/ui/Modal';
 import Button from '../../components/ui/Button';
 import { getAuditHeaders } from '@/lib/auditHeaders';
+import { cachedFetchJSON } from '@/lib/fetchHelper';
 
 const StudentNotification = () => {
   const [notifications, setNotifications] = useState([]);
@@ -127,13 +128,15 @@ const StudentNotification = () => {
       }
 
       try {
-        const resp = await fetch('/api/notifications', {
+        const result = await cachedFetchJSON('/api/notifications', {
           headers: { ...getAuditHeaders() },
+        }, {
+          ttlMs: 10000,
+          staleWhileRevalidate: true,
         });
-        const data = await resp.json().catch(() => ({}));
-        if (resp.ok) {
+        if (result.status === 'ok') {
           if (isMounted) {
-            const notifications = (data.notifications || []).map((note) => ({
+            const notifications = (result.data?.notifications || []).map((note) => ({
               ...note,
               metadata: parseNotificationMetadata(note.metadata),
             }));
@@ -142,7 +145,7 @@ const StudentNotification = () => {
           }
         } else {
           if (isMounted && !silent) {
-            setError(data.message || 'Unable to load notifications');
+            setError(result.error || 'Unable to load notifications');
           }
         }
       } catch (err) {

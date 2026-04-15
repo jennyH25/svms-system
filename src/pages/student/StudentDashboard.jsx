@@ -5,6 +5,7 @@ import StudentStatCard from '../../components/ui/StudentStatCard';
 // GaugeIndicator is now used inside StatCard
 import AnimatedContent from '../../components/ui/AnimatedContent';
 import { getAuditHeaders } from '@/lib/auditHeaders';
+import { cachedFetchJSON } from '@/lib/fetchHelper';
 import { ShieldCheck, AlertTriangle, ListChecks, Eye } from 'lucide-react';
 
 function formatStudentName(lastName, firstName, fallbackFullName) {
@@ -81,23 +82,25 @@ const StudentDashboard = () => {
 
     const loadStudentProfile = async () => {
       try {
-        const response = await fetch(`/api/students/profile/${userId}`);
-        const result = await response.json().catch(() => ({}));
+        const result = await cachedFetchJSON(`/api/students/profile/${userId}`, {}, {
+          ttlMs: 30000,
+          staleWhileRevalidate: true,
+        });
 
-        if (!response.ok || !result?.student) {
+        if (result.status !== 'ok' || !result?.data?.student) {
           return;
         }
 
-        setStudentProfile(result.student);
+        setStudentProfile(result.data.student);
 
         const nextUser = {
           ...studentUser,
-          schoolId: result.student.school_id || studentUser.schoolId || '',
-          program: result.student.program || studentUser.program || '',
-          yearSection: result.student.year_section || studentUser.yearSection || '',
-          firstName: result.student.first_name || studentUser.firstName || '',
-          lastName: result.student.last_name || studentUser.lastName || '',
-          fullName: result.student.full_name || studentUser.fullName || '',
+          schoolId: result.data.student.school_id || studentUser.schoolId || '',
+          program: result.data.student.program || studentUser.program || '',
+          yearSection: result.data.student.year_section || studentUser.yearSection || '',
+          firstName: result.data.student.first_name || studentUser.firstName || '',
+          lastName: result.data.student.last_name || studentUser.lastName || '',
+          fullName: result.data.student.full_name || studentUser.fullName || '',
         };
 
         localStorage.setItem('svms_user', JSON.stringify(nextUser));
@@ -118,16 +121,18 @@ const StudentDashboard = () => {
 
     const loadStudentViolations = async () => {
       try {
-        const response = await fetch('/api/student-violations/me', {
+        const result = await cachedFetchJSON('/api/student-violations/me', {
           headers: { ...getAuditHeaders() },
+        }, {
+          ttlMs: 12000,
+          staleWhileRevalidate: true,
         });
-        const result = await response.json().catch(() => ({}));
 
-        if (!response.ok) {
+        if (result.status !== 'ok') {
           return;
         }
 
-        setStudentViolations(Array.isArray(result.records) ? result.records : []);
+        setStudentViolations(Array.isArray(result.data?.records) ? result.data.records : []);
       } catch (_error) {
         // Ignore violation fetch errors for dashboard counts.
       }

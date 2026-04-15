@@ -34,6 +34,7 @@ import ArchiveViolationModal from "@/components/modals/ArchiveViolationModal";
 import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
+import { cachedFetchJSON } from "@/lib/fetchHelper";
 
 const EXPORT_HEADER_IMAGE_PATH = "/plpasig_header.png";
 
@@ -161,11 +162,14 @@ const StudentViolation = () => {
   useEffect(() => {
     const loadCurrentSettings = async () => {
       try {
-        const response = await fetch("/api/archive/current-settings", {
+        const result = await cachedFetchJSON("/api/archive/current-settings", {
           headers: { ...getAuditHeaders() },
+        }, {
+          ttlMs: 30000,
+          staleWhileRevalidate: true,
         });
-        const data = await response.json();
-        if (response.ok && data.status === "ok") {
+        const data = result.data || {};
+        if (result.status === "ok" && data.status === "ok") {
           setCurrentSemester(getDisplaySemester(data.currentSemester || "1ST SEM", data.currentSchoolYear || "2025-2026"));
           setCurrentSchoolYear(data.currentSchoolYear || "2025-2026");
         }
@@ -178,11 +182,14 @@ const StudentViolation = () => {
 
   const fetchViolationAnalytics = async () => {
     try {
-      const response = await fetch("/api/violation-analytics", {
+      const result = await cachedFetchJSON("/api/violation-analytics", {
         headers: { ...getAuditHeaders() },
+      }, {
+        ttlMs: 15000,
+        staleWhileRevalidate: true,
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.status !== "ok") {
+      const data = result.data || {};
+      if (result.status !== "ok" || data?.status !== "ok") {
         return;
       }
 
@@ -228,12 +235,15 @@ const StudentViolation = () => {
   const fetchStudentViolations = async ({ silent = false } = {}) => {
     if (!silent) setIsLoading(true);
     try {
-      const response = await fetch("/api/student-violations", {
+      const result = await cachedFetchJSON("/api/student-violations", {
         headers: { ...getAuditHeaders() },
+      }, {
+        ttlMs: 12000,
+        staleWhileRevalidate: true,
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data?.message || "Unable to load records.");
+      const data = result.data || {};
+      if (result.status !== "ok") {
+        throw new Error(result.error || data?.message || "Unable to load records.");
       }
       setRecords(Array.isArray(data.records) ? data.records : []);
     } catch (error) {

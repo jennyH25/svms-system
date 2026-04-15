@@ -74,6 +74,179 @@ async function setSchemaStateValue(dbPool, stateKey, stateValue) {
   );
 }
 
+async function ensureAppStateSyncFunction(dbPool) {
+  await dbPool.query(`
+    CREATE OR REPLACE FUNCTION touch_app_state_keys()
+    RETURNS TRIGGER AS $$
+    DECLARE
+      key_name TEXT;
+      next_value TEXT;
+    BEGIN
+      FOREACH key_name IN ARRAY TG_ARGV LOOP
+        next_value = ((EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT)::TEXT;
+
+        INSERT INTO app_state (state_key, state_value, updated_at)
+        VALUES (key_name, next_value, NOW())
+        ON CONFLICT (state_key) DO UPDATE SET
+          state_value = EXCLUDED.state_value,
+          updated_at = NOW();
+      END LOOP;
+
+      RETURN COALESCE(NEW, OLD);
+    END;
+    $$ LANGUAGE plpgsql SET search_path = public
+  `);
+}
+
+async function ensureAppStateTrigger(dbPool, { tableName, triggerName, keys }) {
+  const safeKeys = Array.isArray(keys)
+    ? keys.filter((value) => String(value || "").trim())
+    : [];
+
+  if (!tableName || !triggerName || safeKeys.length === 0) {
+    return;
+  }
+
+  const relationCheck = await dbPool.query(
+    `SELECT to_regclass($1) AS relation_name`,
+    [tableName],
+  );
+
+  if (!relationCheck.rows?.[0]?.relation_name) {
+    return;
+  }
+
+  const triggerArgsSql = safeKeys
+    .map((value) => `'${String(value).replace(/'/g, "''")}'`)
+    .join(", ");
+
+  await dbPool.query(`
+    DROP TRIGGER IF EXISTS ${triggerName} ON ${tableName}
+  `);
+
+  await dbPool.query(`
+    CREATE TRIGGER ${triggerName}
+    AFTER INSERT OR UPDATE OR DELETE ON ${tableName}
+    FOR EACH STATEMENT
+    EXECUTE FUNCTION touch_app_state_keys(${triggerArgsSql})
+  `);
+}
+
+export async function syncAppStateDatabase() {
+  if (!hasDbConfig()) {
+    throw new Error(
+      `Missing required environment variables: ${getMissingDbVars().join(", ")}`,
+    );
+  }
+
+  const dbPool = getDbPool();
+  await ensureSchemaStateTable(dbPool);
+  await ensureAppStateSyncFunction(dbPool);
+
+  const revisionKeys = [
+    "rev:students",
+    "rev:violations",
+    "rev:student_violation_logs",
+    "rev:student_violation_archives",
+    "rev:notifications",
+    "rev:audit_logs",
+    "rev:settings",
+  ];
+
+  await dbPool.query(
+    `
+    INSERT INTO app_state (state_key, state_value)
+    SELECT key_name, '0'
+    FROM UNNEST($1::text[]) AS key_name
+    ON CONFLICT (state_key) DO NOTHING
+    `,
+    [revisionKeys],
+  );
+
+  await ensureAppStateTrigger(dbPool, {
+    tableName: '"Students"',
+    triggerName: "trg_app_state_students_revision",
+    keys: ["rev:students"],
+  });
+
+  await ensureAppStateTrigger(dbPool, {
+    tableName: "violations",
+    triggerName: "trg_app_state_violations_revision",
+    keys: ["rev:violations"],
+  });
+
+  await ensureAppStateTrigger(dbPool, {
+    tableName: "student_violation_logs",
+    triggerName: "trg_app_state_student_violation_logs_revision",
+    keys: ["rev:student_violation_logs"],
+  });
+
+  await ensureAppStateTrigger(dbPool, {
+    tableName: "student_violation_archives",
+    triggerName: "trg_app_state_student_violation_archives_revision",
+    keys: ["rev:student_violation_archives"],
+  });
+
+  await ensureAppStateTrigger(dbPool, {
+    tableName: "notifications",
+    triggerName: "trg_app_state_notifications_revision",
+    keys: ["rev:notifications"],
+  });
+
+  await ensureAppStateTrigger(dbPool, {
+    tableName: "audit_logs",
+    triggerName: "trg_app_state_audit_logs_revision",
+    keys: ["rev:audit_logs"],
+  });
+
+  await ensureAppStateTrigger(dbPool, {
+    tableName: '"SystemSettings"',
+    triggerName: "trg_app_state_settings_revision",
+    keys: ["rev:settings"],
+  });
+
+  return { synced: true };
+}
+
+export async function getAppStateSnapshot(stateKeys = []) {
+  if (!hasDbConfig()) {
+    return [];
+  }
+
+  const dbPool = getDbPool();
+  await ensureSchemaStateTable(dbPool);
+
+  if (!Array.isArray(stateKeys) || stateKeys.length === 0) {
+    const result = await dbPool.query(`
+      SELECT state_key, state_value, updated_at
+      FROM app_state
+      ORDER BY state_key ASC
+    `);
+
+    return result.rows || [];
+  }
+
+  const normalizedKeys = Array.from(
+    new Set(stateKeys.map((key) => String(key || "").trim()).filter(Boolean)),
+  );
+
+  if (normalizedKeys.length === 0) {
+    return [];
+  }
+
+  const result = await dbPool.query(
+    `
+    SELECT state_key, state_value, updated_at
+    FROM app_state
+    WHERE state_key = ANY($1::text[])
+    ORDER BY state_key ASC
+    `,
+    [normalizedKeys],
+  );
+
+  return result.rows || [];
+}
+
 export async function isAuthSchemaCurrent() {
   if (!hasDbConfig()) {
     return false;
@@ -1169,10 +1342,44 @@ export async function syncNotificationsDatabase() {
     )
   `);
 
-  // index to speed up unread count queries
+  // Primary list query: notifications for a student ordered by newest first.
   await dbPool.query(`
     CREATE INDEX IF NOT EXISTS notifications_student_user_id_idx
     ON notifications (student_user_id, created_at DESC)
+  `);
+
+  // Unread-specific operations: unread count + mark-read updates.
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS notifications_student_unread_idx
+    ON notifications (student_user_id, created_at DESC)
+    WHERE read_at IS NULL
+  `);
+
+  // Keep metadata compact for new/updated rows.
+  await dbPool.query(`
+    CREATE OR REPLACE FUNCTION normalize_jsonb_metadata()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF NEW.metadata IS NOT NULL THEN
+        NEW.metadata = jsonb_strip_nulls(NEW.metadata);
+        IF NEW.metadata = '{}'::jsonb THEN
+          NEW.metadata = NULL;
+        END IF;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql SET search_path = public
+  `);
+
+  await dbPool.query(`
+    DROP TRIGGER IF EXISTS trg_notifications_normalize_metadata ON notifications
+  `);
+
+  await dbPool.query(`
+    CREATE TRIGGER trg_notifications_normalize_metadata
+    BEFORE INSERT OR UPDATE ON notifications
+    FOR EACH ROW
+    EXECUTE FUNCTION normalize_jsonb_metadata()
   `);
 
   return { synced: true };
@@ -1363,14 +1570,51 @@ export async function syncAuditLogsDatabase() {
     )
   `);
 
+  // Replace older single-column indexes with workload-oriented composites.
   await dbPool.query(`
-    CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx
-    ON audit_logs (created_at DESC)
+    DROP INDEX IF EXISTS audit_logs_created_at_idx
   `);
 
   await dbPool.query(`
-    CREATE INDEX IF NOT EXISTS audit_logs_actor_user_id_idx
-    ON audit_logs (actor_user_id)
+    DROP INDEX IF EXISTS audit_logs_actor_user_id_idx
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS audit_logs_created_at_id_idx
+    ON audit_logs (created_at DESC, id DESC)
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS audit_logs_actor_user_created_at_idx
+    ON audit_logs (actor_user_id, created_at DESC)
+    WHERE actor_user_id IS NOT NULL
+  `);
+
+  // Keep metadata compact for new/updated rows.
+  await dbPool.query(`
+    CREATE OR REPLACE FUNCTION normalize_jsonb_metadata()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF NEW.metadata IS NOT NULL THEN
+        NEW.metadata = jsonb_strip_nulls(NEW.metadata);
+        IF NEW.metadata = '{}'::jsonb THEN
+          NEW.metadata = NULL;
+        END IF;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql SET search_path = public
+  `);
+
+  await dbPool.query(`
+    DROP TRIGGER IF EXISTS trg_audit_logs_normalize_metadata ON audit_logs
+  `);
+
+  await dbPool.query(`
+    CREATE TRIGGER trg_audit_logs_normalize_metadata
+    BEFORE INSERT OR UPDATE ON audit_logs
+    FOR EACH ROW
+    EXECUTE FUNCTION normalize_jsonb_metadata()
   `);
 
   await dbPool.query(`
