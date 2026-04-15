@@ -2730,9 +2730,14 @@ async function getFullViolationRecord(pool, id) {
   return result.rows?.[0] || null;
 }
 
-app.get("/api/violation-analytics", async (_req, res) => {
+app.get("/api/violation-analytics", async (req, res) => {
+  const requestedSchoolYear = req.query.schoolYear ? String(req.query.schoolYear).trim() : null;
+  const requestedSemester = req.query.semester
+    ? normalizeSemester(String(req.query.semester).trim())
+    : null;
   let workbookRecords = [];
   let databaseRecords = [];
+  let archivedRecords = [];
   let currentSemester = "";
   let currentSchoolYear = "";
 
@@ -2743,16 +2748,40 @@ app.get("/api/violation-analytics", async (_req, res) => {
       await ensureAuthDatabaseReady();
       const pool = getDbPool();
 
-      const [settingsResult, violationsResult] = await Promise.all([
-        pool.query(
-          `
-          SELECT current_semester, current_school_year
-          FROM "SystemSettings"
-          WHERE setting_key = 'system_config'
-          LIMIT 1
-          `,
-        ),
-        pool.query(
+      // Get current settings
+      const settingsResult = await pool.query(
+        `
+        SELECT current_semester, current_school_year
+        FROM "SystemSettings"
+        WHERE setting_key = 'system_config'
+        LIMIT 1
+        `,
+      );
+
+      const settings = settingsResult.rows?.[0] || {};
+      currentSemester = String(settings.current_semester || "").trim();
+      currentSchoolYear = String(settings.current_school_year || "").trim();
+
+      const targetSchoolYear = requestedSchoolYear || currentSchoolYear;
+      const targetSemester = requestedSemester ||
+        (requestedSchoolYear ? null : normalizeSemester(currentSemester));
+
+      if (!targetSchoolYear) {
+        return res.status(400).json({
+          status: "error",
+          message: "No school year specified and no current school year configured.",
+        });
+      }
+
+      const normalizedCurrentSemester = normalizeSemester(currentSemester);
+      const isCurrentTargetTerm =
+        targetSchoolYear === currentSchoolYear &&
+        targetSemester &&
+        normalizedCurrentSemester === targetSemester;
+
+      let currentRecords = [];
+      if (isCurrentTargetTerm && targetSemester) {
+        const currentResult = await pool.query(
           `
           SELECT
             svl.student_id,
@@ -2767,56 +2796,109 @@ app.get("/api/violation-analytics", async (_req, res) => {
           FROM student_violation_logs svl
           LEFT JOIN "Students" s ON s.id = svl.student_id
           LEFT JOIN violations v ON v.id = svl.violation_catalog_id
+          WHERE svl.school_year = $1 AND svl.semester = $2
           ORDER BY svl.created_at ASC, svl.id ASC
           `,
-        ),
-      ]);
+          [targetSchoolYear, targetSemester],
+        );
 
-      const settings = settingsResult.rows?.[0] || {};
-      currentSemester = String(settings.current_semester || "").trim();
-      currentSchoolYear = String(settings.current_school_year || "").trim();
+        currentRecords = (currentResult.rows || []).map((row, index) => {
+          const createdAt = new Date(row.created_at);
+          const inferredTerm = inferAcademicTermFromDate(createdAt);
+          const semester =
+            normalizeSemester(row.semester) ||
+            normalizeSemester(inferredTerm.semester);
+          const schoolYear =
+            normalizeSchoolYear(row.school_year) ||
+            normalizeSchoolYear(inferredTerm.schoolYear);
 
-      databaseRecords = (violationsResult.rows || []).map((row, index) => {
-        const createdAt = new Date(row.created_at);
-        const inferredTerm = inferAcademicTermFromDate(createdAt);
-        const semester =
-          normalizeSemester(row.semester) ||
-          normalizeSemester(inferredTerm.semester);
-        const schoolYear =
-          normalizeSchoolYear(row.school_year) ||
-          normalizeSchoolYear(inferredTerm.schoolYear);
+          const safeName = String(row.full_name || "").trim();
+          const studentKey = Number.isFinite(Number(row.student_id))
+            ? `student:${Number(row.student_id)}`
+            : safeName
+              ? `name:${safeName.toLowerCase()}`
+              : `current-row:${index}`;
 
-        const safeName = String(row.full_name || "").trim();
-        const studentKey = Number.isFinite(Number(row.student_id))
-          ? `student:${Number(row.student_id)}`
-          : safeName
-            ? `name:${safeName.toLowerCase()}`
-            : `db-row:${index}`;
+          return {
+            source: "current",
+            studentKey,
+            studentName: safeName,
+            program: String(row.program || "").trim(),
+            yearSection: String(row.year_section || "").trim(),
+            violationLabel: String(row.violation_label || "").trim(),
+            degreeRank: parseDegreeRank(row.violation_degree),
+            date: createdAt,
+            monthLabel: toMonthLabel(createdAt),
+            semester,
+            schoolYear,
+          };
+        });
 
-        return {
-          source: "database",
-          studentKey,
-          studentName: safeName,
-          program: String(row.program || "").trim(),
-          yearSection: String(row.year_section || "").trim(),
-          violationLabel: String(row.violation_label || "").trim(),
-          degreeRank: parseDegreeRank(row.violation_degree),
-          date: createdAt,
-          monthLabel: toMonthLabel(createdAt),
-          semester,
-          schoolYear,
-        };
-      });
+        databaseRecords = [...currentRecords];
+      } else {
+        const archivedResult = await pool.query(
+          `
+          SELECT
+            sva.id,
+            sva.student_id,
+            sva.created_at,
+            sva.semester,
+            sva.school_year,
+            sva.violation_label,
+            s.full_name,
+            s.program,
+            sva.year_section,
+            v.degree AS violation_degree
+          FROM student_violation_archives sva
+          LEFT JOIN "Students" s ON s.id = sva.student_id
+          LEFT JOIN violations v ON v.id = sva.violation_catalog_id
+          WHERE sva.school_year = $1 AND sva.semester = $2 AND sva.is_unresolved = FALSE
+          ORDER BY sva.created_at ASC, sva.id ASC
+          `,
+          [targetSchoolYear, targetSemester],
+        );
+
+        archivedRecords = (archivedResult.rows || []).map((row, index) => {
+          const createdAt = new Date(row.created_at);
+          const semester = normalizeSemester(row.semester);
+          const schoolYear = normalizeSchoolYear(row.school_year);
+
+          const safeName = String(row.full_name || "").trim();
+          const studentKey = Number.isFinite(Number(row.student_id))
+            ? `student:${Number(row.student_id)}`
+            : safeName
+              ? `name:${safeName.toLowerCase()}`
+              : `archive-row:${index}`;
+
+          return {
+            source: "archived",
+            studentKey,
+            studentName: safeName,
+            program: String(row.program || "").trim(),
+            yearSection: String(row.year_section || "").trim(),
+            violationLabel: String(row.violation_label || "").trim(),
+            degreeRank: parseDegreeRank(row.violation_degree),
+            date: createdAt,
+            monthLabel: toMonthLabel(createdAt),
+            semester,
+            schoolYear,
+          };
+        });
+
+        databaseRecords = [...archivedRecords];
+      }
     }
 
-    const selectedRecords =
+    const selectedRecordsSource =
       workbookRecords.length > 0 ? workbookRecords : databaseRecords;
-    const mergedRecords = selectedRecords.filter((record) => {
-      const hasTerm =
-        normalizeSemester(record.semester) &&
-        normalizeSchoolYear(record.schoolYear);
+    const mergedRecords = selectedRecordsSource.filter((record) => {
+      const semester = normalizeSemester(record.semester);
+      const schoolYear = normalizeSchoolYear(record.schoolYear);
+      const hasTerm = semester && schoolYear;
       const hasValidDate = !Number.isNaN(new Date(record.date).getTime());
-      return hasTerm && hasValidDate;
+      const matchesYear = requestedSchoolYear ? schoolYear === requestedSchoolYear : true;
+      const matchesSemester = requestedSemester ? semester === requestedSemester : true;
+      return hasTerm && hasValidDate && matchesYear && matchesSemester;
     });
 
     if (mergedRecords.length > 0 && !currentSemester && !currentSchoolYear) {
@@ -2831,12 +2913,27 @@ app.get("/api/violation-analytics", async (_req, res) => {
       currentSchoolYear,
     });
 
+    // Add information about ongoing semesters
+    const targetSchoolYear = requestedSchoolYear || currentSchoolYear;
+    const ongoingSemesters = {};
+    if (
+      targetSchoolYear === currentSchoolYear &&
+      requestedSemester &&
+      normalizeSemester(currentSemester) === requestedSemester
+    ) {
+      ongoingSemesters[SEMESTER_DISPLAY_MAP[requestedSemester] || requestedSemester] = true;
+    }
+
     return res.status(200).json({
       status: "ok",
       ...analytics,
+      ongoingSemesters,
+      targetSchoolYear,
       metadata: {
         historicalRecordCount: workbookRecords.length,
         databaseRecordCount: databaseRecords.length,
+        archivedRecordCount: archivedRecords.length,
+        currentRecordCount: databaseRecords.length - archivedRecords.length,
         totalAnalyzedRecords: mergedRecords.length,
       },
     });
@@ -5635,11 +5732,24 @@ app.get("/api/archive/school-years", async (req, res) => {
       ),
     );
 
+    const settingsResult = await pool.query(
+      `
+      SELECT current_school_year
+      FROM "SystemSettings"
+      WHERE setting_key = 'system_config'
+      LIMIT 1
+      `,
+    );
+    const settings = settingsResult.rows?.[0] || {};
+    const currentSchoolYear = String(settings.current_school_year || "").trim();
+
+    const combinedYears = Array.from(
+      new Set([...schoolYears, ...workbookSchoolYears, currentSchoolYear].filter(Boolean)),
+    ).sort((left, right) => right.localeCompare(left));
+
     return res.status(200).json({
       status: "ok",
-      schoolYears: Array.from(
-        new Set([...schoolYears, ...workbookSchoolYears]),
-      ).sort((left, right) => right.localeCompare(left)),
+      schoolYears: combinedYears,
     });
   } catch (error) {
     console.error("Error fetching school years:", error);

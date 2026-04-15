@@ -4,7 +4,7 @@ import SearchBar from "../../components/ui/SearchBar";
 import Button from "../../components/ui/Button";
 import DataTable from "../../components/ui/DataTable";
 import TableTabs from "../../components/ui/TableTabs";
-import { Folder, Filter, Download, X, AlertCircle, MoreVertical, Edit, RotateCcw, Trash2, Check } from "lucide-react";
+import { Folder, Download, X, AlertCircle, MoreVertical, Edit, RotateCcw, Trash2, Check, Tag, CalendarDays, SortAsc } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -154,6 +154,8 @@ const Archives = () => {
   const [activeSemester, setActiveSemester] = useState("1ST SEM");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState("");
+  const [filterYear, setFilterYear] = useState("");
+  const [sortOrder, setSortOrder] = useState(""); // "asc" for A-Z, "desc" for Z-A
   const [isGlobalSearch, setIsGlobalSearch] = useState(false); // Default to current folder search
 
   const [isLoading, setIsLoading] = useState(false);
@@ -986,20 +988,13 @@ const Archives = () => {
       }
     }
 
-    if (!searchQuery) {
-      return displayData.map((item, index) => ({
-        ...item,
-        no: index + 1,
-      }));
-    }
-
     const query = searchQuery.toLowerCase();
 
     if (!isGlobalSearch) {
       // Current folder-only search
-      const filtered = displayData.filter((item) => {
+      let filtered = displayData.filter((item) => {
         const fullText = (item.searchableText || "").toLowerCase();
-        if (!fullText.includes(query)) {
+        if (query && !fullText.includes(query)) {
           return false;
         }
 
@@ -1011,8 +1006,31 @@ const Archives = () => {
           return false;
         }
 
+        if (filterYear && item.yearSection) {
+          const yearSectionStr = String(item.yearSection).toLowerCase();
+          const yearPattern = new RegExp(`(^|[^0-9])${filterYear}(?:st|nd|rd|th)?[a-z]?`, 'i');
+          if (!yearPattern.test(yearSectionStr)) {
+            return false;
+          }
+        }
+
         return true;
       });
+
+      // Apply sorting
+      if (sortOrder) {
+        filtered = [...filtered].sort((a, b) => {
+          const nameA = (a.studentName?.props?.children?.[0]?.props?.children || a.full_name || "").toLowerCase();
+          const nameB = (b.studentName?.props?.children?.[0]?.props?.children || b.full_name || "").toLowerCase();
+          
+          if (sortOrder === "asc") {
+            return nameA.localeCompare(nameB);
+          } else if (sortOrder === "desc") {
+            return nameB.localeCompare(nameA);
+          }
+          return 0;
+        });
+      }
 
       return filtered.map((item, index) => ({
         ...item,
@@ -1079,7 +1097,7 @@ const Archives = () => {
 
       return results;
     }
-  }, [displayData, searchQuery, filterType, isGlobalSearch, folders]);
+  }, [displayData, searchQuery, filterType, filterYear, sortOrder, isGlobalSearch, folders]);
 
   // Define columns based on active folder and search mode
   const columns = useMemo(() => {
@@ -1602,6 +1620,8 @@ const Archives = () => {
   const clearFilters = () => {
     setSearchQuery("");
     setFilterType("");
+    setFilterYear("");
+    setSortOrder("");
     if (isGlobalSearch) {
       setIsGlobalSearch(false);
       setAllArchivedViolations([]); // Clear global search data
@@ -2228,6 +2248,8 @@ const Archives = () => {
                 setIsGlobalSearch(true);
                 setSearchQuery(""); // Clear search when switching to global
                 setFilterType("");
+                setFilterYear("");
+                setSortOrder("");
               }}
             >
               Global
@@ -2244,6 +2266,8 @@ const Archives = () => {
                 setIsGlobalSearch(false);
                 setSearchQuery(""); // Clear search when switching to current folder
                 setFilterType("");
+                setFilterYear("");
+                setSortOrder("");
                 setAllArchivedViolations([]); // Clear global search data
               }}
             >
@@ -2419,17 +2443,17 @@ const Archives = () => {
                         size="sm"
                         className={`gap-2 ${
                           filterType
-                            ? "bg-[#4A9B9B] hover:bg-[#5aabab]"
-                            : "bg-[#A3AED0] hover:bg-[#b3bde0]"
-                        } text-[#23262B] border-0 transition-colors`}
+                            ? "bg-[#334155] hover:bg-[#475569]"
+                            : "bg-[#1F2937] hover:bg-[#374151]"
+                        } text-white border-0 transition-colors`}
                       >
-                        <Filter className="w-4 h-4" />
-                        {filterType || "Violation Type"}
+                        <Tag className="w-4 h-4 text-[#CBD5E1]" />
+                        {filterType || "Type"}
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>
                       <DropdownMenuItem onClick={() => setFilterType("")}>
-                        All Types
+                        All types
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => setFilterType("Minor Offenses")}
@@ -2443,11 +2467,75 @@ const Archives = () => {
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+
+                  {/* Year Filter */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className={`gap-2 ${
+                          filterYear
+                            ? "bg-[#334155] hover:bg-[#475569]"
+                            : "bg-[#1F2937] hover:bg-[#374151]"
+                        } text-white border-0 transition-colors`}
+                      >
+                        <CalendarDays className="w-4 h-4 text-[#CBD5E1]" />
+                        {filterYear ? `Year ${filterYear}` : "Year"}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                      <DropdownMenuItem onClick={() => setFilterYear("")}>
+                        All years
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setFilterYear("1") }>
+                        1st Year
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setFilterYear("2") }>
+                        2nd Year
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setFilterYear("3") }>
+                        3rd Year
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setFilterYear("4") }>
+                        4th Year
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
+                  {/* Sort Order Filter */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className={`gap-2 ${
+                          sortOrder
+                            ? "bg-[#334155] hover:bg-[#475569]"
+                            : "bg-[#1F2937] hover:bg-[#374151]"
+                        } text-white border-0 transition-colors`}
+                      >
+                        <SortAsc className="w-4 h-4 text-[#CBD5E1]" />
+                        {sortOrder === "asc" ? "A-Z" : sortOrder === "desc" ? "Z-A" : "Sort"}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                      <DropdownMenuItem onClick={() => setSortOrder("")}>
+                        Default order
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setSortOrder("asc")}>
+                        A-Z
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setSortOrder("desc")}>
+                        Z-A
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </>
               )}
 
               {/* Clear Filters Button */}
-              {(filterType || searchQuery || isGlobalSearch) && (
+              {(filterType || filterYear || sortOrder || searchQuery || isGlobalSearch) && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -2511,6 +2599,8 @@ const Archives = () => {
                   setIsGlobalSearch(false);
                   setSearchQuery("");
                   setFilterType("");
+                  setFilterYear("");
+                  setSortOrder("");
                   return;
                 }
 
@@ -2529,6 +2619,8 @@ const Archives = () => {
                 setIsGlobalSearch(false);
                 setSearchQuery("");
                 setFilterType("");
+                setFilterYear("");
+                setSortOrder("");
               }}
             />
           )}

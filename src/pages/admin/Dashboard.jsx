@@ -55,6 +55,15 @@ const getDataUrlDimensions = (dataUrl) =>
     img.src = dataUrl;
   });
 
+const normalizeSemester = (value) => {
+  const text = String(value || "").trim().toUpperCase();
+  if (!text) return "";
+  if (text.includes("SUM")) return "SUMMER";
+  if (text.includes("1")) return "1ST SEM";
+  if (text.includes("2")) return "2ND SEM";
+  return "";
+};
+
 const parseYearSection = (value) => {
   const normalized = String(value || "").trim().toUpperCase();
   if (!normalized) {
@@ -113,6 +122,11 @@ const Dashboard = () => {
     Summer: [],
   });
   const [trendTermBySemester, setTrendTermBySemester] = useState({});
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState("");
+  const [availableSchoolYears, setAvailableSchoolYears] = useState([]);
+  const [currentSemester, setCurrentSemester] = useState("");
+  const [currentSchoolYear, setCurrentSchoolYear] = useState("");
+  const [ongoingSemesters, setOngoingSemesters] = useState({});
 
   const [rankingData, setRankingData] = useState([]);
   const [isLoadingRanking, setIsLoadingRanking] = useState(true);
@@ -215,10 +229,31 @@ const Dashboard = () => {
     [selectedSemester, trendBySemester],
   );
 
-  const selectedTrendTerm = useMemo(
-    () => trendTermBySemester[selectedSemester] || null,
-    [selectedSemester, trendTermBySemester],
-  );
+  const selectedTrendTerm = useMemo(() => {
+    const term = trendTermBySemester[selectedSemester] || null;
+    if (term && ongoingSemesters[selectedSemester]) {
+      return {
+        ...term,
+        label: `${term.label} (Ongoing)`,
+        isOngoing: true,
+      };
+    }
+    return term;
+  }, [selectedSemester, trendTermBySemester, ongoingSemesters]);
+
+  const selectedTrendTermLabel = useMemo(() => {
+    const fallbackLabel = selectedSchoolYear
+      ? `${selectedSemester} (S.Y. ${selectedSchoolYear})`
+      : selectedSemester;
+
+    if (!selectedTrendTerm?.label) {
+      return ongoingSemesters[selectedSemester]
+        ? `${fallbackLabel} (Ongoing)`
+        : fallbackLabel;
+    }
+
+    return selectedTrendTerm.label;
+  }, [selectedTrendTerm, selectedSemester, selectedSchoolYear, ongoingSemesters]);
 
   const selectedTrendGraphData = useMemo(
     () => selectedTrendData.map((entry) => Number(entry.count) || 0),
@@ -1050,13 +1085,14 @@ const Dashboard = () => {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(16);
       doc.text("Violation Trends Over the Semester", centerX, cursorY, { align: "center" });
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      const schoolYearText = selectedTrendTerm?.schoolYear
-        ? ` | S.Y. ${selectedTrendTerm.schoolYear}`
-        : "";
+      const schoolYearText = selectedSchoolYear
+        ? ` | S.Y. ${selectedSchoolYear}`
+        : selectedTrendTerm?.schoolYear
+          ? ` | S.Y. ${selectedTrendTerm.schoolYear}`
+          : "";
+      const semesterText = selectedTrendTermLabel || selectedSemester;
       doc.text(
-        `Semester: ${selectedSemester}${schoolYearText}`,
+        `Semester: ${semesterText}${schoolYearText}`,
         centerX,
         cursorY + 8,
         { align: "center" },
@@ -1122,6 +1158,29 @@ const Dashboard = () => {
     }
   };
 
+  // Fetch available school years
+  useEffect(() => {
+    const fetchSchoolYears = async () => {
+      try {
+        const response = await fetch("/api/archive/school-years");
+        if (response.ok) {
+          const result = await response.json();
+          if (result.status === "ok" && Array.isArray(result.schoolYears)) {
+            setAvailableSchoolYears(result.schoolYears);
+            // Set default to current year if available
+            if (result.schoolYears.length > 0 && !selectedSchoolYear) {
+              setSelectedSchoolYear(result.schoolYears[0]);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to fetch school years:", error);
+      }
+    };
+
+    fetchSchoolYears();
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -1148,15 +1207,47 @@ const Dashboard = () => {
       setIsLoadingRanking(true);
 
       try {
-        const [studentsRes, violationsRes, analyticsRes] = await Promise.all([
+        const [currentSettingsRes, studentsRes, violationsRes] = await Promise.all([
+          fetch("/api/archive/current-settings"),
           fetch("/api/students"),
           fetch("/api/student-violations"),
-          fetch("/api/violation-analytics"),
         ]);
+
+        const currentSettings = await currentSettingsRes.json().catch(() => ({}));
+        const normalizedCurrentSem = String(currentSettings.currentSemester || "").trim();
+        const currentSY = String(currentSettings.currentSchoolYear || "").trim();
+
+        if (currentSettingsRes.ok && currentSettings?.status === "ok") {
+          setCurrentSemester(normalizedCurrentSem);
+          setCurrentSchoolYear(currentSY);
+        }
+
+        const analyticsUrl = selectedSchoolYear && selectedSemester
+          ? `/api/violation-analytics?schoolYear=${encodeURIComponent(selectedSchoolYear)}&semester=${encodeURIComponent(selectedSemester)}`
+          : "/api/violation-analytics";
+
+        const analyticsRes = await fetch(analyticsUrl);
 
         const studentsResult = await studentsRes.json().catch(() => ({}));
         const violationsResult = await violationsRes.json().catch(() => ({}));
         const analyticsResult = await analyticsRes.json().catch(() => ({}));
+
+        const isSelectedCurrentTerm =
+          selectedSchoolYear &&
+          selectedSemester &&
+          selectedSchoolYear === currentSY &&
+          normalizeSemester(selectedSemester) === normalizeSemester(normalizedCurrentSem);
+
+        console.log("Violation Trends Debug:", {
+          selectedSY: selectedSchoolYear,
+          selectedSem: selectedSemester,
+          currentSY,
+          currentSem: normalizedCurrentSem,
+          dataSource: isSelectedCurrentTerm ? "StudentViolations" : "Archives",
+          ongoingLabel: isSelectedCurrentTerm,
+          analyticsUrl,
+          analyticsStatus: analyticsResult?.status,
+        });
 
         if (!studentsRes.ok || !Array.isArray(studentsResult?.students)) {
           throw new Error("Failed to load students.");
@@ -1273,6 +1364,7 @@ const Dashboard = () => {
               : [],
           });
           setTrendTermBySemester(analyticsResult?.trendTermBySemester || {});
+          setOngoingSemesters(analyticsResult?.ongoingSemesters || {});
 
           setRankingData(newRankingData);
         }
@@ -1310,7 +1402,7 @@ const Dashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [selectedSchoolYear, selectedSemester]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1537,13 +1629,31 @@ const Dashboard = () => {
                 <h3 className="text-section-title">
                   Violation trends over the semester
                 </h3>
-                {selectedTrendTerm?.label ? (
+                {selectedTrendTermLabel ? (
                   <p className="text-xs text-gray-400 mt-1">
-                    {selectedTrendTerm.label}
+                    {selectedTrendTermLabel}
                   </p>
                 ) : null}
               </div>
               <div className="flex items-center gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-3 py-1.5 rounded-lg border border-white/10">
+                      {selectedSchoolYear || "Select Year"}
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {availableSchoolYears.map((year) => (
+                      <DropdownMenuItem
+                        key={year}
+                        onClick={() => setSelectedSchoolYear(year)}
+                      >
+                        {year}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button className="flex items-center gap-2 bg-white/10 backdrop-blur-sm text-white text-sm px-3 py-1.5 rounded-lg border border-white/10">
@@ -1684,8 +1794,8 @@ const Dashboard = () => {
         isOpen={trendModalOpen}
         onClose={() => setTrendModalOpen(false)}
         title={
-          selectedTrendTerm?.label
-            ? `Violation Trends Over the Semester (${selectedTrendTerm.label})`
+          selectedTrendTermLabel
+            ? `Violation Trends Over the Semester (${selectedTrendTermLabel})`
             : "Violation Trends Over the Semester"
         }
         size="2xl"
