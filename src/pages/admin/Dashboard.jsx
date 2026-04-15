@@ -112,6 +112,7 @@ const Dashboard = () => {
     "2nd Sem": [],
     Summer: [],
   });
+  const [trendTermBySemester, setTrendTermBySemester] = useState({});
 
   const [rankingData, setRankingData] = useState([]);
   const [isLoadingRanking, setIsLoadingRanking] = useState(true);
@@ -212,6 +213,11 @@ const Dashboard = () => {
   const selectedTrendRawData = useMemo(
     () => (Array.isArray(trendBySemester?.[selectedSemester]) ? trendBySemester[selectedSemester] : []),
     [selectedSemester, trendBySemester],
+  );
+
+  const selectedTrendTerm = useMemo(
+    () => trendTermBySemester[selectedSemester] || null,
+    [selectedSemester, trendTermBySemester],
   );
 
   const selectedTrendGraphData = useMemo(
@@ -567,19 +573,19 @@ const Dashboard = () => {
 
       return (
         <div
-          className={`relative ${wrapperHeightClass} overflow-hidden rounded-2xl border border-white/15 bg-white/5 backdrop-blur-xl px-6 pt-6 pb-12 shadow-[0_8px_24px_rgba(0,0,0,0.18)]`}
+          className={`relative ${wrapperHeightClass} overflow-hidden rounded-2xl border border-white/12 bg-[#222427] px-6 pt-6 pb-12 shadow-[0_8px_24px_rgba(0,0,0,0.4)]`}
         >
           <svg
             viewBox={`0 0 ${dashboardTrendChart.width} ${dashboardTrendChart.height}`}
-            className={`${chartHeightClass} w-full rounded-xl`}
+            className={`${chartHeightClass} w-full`}
             preserveAspectRatio="none"
             onMouseMove={handlePointerMove}
             onMouseLeave={() => setHoveredTrendPointIndex(null)}
           >
             <defs>
               <linearGradient id="dashTrendArea" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#a3aed0" stopOpacity="0.13" />
-                <stop offset="100%" stopColor="#232528" stopOpacity="0" />
+                <stop offset="0%" stopColor="#d1d5db" stopOpacity="0.08" />
+                <stop offset="100%" stopColor="#222427" stopOpacity="0" />
               </linearGradient>
             </defs>
 
@@ -596,15 +602,14 @@ const Dashboard = () => {
                     y1={y}
                     x2={dashboardTrendChart.width - dashboardTrendChart.right}
                     y2={y}
-                    stroke="rgba(209,213,219,0.10)"
-                    strokeWidth="1"
+                    stroke="rgba(209,213,219,0.12)"
+                    strokeWidth="0.8"
                   />
                   <text
                     x={dashboardTrendChart.left - 16}
                     y={y + 5}
-                    fill="rgba(163,174,208,0.7)"
+                    fill="rgba(156,163,175,0.8)"
                     fontSize="11"
-                    fontWeight="500"
                     textAnchor="end"
                   >
                     {tick}
@@ -621,11 +626,10 @@ const Dashboard = () => {
               <path
                 d={dashboardTrendChart.linePath}
                 fill="none"
-                stroke="#a3aed0"
-                strokeWidth="2.5"
+                stroke="#d1d5db"
+                strokeWidth="2.2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                style={{ filter: "drop-shadow(0 2px 6px #A3AED0AA)" }}
               />
             ) : null}
 
@@ -643,77 +647,67 @@ const Dashboard = () => {
                   <circle
                     cx={point.x}
                     cy={point.y}
-                    r={isActive ? 6.2 : isLatest ? 5.2 : 3.8}
-                    fill="#a3aed0"
-                    stroke="#232528"
-                    strokeWidth={isActive ? 2.2 : 1.6}
-                    fillOpacity={isActive ? 1 : 0.85}
+                    r={isActive ? 5.8 : isLatest ? 4.8 : 3.4}
+                    fill="#e5e7eb"
+                    stroke="#222427"
+                    strokeWidth={isActive ? 2.2 : 1.8}
+                    fillOpacity={1}
                   />
                 </g>
               );
             })}
 
-            {activePoint ? (() => {
-              // Tooltip content
-              const valueText = `${activePoint.count} violations`;
-              const labelText = activePoint.label;
-              // Estimate width based on text length (SVG doesn't auto-size rects)
-              const paddingX = 16;
-              const paddingY = 10;
-              const valueFontSize = 14;
-              const labelFontSize = 12;
-              const valueWidth = valueText.length * valueFontSize * 0.6;
-              const labelWidth = labelText.length * labelFontSize * 0.6;
-              const tooltipWidth = Math.max(100, valueWidth, labelWidth) + paddingX * 2;
-              const tooltipHeight = valueFontSize + labelFontSize + paddingY * 2 + 6;
-              const tooltipX = Math.max(
-                dashboardTrendChart.left + 12,
-                Math.min(
-                  dashboardTrendChart.width - dashboardTrendChart.right - tooltipWidth,
-                  activePoint.x,
-                ),
-              );
-              const tooltipY = Math.max(16, Math.min(dashboardTrendChart.height - 70, activePoint.y - tooltipHeight - 8));
-              return (
-                <g>
-                  <rect
-                    x={tooltipX}
-                    y={tooltipY}
-                    rx="10"
-                    width={tooltipWidth}
-                    height={tooltipHeight}
-                    fill="#232528"
-                    stroke="#a3aed0"
-                    strokeWidth="1.2"
-                    pointerEvents="none"
-                    style={{ filter: "drop-shadow(0 2px 8px #23252888)" }}
-                  />
-                  <text
-                    x={tooltipX + tooltipWidth / 2}
-                    y={tooltipY + paddingY + valueFontSize}
-                    fill="#f3f4f6"
-                    fontSize={valueFontSize}
-                    fontWeight="700"
-                    pointerEvents="none"
-                    textAnchor="middle"
-                    style={{ letterSpacing: '0.01em' }}
-                  >
-                    {valueText}
-                  </text>
-                  <text
-                    x={tooltipX + tooltipWidth / 2}
-                    y={tooltipY + paddingY + valueFontSize + labelFontSize + 4}
-                    fill="#a3aed0"
-                    fontSize={labelFontSize}
-                    fontWeight="500"
-                    pointerEvents="none"
-                    textAnchor="middle"
-                  >
-                    {labelText}
-                  </text>
-                </g>
-              );
-            })() : null}
+            {activePoint ? (
+              <g transform={`translate(${-60}, 0)`}>
+                <rect
+                  x={Math.max(
+                    dashboardTrendChart.left + 12,
+                    Math.min(
+                      dashboardTrendChart.width - dashboardTrendChart.right - 120,
+                      activePoint.x,
+                    ),
+                  )}
+                  y={Math.max(16, Math.min(dashboardTrendChart.height - 70, activePoint.y - 76))}
+                  rx="6"
+                  width="120"
+                  height="48"
+                  fill="#222427"
+                  stroke="rgba(156,163,175,0.3)"
+                  pointerEvents="none"
+                />
+                <text
+                  x={Math.max(
+                    dashboardTrendChart.left + 24,
+                    Math.min(
+                      dashboardTrendChart.width - dashboardTrendChart.right - 108,
+                      activePoint.x + 12,
+                    ),
+                  )}
+                  y={Math.max(32, Math.min(dashboardTrendChart.height - 54, activePoint.y - 60))}
+                  fill="#f3f4f6"
+                  fontSize="12"
+                  fontWeight="600"
+                  pointerEvents="none"
+                >
+                  {activePoint.count} violations
+                </text>
+                <text
+                  x={Math.max(
+                    dashboardTrendChart.left + 24,
+                    Math.min(
+                      dashboardTrendChart.width - dashboardTrendChart.right - 108,
+                      activePoint.x + 12,
+                    ),
+                  )}
+                  y={Math.max(49, Math.min(dashboardTrendChart.height - 37, activePoint.y - 43))}
+                  fill="rgba(243,244,246,0.85)"
+                  fontSize="12"
+                  pointerEvents="none"
+                >
+                  {activePoint.label}
+                </text>
+              </g>
+            ) : null}
           </svg>
 
           <div className="grid grid-cols-3 gap-4 px-7 pt-7 mt-3 pb-2">
@@ -1058,7 +1052,15 @@ const Dashboard = () => {
       doc.text("Violation Trends Over the Semester", centerX, cursorY, { align: "center" });
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
-      doc.text(`Semester: ${selectedSemester}`, centerX, cursorY + 8, { align: "center" });
+      const schoolYearText = selectedTrendTerm?.schoolYear
+        ? ` | S.Y. ${selectedTrendTerm.schoolYear}`
+        : "";
+      doc.text(
+        `Semester: ${selectedSemester}${schoolYearText}`,
+        centerX,
+        cursorY + 8,
+        { align: "center" },
+      );
       doc.text(`Generated: ${new Date().toLocaleString()}`, centerX, cursorY + 16, { align: "center" });
       cursorY += 28;
 
@@ -1270,6 +1272,7 @@ const Dashboard = () => {
               ? analyticsResult.trendBySemester.Summer
               : [],
           });
+          setTrendTermBySemester(analyticsResult?.trendTermBySemester || {});
 
           setRankingData(newRankingData);
         }
@@ -1529,10 +1532,17 @@ const Dashboard = () => {
         <div className="flex gap-4 mb-6">
           {/* Violation Trends Chart */}
           <Card variant="glass" padding="md" className="flex-1">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-section-title">
-                Violation trends over the semester
-              </h3>
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h3 className="text-section-title">
+                  Violation trends over the semester
+                </h3>
+                {selectedTrendTerm?.label ? (
+                  <p className="text-xs text-gray-400 mt-1">
+                    {selectedTrendTerm.label}
+                  </p>
+                ) : null}
+              </div>
               <div className="flex items-center gap-2">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -1673,7 +1683,11 @@ const Dashboard = () => {
       <Modal
         isOpen={trendModalOpen}
         onClose={() => setTrendModalOpen(false)}
-        title={"Violation Trends Over the Semester"}
+        title={
+          selectedTrendTerm?.label
+            ? `Violation Trends Over the Semester (${selectedTrendTerm.label})`
+            : "Violation Trends Over the Semester"
+        }
         size="2xl"
         className="max-w-[1100px] max-h-[80vh] overflow-y-auto custom-scrollbar"
       >

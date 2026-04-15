@@ -721,6 +721,44 @@ function buildAnalyticsFromRecords({
     targetRow.count += 1;
   });
 
+  const latestTermKeyBySemester = {
+    "1st Sem": "",
+    "2nd Sem": "",
+    Summer: "",
+  };
+
+  allRecords.forEach((record) => {
+    const semester = normalizeSemester(record.semester);
+    const schoolYear = normalizeSchoolYear(record.schoolYear);
+    const displaySemester = SEMESTER_DISPLAY_MAP[semester];
+    if (!displaySemester || !schoolYear) {
+      return;
+    }
+
+    const termKey = buildTermKey(semester, schoolYear);
+    const existingTermKey = latestTermKeyBySemester[displaySemester];
+    if (!existingTermKey || compareTermKeys(existingTermKey, termKey) < 0) {
+      latestTermKeyBySemester[displaySemester] = termKey;
+    }
+  });
+
+  const trendTermBySemester = Object.fromEntries(
+    Object.entries(latestTermKeyBySemester).map(([displaySemester, termKey]) => {
+      if (!termKey) {
+        return [displaySemester, { semester: "", schoolYear: "", label: "" }];
+      }
+      const { semester, schoolYear } = parseTermKey(termKey);
+      return [
+        displaySemester,
+        {
+          semester,
+          schoolYear,
+          label: `${displaySemester} (S.Y. ${schoolYear})`,
+        },
+      ];
+    }),
+  );
+
   const trendBySemester = Object.fromEntries(
     Object.entries(trendBucketsBySemester).map(([semesterLabel, monthMap]) => [
       semesterLabel,
@@ -780,6 +818,7 @@ function buildAnalyticsFromRecords({
         cards.activeViolations.current,
       ),
     },
+    trendTermBySemester,
     currentTerm: currentTermKey
       ? {
           ...parseTermKey(currentTermKey),
