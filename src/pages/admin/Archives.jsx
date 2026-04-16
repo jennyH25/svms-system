@@ -300,6 +300,23 @@ const Archives = () => {
     };
   }, [activeFolder]);
 
+  const isViolationType = (item, type) => {
+    const categoryText = String(item.violationCategory || item.type || "").toLowerCase();
+    const degreeText = String(item.violationDegree || item.type || "").toLowerCase();
+
+    const isMinor =
+      categoryText.includes("minor") ||
+      /first degree|second degree/.test(degreeText);
+    const isMajor =
+      categoryText.includes("major") ||
+      /third degree|fourth degree|fifth degree|sixth degree|seventh degree/.test(degreeText);
+
+    if (type === "Minor Offenses") return isMinor;
+    if (type === "Major Offenses") return isMajor;
+
+    return false;
+  };
+
   // Load school years on mount and set up periodic refresh
   useEffect(() => {
     const loadSchoolYears = async () => {
@@ -823,6 +840,8 @@ const Archives = () => {
               violation.violation_category && violation.violation_degree
                 ? `${violation.violation_category} - ${violation.violation_degree}`
                 : "-",
+            violationCategory: violation.violation_category || "",
+            violationDegree: violation.violation_degree || "",
             reportedBy: violation.reported_by || "-",
             remarks: violation.remarks || "-",
             signature: violation.signature_image ? "Signed" : "No Signature",
@@ -913,6 +932,8 @@ const Archives = () => {
               violation.violation_category && violation.violation_degree
                 ? `${violation.violation_category} - ${violation.violation_degree}`
                 : "-",
+            violationCategory: violation.violation_category || "",
+            violationDegree: violation.violation_degree || "",
             reportedBy: violation.reported_by || "-",
             remarks: violation.remarks || "-",
             signature: violation.signature_image ? "Signed" : "No Signature",
@@ -955,6 +976,8 @@ const Archives = () => {
               violation.violation_category && violation.violation_degree
                 ? `${violation.violation_category} - ${violation.violation_degree}`
                 : "-",
+            violationCategory: violation.violation_category || "",
+            violationDegree: violation.violation_degree || "",
             reportedBy: violation.reported_by || "-",
             remarks: violation.remarks || "-",
             signature: violation.signature_image ? "Signed" : "No Signature",
@@ -998,12 +1021,10 @@ const Archives = () => {
           return false;
         }
 
-        if (
-          filterType &&
-          item.type &&
-          !item.type.toLowerCase().includes(filterType.toLowerCase())
-        ) {
-          return false;
+        if (filterType && item.recordType === "violation") {
+          if (!isViolationType(item, filterType)) {
+            return false;
+          }
         }
 
         if (filterYear && item.yearSection) {
