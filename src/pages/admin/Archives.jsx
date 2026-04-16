@@ -1231,24 +1231,24 @@ const Archives = () => {
                 </DropdownMenu>
               );
             } else {
-              if (row.isHistoricalWorkbook || row.sourceType === "workbook") {
-                return (
-                  <span className="text-xs text-gray-400 uppercase tracking-wide">
-                    Imported
-                  </span>
-                );
-              }
-
               return (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="gap-2 bg-[#A3AED0] text-[#23262B] hover:bg-[#8B9CB8] border-0"
-                  onClick={() => handleEdit(row, "violation")}
-                >
-                  <Edit className="w-4 h-4" />
-                  Edit
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-[#3D4654] transition-colors">
+                      <MoreVertical className="w-5 h-5 text-[#A3AED0]" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
+                    <DropdownMenuItem onClick={() => handleEdit(row, "violation")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
+                      <Edit className="w-4 h-4" />
+                      <span>Edit</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleDeleteArchivedViolation(row)} className="gap-2 cursor-pointer text-red-700 hover:bg-red-100 hover:text-red-800 focus:bg-red-100 focus:text-red-800">
+                      <Trash2 className="w-4 h-4" />
+                      <span>Delete</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               );
             }
           },
@@ -1490,34 +1490,23 @@ const Archives = () => {
           label: "",
           align: "center",
           render: (_value, row) => (
-              row.isHistoricalWorkbook || row.sourceType === "workbook" ? (
-                <span className="text-xs text-gray-400 uppercase tracking-wide">
-                  Imported
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="gap-2 bg-[#A3AED0] text-[#23262B] hover:bg-[#8B9CB8] border-0"
-                  onClick={() => handleEdit(row, "violation")}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="w-4 h-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15.232 5.232l3.536 3.536M9 13l6.536-6.536a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 13zm0 0V17h4"
-                    />
-                  </svg>
-                  Edit
-                </Button>
-              )
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-[#3D4654] transition-colors">
+                  <MoreVertical className="w-5 h-5 text-[#A3AED0]" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
+                <DropdownMenuItem onClick={() => handleEdit(row, "violation")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
+                  <Edit className="w-4 h-4" />
+                  <span>Edit</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleDeleteArchivedViolation(row)} className="gap-2 cursor-pointer text-red-700 hover:bg-red-100 hover:text-red-800 focus:bg-red-100 focus:text-red-800">
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           ),
         },
       ];

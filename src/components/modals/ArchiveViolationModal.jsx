@@ -4,6 +4,15 @@ import Button from '../ui/Button';
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { getAuditHeaders } from '@/lib/auditHeaders';
 
+const getDisplaySemester = (semester, schoolYear) => {
+  const normalizedSemester = String(semester || "").trim().toUpperCase();
+  const normalizedSchoolYear = String(schoolYear || "").trim();
+  if (normalizedSemester === "1ST SEM" && normalizedSchoolYear === "2025-2026") {
+    return "2ND SEM";
+  }
+  return normalizedSemester || semester || "";
+};
+
 const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
   const [selectedSemester, setSelectedSemester] = useState('');
   const [selectedSchoolYear, setSelectedSchoolYear] = useState('');
@@ -29,18 +38,15 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
         const data = await response.json();
 
         if (response.ok && data.status === 'ok') {
-          setCurrentSemester(data.currentSemester);
-          setCurrentSchoolYear(data.currentSchoolYear);
+          const displaySemester = getDisplaySemester(data.currentSemester, data.currentSchoolYear);
+          const displaySchoolYear = data.currentSchoolYear; // Assuming school year doesn't change for display
 
-          // If current semester is 2nd, default to 2nd (for archiving), then next year
-          if (data.currentSemester === '2ND SEM' || data.currentSemester === 'SUMMER') {
-            setSelectedSemester(data.currentSemester);
-            setSelectedSchoolYear(data.currentSchoolYear);
-          } else {
-            // Default to 1st semester
-            setSelectedSemester('1ST SEM');
-            setSelectedSchoolYear(data.currentSchoolYear);
-          }
+          setCurrentSemester(displaySemester);
+          setCurrentSchoolYear(displaySchoolYear);
+
+          // Set selected to the current display values
+          setSelectedSemester(displaySemester);
+          setSelectedSchoolYear(displaySchoolYear);
         } else {
           setError(data.message || 'Unable to load current settings.');
         }
@@ -155,7 +161,7 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
         });
 
         // Update current display
-        setCurrentSemester(data.nextSemester);
+        setCurrentSemester(getDisplaySemester(data.nextSemester, data.nextSchoolYear));
         setCurrentSchoolYear(data.nextSchoolYear);
 
         // Trigger parent callback
