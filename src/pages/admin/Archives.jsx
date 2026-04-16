@@ -84,6 +84,14 @@ const getSignatureImageData = async (signatureSrc) => {
   }
 };
 
+const getImageTypeFromDataUrl = (dataUrl) => {
+  if (typeof dataUrl !== 'string') return 'PNG';
+  const match = dataUrl.match(/^data:image\/(png|jpeg|jpg|webp);/i);
+  if (!match) return 'PNG';
+  const type = match[1].toLowerCase();
+  return type === 'jpg' ? 'JPEG' : type.toUpperCase();
+};
+
 // Resolve header image for exports
 const resolveHeaderImage = async () => {
   try {
@@ -1768,6 +1776,16 @@ const Archives = () => {
       }));
     }
 
+    const signatureImageDataByRow = await Promise.all(
+      filteredData.map(async (item) => {
+        if (!item.signatureImage) return null;
+        if (typeof item.signatureImage === 'string' && item.signatureImage.startsWith('data:')) {
+          return item.signatureImage;
+        }
+        return await getSignatureImageData(item.signatureImage);
+      }),
+    );
+
     if (format === 'excel') {
       try {
         const [{ Workbook }, headerImage] = await Promise.all([
@@ -2001,8 +2019,8 @@ const Archives = () => {
         // Add signature images for violations
         if (activeFolder !== 'users') {
           filteredData.forEach((item, index) => {
-            if (item.signatureImage) {
-              const signatureImageData = item.signatureImage;
+            const signatureImageData = signatureImageDataByRow[index];
+            if (signatureImageData) {
               const signatureColIndex = 9; // Column I (0-indexed as 8, but 1-indexed as 9)
               const signatureRowIndex = dataRowStart + index;
 
@@ -2036,7 +2054,8 @@ const Archives = () => {
                 return signatureRowIndex - 1;
               };
 
-              const signatureImageId = workbook.addImage({ base64: signatureImageData, extension: 'png' });
+              const extension = getImageTypeFromDataUrl(signatureImageData).toLowerCase();
+              const signatureImageId = workbook.addImage({ base64: signatureImageData, extension });
               sheet.addImage(signatureImageId, {
                 tl: {
                   col: toColCoordinateForSig(sigLeftOffset),
@@ -2073,12 +2092,14 @@ const Archives = () => {
       }
     } else if (format === 'pdf') {
       try {
-        const [{ jsPDF }, { default: autoTable }, headerImage] = await Promise.all([
+        const [jsPDFModule, autoTableModule, headerImage] = await Promise.all([
           import('jspdf'),
           import('jspdf-autotable'),
           resolveHeaderImage(),
         ]);
 
+        const jsPDF = jsPDFModule.jsPDF || jsPDFModule.default || jsPDFModule;
+        const autoTable = autoTableModule.default || autoTableModule;
         const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
         const pageWidth = doc.internal.pageSize.getWidth();
         const tableMarginLeft = 10;
@@ -2129,8 +2150,8 @@ const Archives = () => {
           if (data.section === 'body' && activeFolder !== 'users') {
             const signatureColumnIndex = 8; // Signature column index
             if (data.column.index === signatureColumnIndex) {
-              const item = filteredData[data.row.index];
-              if (item.signatureImage) {
+              const signatureImageData = signatureImageDataByRow[data.row.index];
+              if (signatureImageData) {
                 const cellWidth = data.cell.width;
                 const cellHeight = data.cell.height;
                 const x = data.cell.x + 1;
@@ -2145,7 +2166,8 @@ const Archives = () => {
                 const sigX = x + (maxWidth - sigWidth) / 2;
                 const sigY = y + (maxHeight - sigHeight) / 2;
 
-                doc.addImage(item.signatureImage, 'PNG', sigX, sigY, sigWidth, sigHeight);
+                const imageType = getImageTypeFromDataUrl(signatureImageData);
+                doc.addImage(signatureImageData, imageType, sigX, sigY, sigWidth, sigHeight);
               }
             }
           }
