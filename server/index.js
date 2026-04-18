@@ -5448,12 +5448,11 @@ app.put("/api/archive/current-settings", async (req, res) => {
     }
     const previousSchoolYear = `${startYear - 1}-${endYear - 1}`;
 
-    // Update all active students' current_school_year, last_promoted_school_year, and year_level_start_sy
+    // Update all active students' current_school_year and last_promoted_school_year
     await pool.query(
       `UPDATE "Students"
        SET current_school_year = $1,
-           last_promoted_school_year = $2,
-           year_level_start_sy = $2
+           last_promoted_school_year = $2
        WHERE is_archived = false`,
       [normalizedSchoolYear, previousSchoolYear],
     );
@@ -5462,7 +5461,7 @@ app.put("/api/archive/current-settings", async (req, res) => {
       action: "UPDATE_ARCHIVE_SETTINGS",
       targetType: "system_settings",
       targetId: null,
-      details: `Updated current semester and school year to ${normalizedSemester} S.Y. ${normalizedSchoolYear}. Updated all students' current_school_year to ${normalizedSchoolYear}, last_promoted_school_year to ${previousSchoolYear}, and year_level_start_sy to ${previousSchoolYear}`,
+      details: `Updated current semester and school year to ${normalizedSemester} S.Y. ${normalizedSchoolYear}. Updated all students' current_school_year to ${normalizedSchoolYear} and last_promoted_school_year to ${previousSchoolYear}`,
       metadata: {
         currentSemester: normalizedSemester,
         currentSchoolYear: normalizedSchoolYear,
@@ -5830,35 +5829,17 @@ app.post("/api/archive/violations", async (req, res) => {
     const hasPendingOrUncleared = (studentId) =>
       (unresolvedCountMap.get(Number(studentId)) || 0) > 0;
 
+    // STEP 5: Promote students and archive/graduated students based on semester.
     let archivedStudentCount = 0;
-    const allStudentIds = students.map((student) => student.id);
-    const blockedStudentCount = students.filter((student) =>
-      hasPendingOrUncleared(student.id),
-    ).length;
-    const noPendingStudents = students.filter(
-      (student) => !hasPendingOrUncleared(student.id),
-    );
-
-    // Advance semester/year for all active students in one bulk update.
-    if (allStudentIds.length > 0) {
-      await pool.query(
-        `UPDATE "Students"
-         SET current_semester = $1,
-             current_school_year = $2
-         WHERE id = ANY($3::BIGINT[])`,
-        [nextSemester, nextSchoolYear, allStudentIds],
-      );
-    }
+    let blockedStudentCount = 0;
 
     if (normalizedSemester === "2ND SEM") {
-      const promoteYear1Ids = [];
-      const promoteYear2Ids = [];
-      const archiveYear4Ids = [];
-
-      for (const student of noPendingStudents) {
+      for (const student of students) {
         let parsedYearSection = null;
         if (student.year_section) {
-          const match = String(student.year_section).trim().match(/^(\d+)/);
+          const match = String(student.year_section)
+            .trim()
+            .match(/^(\d+)/);
           if (match) {
             parsedYearSection = Number(match[1]);
           }
@@ -5869,62 +5850,63 @@ app.post("/api/archive/violations", async (req, res) => {
           : Number(student.year_level);
 
         if (!Number.isFinite(yearLevel)) {
+          yearLevel = null;
+        }
+
+        const studentHasPending = hasPendingOrUncleared(student.id);
+
+        // Always advance term for student regardless of pending status
+        await pool.query(
+          `UPDATE "Students"
+           SET current_semester = $1,
+               current_school_year = $2
+           WHERE id = $3`,
+          [nextSemester, nextSchoolYear, student.id],
+        );
+
+        if (studentHasPending) {
+          blockedStudentCount++;
           continue;
         }
 
-        if (yearLevel === 1) {
-          promoteYear1Ids.push(student.id);
-        } else if (yearLevel === 2) {
-          promoteYear2Ids.push(student.id);
+        if (yearLevel === 1 || yearLevel === 2) {
+          const nextYear = yearLevel + 1;
+          const nextYearSection = student.year_section
+            ? student.year_section.replace(/^(\d+)/, String(nextYear))
+            : null;
+
+          await pool.query(
+            `UPDATE "Students"
+             SET year_level = $1,
+                 year_section = COALESCE($2, year_section),
+                 last_promoted_school_year = $3
+             WHERE id = $4`,
+            [nextYear, nextYearSection, schoolYear, student.id],
+          );
+          promotedCount++;
+        } else if (yearLevel === 3) {
+          // 3rd year stays as 3rd year after 2nd sem; moving to summer.
+          // No promotion to 4th or graduation here.
         } else if (yearLevel === 4) {
-          archiveYear4Ids.push(student.id);
+          await pool.query(
+            `UPDATE "Students"
+             SET is_archived = TRUE,
+                 archived_at = COALESCE(archived_at, NOW()),
+                 status = 'Graduated'
+             WHERE id = $1`,
+            [student.id],
+          );
+          archivedStudentCount++;
         }
       }
-
-      if (promoteYear1Ids.length > 0) {
-        await pool.query(
-          `UPDATE "Students"
-           SET year_level = 2,
-               year_section = regexp_replace(year_section, '^(\\d+)', '2'),
-               last_promoted_school_year = $1
-           WHERE id = ANY($2::BIGINT[])`,
-          [schoolYear, promoteYear1Ids],
-        );
-        promotedCount += promoteYear1Ids.length;
-      }
-
-      if (promoteYear2Ids.length > 0) {
-        await pool.query(
-          `UPDATE "Students"
-           SET year_level = 3,
-               year_section = regexp_replace(year_section, '^(\\d+)', '3'),
-               last_promoted_school_year = $1
-           WHERE id = ANY($2::BIGINT[])`,
-          [schoolYear, promoteYear2Ids],
-        );
-        promotedCount += promoteYear2Ids.length;
-      }
-
-      if (archiveYear4Ids.length > 0) {
-        await pool.query(
-          `UPDATE "Students"
-           SET is_archived = TRUE,
-               archived_at = COALESCE(archived_at, NOW()),
-               status = 'Graduated'
-           WHERE id = ANY($1::BIGINT[])`,
-          [archiveYear4Ids],
-        );
-      }
-
       console.log(`Processed 2ND SEM archive promotion conditions`);
     } else if (normalizedSemester === "SUMMER") {
-      const promoteYear3Ids = [];
-      const archiveYear4Ids = [];
-
-      for (const student of noPendingStudents) {
+      for (const student of students) {
         let parsedYearSection = null;
         if (student.year_section) {
-          const match = String(student.year_section).trim().match(/^(\d+)/);
+          const match = String(student.year_section)
+            .trim()
+            .match(/^(\d+)/);
           if (match) {
             parsedYearSection = Number(match[1]);
           }
@@ -5935,43 +5917,69 @@ app.post("/api/archive/violations", async (req, res) => {
           : Number(student.year_level);
 
         if (!Number.isFinite(yearLevel)) {
+          yearLevel = null;
+        }
+
+        const studentHasPending = hasPendingOrUncleared(student.id);
+
+        // Advance semester/year for all students
+        await pool.query(
+          `UPDATE "Students"
+           SET current_semester = $1,
+               current_school_year = $2
+           WHERE id = $3`,
+          [nextSemester, nextSchoolYear, student.id],
+        );
+
+        if (studentHasPending) {
+          blockedStudentCount++;
           continue;
         }
 
-        if (yearLevel === 3 && student.last_promoted_school_year !== schoolYear) {
-          promoteYear3Ids.push(student.id);
+        if (yearLevel === 3) {
+          // Check if student has already been promoted in this school year
+          if (student.last_promoted_school_year === schoolYear) {
+            // Skip promotion - already promoted this school year
+            continue;
+          }
+
+          const nextYearSection = student.year_section
+            ? student.year_section.replace(/^(\d+)/, "4")
+            : null;
+
+          await pool.query(
+            `UPDATE "Students"
+             SET year_level = 4,
+                 year_section = COALESCE($1, year_section),
+                 last_promoted_school_year = $2
+             WHERE id = $3`,
+            [nextYearSection, schoolYear, student.id],
+          );
+          promotedCount++;
         } else if (yearLevel === 4) {
-          archiveYear4Ids.push(student.id);
+          await pool.query(
+            `UPDATE "Students"
+             SET is_archived = TRUE,
+                 archived_at = COALESCE(archived_at, NOW()),
+                 status = 'Graduated'
+             WHERE id = $1`,
+            [student.id],
+          );
+          archivedStudentCount++;
         }
       }
-
-      if (promoteYear3Ids.length > 0) {
-        await pool.query(
-          `UPDATE "Students"
-           SET year_level = 4,
-               year_section = regexp_replace(year_section, '^(\\d+)', '4'),
-               last_promoted_school_year = $1
-           WHERE id = ANY($2::BIGINT[])`,
-          [schoolYear, promoteYear3Ids],
-        );
-        promotedCount += promoteYear3Ids.length;
-      }
-
-      if (archiveYear4Ids.length > 0) {
-        await pool.query(
-          `UPDATE "Students"
-           SET is_archived = TRUE,
-               archived_at = COALESCE(archived_at, NOW()),
-               status = 'Graduated'
-           WHERE id = ANY($1::BIGINT[])`,
-          [archiveYear4Ids],
-        );
-        archivedStudentCount += archiveYear4Ids.length;
-      }
-
       console.log(`Processed SUMMER archive promotion conditions`);
     } else {
-      console.log(`Processed 1ST SEM archive promotion conditions`);
+      // If archiving 1st semester, update semester/year only for all students
+      for (const student of students) {
+        await pool.query(
+          `UPDATE "Students"
+           SET current_semester = $1,
+               current_school_year = $2
+           WHERE id = $3`,
+          [nextSemester, nextSchoolYear, student.id],
+        );
+      }
     }
 
     // STEP 6: Update system settings to reflect new semester/school year
@@ -6901,22 +6909,34 @@ async function ensureAuthDatabaseReady() {
     const seedAccounts = getSeedAccountsFromEnv();
 
     const runFullSynchronization = async () => {
-      // Group 1: all independent — create base tables in parallel.
-      await Promise.all([
-        syncAuthDatabase({ seedAccounts }),
-        syncStudentsDatabase(),
-        syncSystemSettingsDatabase(),
-        syncViolationsDatabase(),
-        syncAuditLogsDatabase(),
-      ]);
+      // Group 1: Run base table syncs sequentially with small delays to avoid connection pool exhaustion
+      await syncAuthDatabase({ seedAccounts });
+      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
 
-      // Group 2: depend on Group 1 tables — run in parallel after Group 1.
-      await Promise.all([
-        syncStudentsFromUsers(),
-        syncNotificationsDatabase(),
-        syncPasswordResetDatabase(),
-        syncStudentViolationLogsDatabase(),
-      ]);
+      await syncStudentsDatabase();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      await syncSystemSettingsDatabase();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      await syncViolationsDatabase();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      await syncAuditLogsDatabase();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Group 2: Run dependent table syncs sequentially
+      await syncStudentsFromUsers();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      await syncNotificationsDatabase();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      await syncPasswordResetDatabase();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      await syncStudentViolationLogsDatabase();
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       await syncAppStateDatabase();
     };
@@ -6926,21 +6946,33 @@ async function ensureAuthDatabaseReady() {
 
       if (schemaIsCurrent) {
         try {
-          // Keep this fast but resilient: refresh core schemas first, then dependent tables, then app_state triggers.
-          await Promise.all([
-            syncAuthDatabase({ seedAccounts, skipSchemaCheck: true }),
-            syncStudentsDatabase(),
-            syncSystemSettingsDatabase(),
-            syncViolationsDatabase(),
-            syncAuditLogsDatabase(),
-          ]);
+          // Keep this fast but resilient: refresh core schemas sequentially with delays to avoid connection pool issues
+          await syncAuthDatabase({ seedAccounts, skipSchemaCheck: true });
+          await new Promise(resolve => setTimeout(resolve, 100));
 
-          await Promise.all([
-            syncStudentsFromUsers(),
-            syncNotificationsDatabase(),
-            syncPasswordResetDatabase(),
-            syncStudentViolationLogsDatabase(),
-          ]);
+          await syncStudentsDatabase();
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          await syncSystemSettingsDatabase();
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          await syncViolationsDatabase();
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          await syncAuditLogsDatabase();
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          await syncStudentsFromUsers();
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          await syncNotificationsDatabase();
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          await syncPasswordResetDatabase();
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          await syncStudentViolationLogsDatabase();
+          await new Promise(resolve => setTimeout(resolve, 100));
 
           await syncAppStateDatabase();
           return;
@@ -6975,15 +7007,19 @@ async function startServer() {
     ensureAuthDatabaseReady()
       .then(() => {
         console.log("Auth database synchronized.");
-        purgeExpiredAuditLogs();
-        auditCleanupTimer = setInterval(() => {
-          purgeExpiredAuditLogs();
-        }, AUDIT_LOG_CLEANUP_INTERVAL_MS);
 
-        purgeExpiredNotifications();
-        notificationCleanupTimer = setInterval(() => {
+        // Add a small delay before starting cleanup timers to ensure connections are released
+        setTimeout(() => {
+          purgeExpiredAuditLogs();
+          auditCleanupTimer = setInterval(() => {
+            purgeExpiredAuditLogs();
+          }, AUDIT_LOG_CLEANUP_INTERVAL_MS);
+
           purgeExpiredNotifications();
-        }, NOTIFICATION_CLEANUP_INTERVAL_MS);
+          notificationCleanupTimer = setInterval(() => {
+            purgeExpiredNotifications();
+          }, NOTIFICATION_CLEANUP_INTERVAL_MS);
+        }, 1000); // 1 second delay
 
         if (seedAccounts.length === 0) {
           console.log("No account seed variables detected during startup.");
