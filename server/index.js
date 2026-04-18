@@ -5438,14 +5438,35 @@ app.put("/api/archive/current-settings", async (req, res) => {
 
     const settings = result.rows[0];
 
+    // Calculate previous school year for last_promoted_school_year
+    const [startYear, endYear] = normalizedSchoolYear.split("-").map(Number);
+    if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid school year format. Expected format YYYY-YYYY.",
+      });
+    }
+    const previousSchoolYear = `${startYear - 1}-${endYear - 1}`;
+
+    // Update all active students' current_school_year, last_promoted_school_year, and year_level_start_sy
+    await pool.query(
+      `UPDATE "Students"
+       SET current_school_year = $1,
+           last_promoted_school_year = $2,
+           year_level_start_sy = $2
+       WHERE is_archived = false`,
+      [normalizedSchoolYear, previousSchoolYear],
+    );
+
     await logAuditEvent(req, {
       action: "UPDATE_ARCHIVE_SETTINGS",
       targetType: "system_settings",
       targetId: null,
-      details: `Updated current semester and school year to ${normalizedSemester} S.Y. ${normalizedSchoolYear}`,
+      details: `Updated current semester and school year to ${normalizedSemester} S.Y. ${normalizedSchoolYear}. Updated all students' current_school_year to ${normalizedSchoolYear}, last_promoted_school_year to ${previousSchoolYear}, and year_level_start_sy to ${previousSchoolYear}`,
       metadata: {
         currentSemester: normalizedSemester,
         currentSchoolYear: normalizedSchoolYear,
+        previousSchoolYear,
       },
     });
 
@@ -5809,17 +5830,35 @@ app.post("/api/archive/violations", async (req, res) => {
     const hasPendingOrUncleared = (studentId) =>
       (unresolvedCountMap.get(Number(studentId)) || 0) > 0;
 
-    // STEP 5: Promote students and archive/graduated students based on semester.
     let archivedStudentCount = 0;
-    let blockedStudentCount = 0;
+    const allStudentIds = students.map((student) => student.id);
+    const blockedStudentCount = students.filter((student) =>
+      hasPendingOrUncleared(student.id),
+    ).length;
+    const noPendingStudents = students.filter(
+      (student) => !hasPendingOrUncleared(student.id),
+    );
+
+    // Advance semester/year for all active students in one bulk update.
+    if (allStudentIds.length > 0) {
+      await pool.query(
+        `UPDATE "Students"
+         SET current_semester = $1,
+             current_school_year = $2
+         WHERE id = ANY($3::BIGINT[])`,
+        [nextSemester, nextSchoolYear, allStudentIds],
+      );
+    }
 
     if (normalizedSemester === "2ND SEM") {
-      for (const student of students) {
+      const promoteYear1Ids = [];
+      const promoteYear2Ids = [];
+      const archiveYear4Ids = [];
+
+      for (const student of noPendingStudents) {
         let parsedYearSection = null;
         if (student.year_section) {
-          const match = String(student.year_section)
-            .trim()
-            .match(/^(\d+)/);
+          const match = String(student.year_section).trim().match(/^(\d+)/);
           if (match) {
             parsedYearSection = Number(match[1]);
           }
@@ -5830,63 +5869,62 @@ app.post("/api/archive/violations", async (req, res) => {
           : Number(student.year_level);
 
         if (!Number.isFinite(yearLevel)) {
-          yearLevel = null;
-        }
-
-        const studentHasPending = hasPendingOrUncleared(student.id);
-
-        // Always advance term for student regardless of pending status
-        await pool.query(
-          `UPDATE "Students"
-           SET current_semester = $1,
-               current_school_year = $2
-           WHERE id = $3`,
-          [nextSemester, nextSchoolYear, student.id],
-        );
-
-        if (studentHasPending) {
-          blockedStudentCount++;
           continue;
         }
 
-        if (yearLevel === 1 || yearLevel === 2) {
-          const nextYear = yearLevel + 1;
-          const nextYearSection = student.year_section
-            ? student.year_section.replace(/^(\d+)/, String(nextYear))
-            : null;
-
-          await pool.query(
-            `UPDATE "Students"
-             SET year_level = $1,
-                 year_section = COALESCE($2, year_section),
-                 last_promoted_school_year = $3
-             WHERE id = $4`,
-            [nextYear, nextYearSection, schoolYear, student.id],
-          );
-          promotedCount++;
-        } else if (yearLevel === 3) {
-          // 3rd year stays as 3rd year after 2nd sem; moving to summer.
-          // No promotion to 4th or graduation here.
+        if (yearLevel === 1) {
+          promoteYear1Ids.push(student.id);
+        } else if (yearLevel === 2) {
+          promoteYear2Ids.push(student.id);
         } else if (yearLevel === 4) {
-          await pool.query(
-            `UPDATE "Students"
-             SET is_archived = TRUE,
-                 archived_at = COALESCE(archived_at, NOW()),
-                 status = 'Graduated'
-             WHERE id = $1`,
-            [student.id],
-          );
-          archivedStudentCount++;
+          archiveYear4Ids.push(student.id);
         }
       }
+
+      if (promoteYear1Ids.length > 0) {
+        await pool.query(
+          `UPDATE "Students"
+           SET year_level = 2,
+               year_section = regexp_replace(year_section, '^(\\d+)', '2'),
+               last_promoted_school_year = $1
+           WHERE id = ANY($2::BIGINT[])`,
+          [schoolYear, promoteYear1Ids],
+        );
+        promotedCount += promoteYear1Ids.length;
+      }
+
+      if (promoteYear2Ids.length > 0) {
+        await pool.query(
+          `UPDATE "Students"
+           SET year_level = 3,
+               year_section = regexp_replace(year_section, '^(\\d+)', '3'),
+               last_promoted_school_year = $1
+           WHERE id = ANY($2::BIGINT[])`,
+          [schoolYear, promoteYear2Ids],
+        );
+        promotedCount += promoteYear2Ids.length;
+      }
+
+      if (archiveYear4Ids.length > 0) {
+        await pool.query(
+          `UPDATE "Students"
+           SET is_archived = TRUE,
+               archived_at = COALESCE(archived_at, NOW()),
+               status = 'Graduated'
+           WHERE id = ANY($1::BIGINT[])`,
+          [archiveYear4Ids],
+        );
+      }
+
       console.log(`Processed 2ND SEM archive promotion conditions`);
     } else if (normalizedSemester === "SUMMER") {
-      for (const student of students) {
+      const promoteYear3Ids = [];
+      const archiveYear4Ids = [];
+
+      for (const student of noPendingStudents) {
         let parsedYearSection = null;
         if (student.year_section) {
-          const match = String(student.year_section)
-            .trim()
-            .match(/^(\d+)/);
+          const match = String(student.year_section).trim().match(/^(\d+)/);
           if (match) {
             parsedYearSection = Number(match[1]);
           }
@@ -5897,69 +5935,43 @@ app.post("/api/archive/violations", async (req, res) => {
           : Number(student.year_level);
 
         if (!Number.isFinite(yearLevel)) {
-          yearLevel = null;
-        }
-
-        const studentHasPending = hasPendingOrUncleared(student.id);
-
-        // Advance semester/year for all students
-        await pool.query(
-          `UPDATE "Students"
-           SET current_semester = $1,
-               current_school_year = $2
-           WHERE id = $3`,
-          [nextSemester, nextSchoolYear, student.id],
-        );
-
-        if (studentHasPending) {
-          blockedStudentCount++;
           continue;
         }
 
-        if (yearLevel === 3) {
-          // Check if student has already been promoted in this school year
-          if (student.last_promoted_school_year === schoolYear) {
-            // Skip promotion - already promoted this school year
-            continue;
-          }
-
-          const nextYearSection = student.year_section
-            ? student.year_section.replace(/^(\d+)/, "4")
-            : null;
-
-          await pool.query(
-            `UPDATE "Students"
-             SET year_level = 4,
-                 year_section = COALESCE($1, year_section),
-                 last_promoted_school_year = $2
-             WHERE id = $3`,
-            [nextYearSection, schoolYear, student.id],
-          );
-          promotedCount++;
+        if (yearLevel === 3 && student.last_promoted_school_year !== schoolYear) {
+          promoteYear3Ids.push(student.id);
         } else if (yearLevel === 4) {
-          await pool.query(
-            `UPDATE "Students"
-             SET is_archived = TRUE,
-                 archived_at = COALESCE(archived_at, NOW()),
-                 status = 'Graduated'
-             WHERE id = $1`,
-            [student.id],
-          );
-          archivedStudentCount++;
+          archiveYear4Ids.push(student.id);
         }
       }
-      console.log(`Processed SUMMER archive promotion conditions`);
-    } else {
-      // If archiving 1st semester, update semester/year only for all students
-      for (const student of students) {
+
+      if (promoteYear3Ids.length > 0) {
         await pool.query(
           `UPDATE "Students"
-           SET current_semester = $1,
-               current_school_year = $2
-           WHERE id = $3`,
-          [nextSemester, nextSchoolYear, student.id],
+           SET year_level = 4,
+               year_section = regexp_replace(year_section, '^(\\d+)', '4'),
+               last_promoted_school_year = $1
+           WHERE id = ANY($2::BIGINT[])`,
+          [schoolYear, promoteYear3Ids],
         );
+        promotedCount += promoteYear3Ids.length;
       }
+
+      if (archiveYear4Ids.length > 0) {
+        await pool.query(
+          `UPDATE "Students"
+           SET is_archived = TRUE,
+               archived_at = COALESCE(archived_at, NOW()),
+               status = 'Graduated'
+           WHERE id = ANY($1::BIGINT[])`,
+          [archiveYear4Ids],
+        );
+        archivedStudentCount += archiveYear4Ids.length;
+      }
+
+      console.log(`Processed SUMMER archive promotion conditions`);
+    } else {
+      console.log(`Processed 1ST SEM archive promotion conditions`);
     }
 
     // STEP 6: Update system settings to reflect new semester/school year
