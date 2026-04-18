@@ -721,6 +721,11 @@ export async function syncStudentsDatabase() {
   `);
 
   await dbPool.query(`
+    ALTER TABLE "Students"
+    ADD COLUMN IF NOT EXISTS last_promoted_school_year VARCHAR(20)
+  `);
+
+  await dbPool.query(`
     UPDATE "Students"
     SET email = COALESCE(NULLIF(email, ''), school_id || '@plpasig.edu.ph')
     WHERE email IS NULL OR email = ''

@@ -579,6 +579,109 @@ async function loadHistoricalViolationRecordsFromWorkbook() {
   }
 }
 
+async function deleteHistoricalWorkbookRecordById(workbookId) {
+  if (typeof workbookId !== "string" || !workbookId.startsWith("wb-")) {
+    return false;
+  }
+
+  const chunks = workbookId.split("-");
+  if (chunks.length < 5) {
+    return false;
+  }
+
+  const indexString = chunks.pop();
+  const index = Number(indexString);
+  if (!Number.isFinite(index) || index < 0) {
+    return false;
+  }
+
+  const schoolYear = `${chunks[1]}-${chunks[2]}`;
+  const semester = chunks.slice(3).join("-");
+
+  try {
+    const excelModule = await import("exceljs");
+    const ExcelJS = excelModule.default || excelModule;
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+    const worksheet = workbook.worksheets?.[0];
+    if (!worksheet) {
+      return false;
+    }
+
+    const headerRow = worksheet.getRow(1);
+    const headerMap = {};
+    headerRow.eachCell((cell, colNumber) => {
+      const headerText = String(cell.value || "").trim().toUpperCase();
+      if (headerText) {
+        headerMap[headerText] = colNumber;
+      }
+    });
+
+    const dateColumn = headerMap.DATE;
+    const nameColumn = headerMap.NAME;
+
+    if (!dateColumn) {
+      return false;
+    }
+
+    let currentSemester = "";
+    let currentSchoolYear = "";
+    let workbookIndex = 0;
+    let deleteRowNumber = null;
+
+    for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+      const row = worksheet.getRow(rowNumber);
+      const rowValues = row.values;
+      const termHeader = parseWorkbookTermHeader(rowValues);
+      if (termHeader) {
+        currentSemester = termHeader.semester;
+        currentSchoolYear = termHeader.schoolYear;
+        continue;
+      }
+
+      const nameValue = normalizeWorkbookText(
+        nameColumn ? row.getCell(nameColumn).value || "" : "",
+      );
+      const dateValue = parseCellDate(row.getCell(dateColumn).value);
+
+      if (!dateValue || !nameValue) {
+        continue;
+      }
+
+      const normalizedSemester = normalizeSemester(currentSemester);
+      const normalizedSchoolYear = normalizeSchoolYear(currentSchoolYear);
+      if (!normalizedSemester || !normalizedSchoolYear) {
+        continue;
+      }
+
+      if (
+        normalizeSchoolYear(schoolYear) === normalizedSchoolYear &&
+        normalizeSemester(semester) === normalizedSemester
+      ) {
+        if (workbookIndex === index) {
+          deleteRowNumber = rowNumber;
+          break;
+        }
+        workbookIndex += 1;
+      }
+    }
+
+    if (deleteRowNumber === null) {
+      return false;
+    }
+
+    worksheet.spliceRows(deleteRowNumber, 1);
+    await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+    HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
+    HISTORICAL_VIOLATION_CACHE.records = [];
+
+    return true;
+  } catch (error) {
+    console.error("Failed to delete historical workbook record:", error);
+    return false;
+  }
+}
+
 function buildAnalyticsFromRecords({
   allRecords,
   currentSemester,
@@ -4827,6 +4930,48 @@ app.put("/api/notifications/:id/mark-read", async (req, res) => {
   }
 });
 
+// mark specific notification as unread
+app.put("/api/notifications/:id/mark-unread", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res
+      .status(500)
+      .json({ status: "error", message: "Database is not configured." });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const userId = getCurrentUserId(req);
+    const { id } = req.params;
+    if (!userId) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "User not identified." });
+    }
+
+    const result = await pool.query(
+      `UPDATE notifications SET read_at = NULL
+       WHERE id = $1 AND student_user_id = $2
+       RETURNING id`,
+      [id, userId],
+    );
+
+    if (!result.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "Notification not found.",
+      });
+    }
+
+    return res.status(200).json({ status: "ok" });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to mark notification unread (${error.message}).`,
+    });
+  }
+});
+
 // delete a specific notification
 app.delete("/api/notifications/:id", async (req, res) => {
   if (!hasDbConfig()) {
@@ -5064,7 +5209,7 @@ async function checkAndAutoPromoteStudent(
   }
 
   const studentResult = await pool.query(
-    `SELECT id, year_level, year_section, status, is_archived, current_semester, current_school_year FROM "Students" WHERE id = $1 LIMIT 1`,
+    `SELECT id, year_level, year_section, status, is_archived, current_semester, current_school_year, last_promoted_school_year FROM "Students" WHERE id = $1 LIMIT 1`,
     [studentId],
   );
 
@@ -5164,9 +5309,10 @@ async function checkAndAutoPromoteStudent(
          SET year_level = $1,
              year_section = COALESCE($2, year_section),
              current_semester = $3,
-             current_school_year = $4
-         WHERE id = $5`,
-        [nextYear, nextYearSection, nextSemester, nextSchoolYear, studentId],
+             current_school_year = $4,
+             last_promoted_school_year = $5
+         WHERE id = $6`,
+        [nextYear, nextYearSection, nextSemester, nextSchoolYear, sourceSchoolYear, studentId],
       );
       action = "promoted";
       promoted = true;
@@ -5182,21 +5328,35 @@ async function checkAndAutoPromoteStudent(
     }
   } else if (sourceSemester === "SUMMER") {
     if (yearLevel === 3) {
-      const nextYearSection = student.year_section
-        ? student.year_section.replace(/^(\d+)/, "4")
-        : null;
+      // Promote 3rd year students only once per school year, at the transition to the next school year.
+      if (student.last_promoted_school_year === sourceSchoolYear) {
+        // Already promoted earlier this school year; just advance the term/year.
+        await pool.query(
+          `UPDATE "Students"
+           SET current_semester = $1,
+               current_school_year = $2
+           WHERE id = $3`,
+          [nextSemester, nextSchoolYear, studentId],
+        );
+        action = "term_advanced";
+      } else {
+        const nextYearSection = student.year_section
+          ? student.year_section.replace(/^(\d+)/, "4")
+          : null;
 
-      await pool.query(
-        `UPDATE "Students"
-         SET year_level = 4,
-             year_section = COALESCE($1, year_section),
-             current_semester = $2,
-             current_school_year = $3
-         WHERE id = $4`,
-        [nextYearSection, nextSemester, nextSchoolYear, studentId],
-      );
-      action = "promoted";
-      promoted = true;
+        await pool.query(
+          `UPDATE "Students"
+           SET year_level = 4,
+               year_section = COALESCE($1, year_section),
+               current_semester = $2,
+               current_school_year = $3,
+               last_promoted_school_year = $4
+           WHERE id = $5`,
+          [nextYearSection, nextSemester, nextSchoolYear, sourceSchoolYear, studentId],
+        );
+        action = "promoted";
+        promoted = true;
+      }
     } else if (yearLevel === 4) {
       await pool.query(
         `UPDATE "Students"
@@ -5478,7 +5638,7 @@ app.post("/api/archive/violations", async (req, res) => {
 
     // Get all active students (not archived)
     const studentsResult = await pool.query(
-      `SELECT id, year_level, year_section FROM "Students" WHERE is_archived = false`,
+      `SELECT id, year_level, year_section, last_promoted_school_year FROM "Students" WHERE is_archived = false`,
     );
 
     const students = studentsResult.rows || [];
@@ -5698,9 +5858,10 @@ app.post("/api/archive/violations", async (req, res) => {
           await pool.query(
             `UPDATE "Students"
              SET year_level = $1,
-                 year_section = COALESCE($2, year_section)
-             WHERE id = $3`,
-            [nextYear, nextYearSection, student.id],
+                 year_section = COALESCE($2, year_section),
+                 last_promoted_school_year = $3
+             WHERE id = $4`,
+            [nextYear, nextYearSection, schoolYear, student.id],
           );
           promotedCount++;
         } else if (yearLevel === 3) {
@@ -5756,6 +5917,12 @@ app.post("/api/archive/violations", async (req, res) => {
         }
 
         if (yearLevel === 3) {
+          // Check if student has already been promoted in this school year
+          if (student.last_promoted_school_year === schoolYear) {
+            // Skip promotion - already promoted this school year
+            continue;
+          }
+
           const nextYearSection = student.year_section
             ? student.year_section.replace(/^(\d+)/, "4")
             : null;
@@ -5763,9 +5930,10 @@ app.post("/api/archive/violations", async (req, res) => {
           await pool.query(
             `UPDATE "Students"
              SET year_level = 4,
-                 year_section = COALESCE($1, year_section)
-             WHERE id = $2`,
-            [nextYearSection, student.id],
+                 year_section = COALESCE($1, year_section),
+                 last_promoted_school_year = $2
+             WHERE id = $3`,
+            [nextYearSection, schoolYear, student.id],
           );
           promotedCount++;
         } else if (yearLevel === 4) {
@@ -6656,14 +6824,21 @@ app.delete("/api/archive/violations/:id", async (req, res) => {
 
   try {
     await ensureAuthDatabaseReady();
+
+    let deleted = false;
     const pool = getDbPool();
 
-    const result = await pool.query(
-      `DELETE FROM student_violation_archives WHERE id = $1 RETURNING id`,
-      [id],
-    );
+    if (typeof id === "string" && id.startsWith("wb-")) {
+      deleted = await deleteHistoricalWorkbookRecordById(id);
+    } else {
+      const result = await pool.query(
+        `DELETE FROM student_violation_archives WHERE id = $1 RETURNING id`,
+        [id],
+      );
+      deleted = Boolean(result.rows?.[0]);
+    }
 
-    if (!result.rows?.[0]) {
+    if (!deleted) {
       return res.status(404).json({
         status: "error",
         message: "Archived violation not found.",

@@ -105,6 +105,7 @@ const UserManagement = () => {
   
   // Archive users state
   const [selectedUserIds, setSelectedUserIds] = useState(new Set());
+  const [showSelectionCheckboxes, setShowSelectionCheckboxes] = useState(false);
   const [showArchiveUsersModal, setShowArchiveUsersModal] = useState(false);
   const [isArchivingUsers, setIsArchivingUsers] = useState(false);
   const [archiveReason, setArchiveReason] = useState("");
@@ -545,6 +546,7 @@ const UserManagement = () => {
 
   // Checkbox handlers
   const handleToggleCheckbox = (studentId) => {
+    setShowSelectionCheckboxes(true);
     setSelectedUserIds((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(studentId)) {
@@ -559,9 +561,16 @@ const UserManagement = () => {
   const handleSelectAll = () => {
     if (selectedUserIds.size === filteredStudents.length) {
       setSelectedUserIds(new Set());
+      setShowSelectionCheckboxes(false);
     } else {
       setSelectedUserIds(new Set(filteredStudents.map((s) => s.id)));
+      setShowSelectionCheckboxes(true);
     }
+  };
+
+  const handleHeaderToggle = () => {
+    setShowSelectionCheckboxes(true);
+    setSelectedUserIds(new Set(filteredStudents.map((s) => s.id)));
   };
 
   const handleArchiveUsers = async () => {
@@ -634,6 +643,12 @@ const UserManagement = () => {
       setIsArchivingUsers(false);
     }
   };
+
+  useEffect(() => {
+    if (selectedUserIds.size === 0 && showSelectionCheckboxes) {
+      setShowSelectionCheckboxes(false);
+    }
+  }, [selectedUserIds, showSelectionCheckboxes]);
 
   const selectedStudentsForAlert = useMemo(
     () => studentData.filter((student) => selectedUserIds.has(student.id)),
@@ -1212,16 +1227,29 @@ const UserManagement = () => {
   const columns = [
     {
       key: "select",
-      label: (
+      label: showSelectionCheckboxes ? (
         <input
           type="checkbox"
           checked={selectedUserIds.size === filteredStudents.length && filteredStudents.length > 0}
           onChange={handleSelectAll}
           className="w-4 h-4 cursor-pointer"
         />
+      ) : (
+        <button
+          type="button"
+          onClick={handleHeaderToggle}
+          className="text-gray-400 font-semibold leading-none"
+          aria-label="Show selection checkboxes"
+        >
+          -
+        </button>
       ),
       width: "w-12",
       render: (value, row) => {
+        if (!showSelectionCheckboxes) {
+          return null;
+        }
+
         return (
           <input
             type="checkbox"

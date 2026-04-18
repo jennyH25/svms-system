@@ -22,7 +22,7 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
   const [isArchiving, setIsArchiving] = useState(false);
   const [archiveResult, setArchiveResult] = useState(null);
   const [error, setError] = useState('');
-  const [signatureCheck, setSignatureCheck] = useState({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0 });
+  const [signatureCheck, setSignatureCheck] = useState({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0, totalViolations: 0 });
   const [showSignatureWarningModal, setShowSignatureWarningModal] = useState(false);
   const [archiveExists, setArchiveExists] = useState(false);
 
@@ -67,7 +67,7 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
   useEffect(() => {
     const checkSignatures = async () => {
       if (!selectedSemester || !selectedSchoolYear) {
-        setSignatureCheck({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0 });
+        setSignatureCheck({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0, totalViolations: 0 });
         setArchiveExists(false);
         return;
       }
@@ -83,13 +83,14 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
             checked: true,
             hasAllSignatures: data.hasAllSignatures,
             violationsWithoutSignature: data.violationsWithoutSignature,
+            totalViolations: data.totalViolations,
           });
         } else {
-          setSignatureCheck({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0 });
+          setSignatureCheck({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0, totalViolations: 0 });
         }
       } catch (err) {
         console.error('Failed to check signatures:', err);
-        setSignatureCheck({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0 });
+        setSignatureCheck({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0, totalViolations: 0 });
       }
     };
 
@@ -188,7 +189,7 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
   const handleClose = () => {
     setArchiveResult(null);
     setError('');
-    setSignatureCheck({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0 });
+    setSignatureCheck({ checked: false, hasAllSignatures: false, violationsWithoutSignature: 0, totalViolations: 0 });
     setArchiveExists(false);
     setShowSignatureWarningModal(false);
     onClose();
@@ -314,7 +315,7 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
         )}
 
         {/* Signature Check */}
-        {signatureCheck.checked && (
+        {signatureCheck.checked && signatureCheck.totalViolations > 0 && (
           <div className={`border rounded-lg p-3 ${signatureCheck.hasAllSignatures ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
             <div className="flex gap-2">
               {signatureCheck.hasAllSignatures ? (

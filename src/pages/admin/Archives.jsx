@@ -210,6 +210,10 @@ const Archives = () => {
   const [userToRestore, setUserToRestore] = useState(null);
   const [archiveSuccessMessage, setArchiveSuccessMessage] = useState("");
 
+  // Delete archived violation modal states
+  const [isDeleteArchivedViolationModalOpen, setIsDeleteArchivedViolationModalOpen] = useState(false);
+  const [archivedViolationToDelete, setArchivedViolationToDelete] = useState(null);
+
   // School year management states
   const [isDeleteSchoolYearModalOpen, setIsDeleteSchoolYearModalOpen] = useState(false);
   const [schoolYearToDelete, setSchoolYearToDelete] = useState(null);
@@ -1603,13 +1607,18 @@ const Archives = () => {
     }
   };
 
-  const handleDeleteArchivedViolation = async (row) => {
+  const handleDeleteArchivedViolation = (row) => {
     if (!row?.id) return;
-    if (!window.confirm("Delete this archived violation?")) return;
+    setArchivedViolationToDelete(row);
+    setIsDeleteArchivedViolationModalOpen(true);
+  };
+
+  const handleConfirmDeleteArchivedViolation = async () => {
+    if (!archivedViolationToDelete?.id) return;
 
     try {
       setIsLoading(true);
-      const response = await fetch(`/api/archive/violations/${row.id}`, {
+      const response = await fetch(`/api/archive/violations/${archivedViolationToDelete.id}`, {
         method: "DELETE",
         headers: {
           ...getAuditHeaders(),
@@ -1621,7 +1630,9 @@ const Archives = () => {
         throw new Error(data.message || "Failed to delete record.");
       }
 
-      setArchivedViolations((items) => items.filter((item) => item.id !== row.id));
+      setArchivedViolations((items) => items.filter((item) => item.id !== archivedViolationToDelete.id));
+      setIsDeleteArchivedViolationModalOpen(false);
+      setArchivedViolationToDelete(null);
     } catch (err) {
       setError(err.message || "Unable to delete record.");
     } finally {
@@ -2802,6 +2813,48 @@ const Archives = () => {
                 className="bg-red-700 hover:bg-red-800 border-0 text-white"
               >
                 {isSchoolYearActionLoading ? "Deleting..." : "Delete School Year"}
+              </Button>
+            </ModalFooter>
+          </div>
+        </Modal>
+      )}
+
+      {/* Delete Archived Violation Modal */}
+      {isDeleteArchivedViolationModalOpen && archivedViolationToDelete && (
+        <Modal
+          isOpen={isDeleteArchivedViolationModalOpen}
+          onClose={() => {
+            setIsDeleteArchivedViolationModalOpen(false);
+            setArchivedViolationToDelete(null);
+          }}
+          showCloseButton={true}
+        >
+          <div className="bg-transparent">
+            <div className="flex items-center gap-3 mb-2">
+              <AlertCircle className="w-6 h-6 text-red-400" />
+              <h3 className="text-lg font-bold text-white">Confirm Delete</h3>
+            </div>
+            <p className="text-gray-300 mb-4">
+              Are you sure you want to delete this archived violation? This action cannot be undone.
+            </p>
+            <ModalFooter>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setIsDeleteArchivedViolationModalOpen(false);
+                  setArchivedViolationToDelete(null);
+                }}
+                className="bg-[#3D4654] hover:bg-[#4d5664] border-0"
+                disabled={isLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleConfirmDeleteArchivedViolation}
+                disabled={isLoading}
+                className="bg-red-700 hover:bg-red-800 border-0 text-white"
+              >
+                {isLoading ? "Deleting..." : "Delete"}
               </Button>
             </ModalFooter>
           </div>
