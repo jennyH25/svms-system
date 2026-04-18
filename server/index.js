@@ -5911,6 +5911,11 @@ app.post("/api/archive/violations", async (req, res) => {
           [nextSemester, nextSchoolYear, student.id],
         );
 
+        if (studentHasPending) {
+          blockedStudentCount++;
+          continue;
+        }
+
         if (yearLevel === 3) {
           // Check if student has already been promoted in this school year
           if (student.last_promoted_school_year === schoolYear) {
@@ -5931,9 +5936,6 @@ app.post("/api/archive/violations", async (req, res) => {
             [nextYearSection, schoolYear, student.id],
           );
           promotedCount++;
-        } else if (studentHasPending) {
-          blockedStudentCount++;
-          continue;
         } else if (yearLevel === 4) {
           await pool.query(
             `UPDATE "Students"
