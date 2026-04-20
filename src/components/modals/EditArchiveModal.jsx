@@ -4,6 +4,23 @@ import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
 import { AlertCircle } from "lucide-react";
 
+function extractNameFromFullName(fullName) {
+  const normalized = String(fullName || "").trim();
+  if (!normalized) {
+    return { firstName: "", lastName: "" };
+  }
+
+  const parts = normalized.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: "" };
+  }
+
+  return {
+    firstName: parts.slice(0, -1).join(" "),
+    lastName: parts[parts.length - 1],
+  };
+}
+
 const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }) => {
   const [formData, setFormData] = useState({});
   const [error, setError] = useState("");
@@ -14,14 +31,29 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
     if (record) {
       setError("");
       if (editType === "user") {
+        const fullName = record.full_name || record.fullName || "";
+        const fallbackNames = extractNameFromFullName(fullName);
+
         // For archived users
         setFormData({
-          firstName: record.name?.props?.children?.[0]?.props?.children || record.firstName || "",
-          lastName: record.lastName || "",
+          firstName:
+            record.firstName ||
+            record.first_name ||
+            fallbackNames.firstName ||
+            "",
+          lastName:
+            record.lastName ||
+            record.last_name ||
+            fallbackNames.lastName ||
+            "",
           email: record.email || "",
           program: record.program || "",
           yearSection: record.yearSection || "",
-          status: record.status || "Regular",
+          status:
+            record.archivedReason ||
+            record.archived_reason ||
+            record.status ||
+            "IMPORTED",
         });
       } else if (editType === "violation") {
         // For archived violations - extract student name from JSX
@@ -59,7 +91,6 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
           lastName: formData.lastName?.trim() || "",
           program: formData.program?.trim() || "",
           yearSection: formData.yearSection?.trim() || "",
-          status: formData.status?.trim() || "Regular",
         };
         onSave(record.id, updatedRecord);
       } else if (editType === "violation") {
@@ -148,18 +179,13 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
                 onChange={handleChange}
                 placeholder="e.g., 1A, 2B, 3C"
               />
-              <div>
-                <label className="block text-sm font-medium text-white mb-2">Status</label>
-                <select
-                  name="status"
-                  value={formData.status}
-                  onChange={handleChange}
-                  className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] focus:outline-none focus:border-white/20 transition-all"
-                >
-                  <option value="Regular">Regular</option>
-                  <option value="Irregular">Irregular</option>
-                </select>
-              </div>
+              <GlassInput
+                label={<span className="text-sm font-medium text-white mb-2">Status</span>}
+                name="status"
+                value={formData.status}
+                placeholder="Status"
+                disabled
+              />
             </div>
           </>
         ) : (

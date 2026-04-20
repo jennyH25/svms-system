@@ -697,6 +697,11 @@ export async function syncStudentsDatabase() {
 
   await dbPool.query(`
     ALTER TABLE "Students"
+    ALTER COLUMN school_id DROP NOT NULL
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE "Students"
     ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE
   `);
 

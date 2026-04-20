@@ -809,6 +809,8 @@ const Archives = () => {
           id: user.id,
           no: "",
           full_name: user.full_name,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
           name: (
             <div>
               <div className="font-semibold">{user.full_name}</div>
@@ -899,6 +901,8 @@ const Archives = () => {
           id: user.id,
           no: "",
           full_name: user.full_name,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
           name: (
             <div>
               <div className="font-semibold">{user.full_name}</div>

@@ -54,6 +54,10 @@ const HISTORICAL_VIOLATION_CACHE = {
   mtimeMs: 0,
   records: [],
 };
+const HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE = {
+  mtimeMs: 0,
+  counts: new Map(),
+};
 const isServerlessRuntime =
   process.env.VERCEL === "1" ||
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
@@ -499,6 +503,55 @@ function splitWorkbookStudentName(studentName) {
   };
 }
 
+function buildImportedStudentEmail({ firstName, lastName, fallbackHash }) {
+  const toLocalPart = (value) =>
+    String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+  const last = toLocalPart(lastName);
+  const first = toLocalPart(firstName);
+  const combined = [last, first].filter(Boolean).join("_");
+  const safeLocalPart =
+    combined || `imported_${toLocalPart(fallbackHash) || "student"}`;
+
+  return `${safeLocalPart}@plpasig.edu.ph`;
+}
+
+async function getHistoricalWorkbookViolationCount(studentName) {
+  const normalizedName = normalizeWorkbookComparisonText(studentName);
+  if (!normalizedName) {
+    return 0;
+  }
+
+  const records = await loadHistoricalViolationRecordsFromWorkbook();
+  const cacheMtime = Number(HISTORICAL_VIOLATION_CACHE.mtimeMs || 0);
+
+  if (
+    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs !== cacheMtime ||
+    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.counts.size === 0
+  ) {
+    const nextCounts = new Map();
+
+    for (const record of records) {
+      const key = normalizeWorkbookComparisonText(record.studentName);
+      if (!key) {
+        continue;
+      }
+
+      nextCounts.set(key, (nextCounts.get(key) || 0) + 1);
+    }
+
+    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs = cacheMtime;
+    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.counts = nextCounts;
+  }
+
+  return (
+    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.counts.get(normalizedName) || 0
+  );
+}
+
 async function getOrCreateHistoricalWorkbookStudent(pool, record) {
   const studentName = normalizeWorkbookText(record.studentName);
   if (!studentName) {
@@ -514,8 +567,13 @@ async function getOrCreateHistoricalWorkbookStudent(pool, record) {
     .digest("hex")
     .slice(0, 10)
     .toUpperCase();
-  const generatedEmail = `historical-${normalizedComparison.replace(/\s+/g, "-") || hash.toLowerCase()}@svms.local`;
-  const generatedSchoolId = `WB-${hash}`;
+  const studentParts = splitWorkbookStudentName(studentName);
+  const generatedEmail = buildImportedStudentEmail({
+    firstName: studentParts.firstName,
+    lastName: studentParts.lastName,
+    fallbackHash: hash.toLowerCase(),
+  });
+  const violationCount = await getHistoricalWorkbookViolationCount(studentName);
 
   const existingStudent = await pool.query(
     `SELECT id
@@ -523,16 +581,42 @@ async function getOrCreateHistoricalWorkbookStudent(pool, record) {
      WHERE REGEXP_REPLACE(LOWER(TRIM(full_name)), '[^a-z0-9]+', ' ', 'g') = REGEXP_REPLACE(LOWER(TRIM($1)), '[^a-z0-9]+', ' ', 'g')
         OR REGEXP_REPLACE(LOWER(TRIM(full_name)), '[^a-z0-9]+', ' ', 'g') = $2
         OR LOWER(email) = LOWER($3)
-        OR LOWER(school_id) = LOWER($4)
      LIMIT 1`,
-    [studentName, normalizedNoSpaces, generatedEmail, generatedSchoolId],
+    [studentName, normalizedNoSpaces, generatedEmail],
   );
 
   if (existingStudent.rows?.[0]?.id) {
-    return existingStudent.rows[0].id;
+    const existingStudentId = existingStudent.rows[0].id;
+
+    await pool.query(
+      `UPDATE "Students"
+       SET email = CASE
+             WHEN email IS NULL OR email = '' OR LOWER(email) LIKE 'historical-%@svms.local' THEN $2
+             ELSE email
+           END,
+           first_name = COALESCE(NULLIF(first_name, ''), $3),
+           last_name = COALESCE(NULLIF(last_name, ''), $4),
+           full_name = COALESCE(NULLIF(full_name, ''), $5),
+           school_id = NULL,
+           violation_count = GREATEST(COALESCE($6, 0), 0),
+           archived_reason = CASE
+             WHEN archived_reason IS NULL OR archived_reason = '' OR archived_reason = 'Historical import' THEN 'IMPORTED'
+             ELSE archived_reason
+           END
+       WHERE id = $1`,
+      [
+        existingStudentId,
+        generatedEmail,
+        studentParts.firstName,
+        studentParts.lastName,
+        studentParts.fullName,
+        violationCount,
+      ],
+    );
+
+    return existingStudentId;
   }
 
-  const studentParts = splitWorkbookStudentName(studentName);
   const programText = normalizeWorkbookText(record.program) || "Historical";
   const yearSectionText =
     normalizeWorkbookText(record.yearSection) || "Unknown";
@@ -543,7 +627,7 @@ async function getOrCreateHistoricalWorkbookStudent(pool, record) {
   const insertResult = await pool.query(
     `INSERT INTO "Students"
      (user_id, email, school_id, first_name, last_name, full_name, program, year_section, year_level, status, violation_count, is_archived, archived_reason, original_status, current_semester, current_school_year)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, TRUE, $11, $12, $13, $14)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, TRUE, $12, $13, $14, $15)
      ON CONFLICT (email) DO UPDATE SET
        full_name = EXCLUDED.full_name,
        first_name = EXCLUDED.first_name,
@@ -551,6 +635,7 @@ async function getOrCreateHistoricalWorkbookStudent(pool, record) {
        school_id = EXCLUDED.school_id,
        program = EXCLUDED.program,
        year_section = EXCLUDED.year_section,
+       violation_count = EXCLUDED.violation_count,
        archived_reason = EXCLUDED.archived_reason,
        original_status = EXCLUDED.original_status,
        current_semester = EXCLUDED.current_semester,
@@ -559,7 +644,7 @@ async function getOrCreateHistoricalWorkbookStudent(pool, record) {
     [
       null,
       generatedEmail,
-      generatedSchoolId,
+      null,
       studentParts.firstName,
       studentParts.lastName,
       studentParts.fullName,
@@ -567,7 +652,8 @@ async function getOrCreateHistoricalWorkbookStudent(pool, record) {
       yearSectionText,
       4,
       "Graduated",
-      "Historical import",
+      violationCount,
+      "IMPORTED",
       "Historical",
       currentSemester,
       currentSchoolYear,
@@ -888,6 +974,8 @@ async function deleteHistoricalWorkbookRecordById(workbookId) {
     await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
     HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
     HISTORICAL_VIOLATION_CACHE.records = [];
+    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs = 0;
+    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.counts = new Map();
 
     return true;
   } catch (error) {
@@ -960,6 +1048,8 @@ async function deleteHistoricalWorkbookRecordsBySchoolYear(schoolYear) {
       await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
       HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
       HISTORICAL_VIOLATION_CACHE.records = [];
+      HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs = 0;
+      HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.counts = new Map();
     }
 
     return deletedCount;
@@ -7507,35 +7597,16 @@ async function ensureAuthDatabaseReady() {
     const seedAccounts = getSeedAccountsFromEnv();
 
     const runFullSynchronization = async () => {
-      // Group 1: Run base table syncs sequentially with small delays to avoid connection pool exhaustion
+      // Run base table syncs sequentially for predictable migration ordering.
       await syncAuthDatabase({ seedAccounts });
-      await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
-
       await syncStudentsDatabase();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
       await syncSystemSettingsDatabase();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
       await syncViolationsDatabase();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
       await syncAuditLogsDatabase();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      // Group 2: Run dependent table syncs sequentially
       await syncStudentsFromUsers();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
       await syncNotificationsDatabase();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
       await syncPasswordResetDatabase();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
       await syncStudentViolationLogsDatabase();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
       await syncAppStateDatabase();
     };
 
@@ -7544,34 +7615,16 @@ async function ensureAuthDatabaseReady() {
 
       if (schemaIsCurrent) {
         try {
-          // Keep this fast but resilient: refresh core schemas sequentially with delays to avoid connection pool issues
+          // Fast path for known/current schema.
           await syncAuthDatabase({ seedAccounts, skipSchemaCheck: true });
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
           await syncStudentsDatabase();
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
           await syncSystemSettingsDatabase();
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
           await syncViolationsDatabase();
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
           await syncAuditLogsDatabase();
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
           await syncStudentsFromUsers();
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
           await syncNotificationsDatabase();
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
           await syncPasswordResetDatabase();
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
           await syncStudentViolationLogsDatabase();
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
           await syncAppStateDatabase();
           return;
         } catch (fastPathError) {
@@ -7606,18 +7659,15 @@ async function startServer() {
       .then(() => {
         console.log("Auth database synchronized.");
 
-        // Add a small delay before starting cleanup timers to ensure connections are released
-        setTimeout(() => {
+        purgeExpiredAuditLogs();
+        auditCleanupTimer = setInterval(() => {
           purgeExpiredAuditLogs();
-          auditCleanupTimer = setInterval(() => {
-            purgeExpiredAuditLogs();
-          }, AUDIT_LOG_CLEANUP_INTERVAL_MS);
+        }, AUDIT_LOG_CLEANUP_INTERVAL_MS);
 
+        purgeExpiredNotifications();
+        notificationCleanupTimer = setInterval(() => {
           purgeExpiredNotifications();
-          notificationCleanupTimer = setInterval(() => {
-            purgeExpiredNotifications();
-          }, NOTIFICATION_CLEANUP_INTERVAL_MS);
-        }, 1000); // 1 second delay
+        }, NOTIFICATION_CLEANUP_INTERVAL_MS);
 
         if (seedAccounts.length === 0) {
           console.log("No account seed variables detected during startup.");
