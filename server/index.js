@@ -357,24 +357,79 @@ function parseCellDate(rawValue) {
 
   const normalizedText = String(rawValue || "")
     .trim()
-    .replace(/\/+/, "/")
+    .replace(/\s+/g, " ")
+    .replace(/[.]/g, "/")
+    .replace(/[-]/g, "/")
     .replace(/\/{2,}/g, "/")
     .replace(/\s+/g, " ");
 
-  const dmyMatch = normalizedText.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  // Workbook dates are provided as day/month/year.
+  const dmyMatch = normalizedText.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (dmyMatch) {
-    const firstPart = Number(dmyMatch[1]);
-    const secondPart = Number(dmyMatch[2]);
-    const yearPart = Number(dmyMatch[3]);
+    const day = Number(dmyMatch[1]);
+    const month = Number(dmyMatch[2]);
+    const rawYear = String(dmyMatch[3]);
+    const yearPart =
+      rawYear.length === 2 ? 2000 + Number(rawYear) : Number(rawYear);
 
-    const day = firstPart > 12 ? firstPart : secondPart;
-    const month = firstPart > 12 ? secondPart : firstPart;
+    if (day < 1 || day > 31 || month < 1 || month > 12) {
+      return null;
+    }
+
     const parsed = new Date(Date.UTC(yearPart, month - 1, day));
+    // Guard invalid calendar dates (e.g., 31/02/2025).
+    if (
+      parsed.getUTCFullYear() !== yearPart ||
+      parsed.getUTCMonth() !== month - 1 ||
+      parsed.getUTCDate() !== day
+    ) {
+      return null;
+    }
+
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const ymdMatch = normalizedText.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (ymdMatch) {
+    const yearPart = Number(ymdMatch[1]);
+    const month = Number(ymdMatch[2]);
+    const day = Number(ymdMatch[3]);
+    if (day < 1 || day > 31 || month < 1 || month > 12) {
+      return null;
+    }
+    const parsed = new Date(Date.UTC(yearPart, month - 1, day));
+    if (
+      parsed.getUTCFullYear() !== yearPart ||
+      parsed.getUTCMonth() !== month - 1 ||
+      parsed.getUTCDate() !== day
+    ) {
+      return null;
+    }
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   const parsed = new Date(normalizedText);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function toArchiveTimestamp(value) {
+  const parsedDate = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  // Store a midday UTC timestamp to preserve the same calendar day across time zones.
+  return new Date(
+    Date.UTC(
+      parsedDate.getUTCFullYear(),
+      parsedDate.getUTCMonth(),
+      parsedDate.getUTCDate(),
+      12,
+      0,
+      0,
+      0,
+    ),
+  ).toISOString();
 }
 
 function parseCourseSection(value) {
@@ -422,9 +477,6 @@ function buildWorkbookImportKey(record) {
     normalizeWorkbookComparisonText(record.studentName || record.student_name),
     normalizeWorkbookComparisonText(
       record.violationLabel || record.violation_label,
-    ),
-    normalizeWorkbookComparisonText(
-      record.typeLabel || record.reportedBy || record.reported_by,
     ),
     normalizeSemester(record.semester),
     normalizeSchoolYear(record.schoolYear || record.school_year),
@@ -704,10 +756,7 @@ function parseWorkbookTypeLabel(value) {
 }
 
 function mapWorkbookRecordToArchiveRow(record, index) {
-  const dateValue = new Date(record.date);
-  const archivedAt = Number.isNaN(dateValue.getTime())
-    ? null
-    : dateValue.toISOString();
+  const archivedAt = toArchiveTimestamp(record.date);
   const { category, degree, label } = parseWorkbookTypeLabel(record.typeLabel);
 
   return {
@@ -716,7 +765,7 @@ function mapWorkbookRecordToArchiveRow(record, index) {
     violation_catalog_id: null,
     violation_label: record.violationLabel || "",
     reported_by: "",
-    remarks: "",
+    remarks: "IMPORTED",
     signature_image: "",
     signature_updated_at: null,
     semester: record.semester,
@@ -731,6 +780,7 @@ function mapWorkbookRecordToArchiveRow(record, index) {
     year_section: record.yearSection || "",
     violation_category: category,
     violation_degree: degree,
+    violation_name: record.violationLabel || "",
     violation_type_label: label,
     isHistoricalWorkbook: true,
     sourceType: "workbook",
@@ -877,6 +927,298 @@ async function getImportedWorkbookRecordKeys(pool, schoolYear, semester) {
   return new Set((result.rows || []).map((row) => buildWorkbookImportKey(row)));
 }
 
+async function reconcileImportedWorkbookArchiveDates(pool) {
+  const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+  if (!Array.isArray(workbookRecords) || workbookRecords.length === 0) {
+    return { correctedCount: 0, scannedCount: 0, unmatchedCount: 0 };
+  }
+
+  const workbookDatesByKey = new Map();
+  workbookRecords.forEach((record) => {
+    const key = buildWorkbookImportKey(record);
+    const timestamp = toArchiveTimestamp(record.date);
+    if (!key || !timestamp) return;
+
+    if (!workbookDatesByKey.has(key)) {
+      workbookDatesByKey.set(key, []);
+    }
+    workbookDatesByKey.get(key).push(timestamp);
+  });
+
+  workbookDatesByKey.forEach((values) => {
+    values.sort((left, right) => left.localeCompare(right));
+  });
+
+  const importedResult = await pool.query(
+    `SELECT
+       sva.id,
+       sva.archived_at,
+       sva.original_created_at,
+       sva.original_updated_at,
+       sva.violation_label,
+       sva.reported_by,
+       sva.semester,
+       sva.school_year,
+       s.full_name AS student_name
+     FROM student_violation_archives sva
+     LEFT JOIN "Students" s ON sva.student_id = s.id
+     WHERE sva.remarks = 'IMPORTED'
+     ORDER BY sva.id ASC`,
+  );
+
+  const importedRows = importedResult.rows || [];
+  let correctedCount = 0;
+  let unmatchedCount = 0;
+
+  for (const row of importedRows) {
+    const key = buildWorkbookImportKey(row);
+    const candidates = workbookDatesByKey.get(key);
+
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      unmatchedCount += 1;
+      continue;
+    }
+
+    const expectedTimestamp = candidates.shift();
+    const currentDateKey = formatWorkbookComparisonDate(row.archived_at);
+    const expectedDateKey = formatWorkbookComparisonDate(expectedTimestamp);
+
+    if (!expectedDateKey || currentDateKey === expectedDateKey) {
+      continue;
+    }
+
+    await pool.query(
+      `UPDATE student_violation_archives
+       SET archived_at = $1,
+           original_created_at = $1,
+           original_updated_at = $1,
+           reported_by = '',
+           updated_at = NOW()
+       WHERE id = $2`,
+      [expectedTimestamp, row.id],
+    );
+    correctedCount += 1;
+  }
+
+  await pool.query(
+    `UPDATE student_violation_archives
+     SET reported_by = ''
+     WHERE remarks = 'IMPORTED'
+       AND reported_by IS DISTINCT FROM ''`,
+  );
+
+  return {
+    correctedCount,
+    scannedCount: importedRows.length,
+    unmatchedCount,
+  };
+}
+
+const ARCHIVE_MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
+let lastArchiveMaintenanceAt = 0;
+let archiveMaintenanceInFlight = null;
+
+const VIOLATION_INFERENCE_CACHE_TTL_MS = 5 * 60 * 1000;
+let violationInferenceCache = {
+  loadedAt: 0,
+  rows: [],
+};
+
+const isWorkbookBusyError = (error) => {
+  const code = String(error?.code || "").toUpperCase();
+  return code === "EBUSY" || Number(error?.errno) === -4082;
+};
+
+const delayMs = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+async function runWithWorkbookRetry(task, { attempts = 5, waitMs = 250 } = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (!isWorkbookBusyError(error) || attempt === attempts) {
+        break;
+      }
+      await delayMs(waitMs * attempt);
+    }
+  }
+
+  if (isWorkbookBusyError(lastError)) {
+    const lockedError = new Error(
+      "ViolationRecords1.xlsx is currently busy or locked. Close the file and try again.",
+    );
+    lockedError.code = "EBUSY";
+    throw lockedError;
+  }
+
+  throw lastError;
+}
+
+async function cleanupDuplicateArchivedViolations(pool) {
+  const result = await pool.query(
+    `WITH ranked AS (
+       SELECT
+         id,
+         ROW_NUMBER() OVER (
+           PARTITION BY
+             student_id,
+             COALESCE(violation_catalog_id, -1),
+             LOWER(TRIM(COALESCE(violation_label, ''))),
+             school_year,
+             semester,
+             archived_at::date,
+             is_unresolved,
+             COALESCE(TRIM(remarks), ''),
+             COALESCE(TRIM(reported_by), ''),
+             COALESCE(TRIM(signature_image), '')
+           ORDER BY id ASC
+         ) AS rn
+       FROM student_violation_archives
+     )
+     DELETE FROM student_violation_archives sva
+     USING ranked
+     WHERE sva.id = ranked.id
+       AND ranked.rn > 1
+     RETURNING sva.id`,
+  );
+
+  return Number(result.rowCount || 0);
+}
+
+async function maybeRunArchiveMaintenance(pool) {
+  const now = Date.now();
+  if (now - lastArchiveMaintenanceAt < ARCHIVE_MAINTENANCE_INTERVAL_MS) {
+    return {
+      skipped: true,
+      correctedCount: 0,
+      duplicateRemovedCount: 0,
+    };
+  }
+
+  if (archiveMaintenanceInFlight) {
+    return archiveMaintenanceInFlight;
+  }
+
+  archiveMaintenanceInFlight = (async () => {
+    const [reconcileResult, duplicateRemovedCount] = await Promise.all([
+      reconcileImportedWorkbookArchiveDates(pool),
+      cleanupDuplicateArchivedViolations(pool),
+    ]);
+
+    lastArchiveMaintenanceAt = Date.now();
+
+    return {
+      skipped: false,
+      correctedCount: Number(reconcileResult?.correctedCount || 0),
+      duplicateRemovedCount,
+    };
+  })().finally(() => {
+    archiveMaintenanceInFlight = null;
+  });
+
+  return archiveMaintenanceInFlight;
+}
+
+async function getViolationCandidatesForInference(pool) {
+  const now = Date.now();
+  if (
+    Array.isArray(violationInferenceCache.rows) &&
+    violationInferenceCache.rows.length > 0 &&
+    now - violationInferenceCache.loadedAt < VIOLATION_INFERENCE_CACHE_TTL_MS
+  ) {
+    return violationInferenceCache.rows;
+  }
+
+  const result = await pool.query(
+    `SELECT id, category, degree, name FROM violations`,
+  );
+
+  const rows = (result.rows || []).map((row) => {
+    const normalizedName = normalizeWorkbookComparisonText(row.name || "");
+    const tokens = normalizedName.split(" ").filter(Boolean);
+    return {
+      ...row,
+      normalizedName,
+      tokens,
+    };
+  });
+
+  violationInferenceCache = {
+    loadedAt: now,
+    rows,
+  };
+
+  return rows;
+}
+
+function inferClosestViolationByKeywords(violationLabel, candidates) {
+  const normalizedLabel = normalizeWorkbookComparisonText(violationLabel || "");
+  if (!normalizedLabel) return null;
+
+  const labelTokens = normalizedLabel.split(" ").filter(Boolean);
+  if (labelTokens.length === 0) return null;
+
+  let best = null;
+  let bestScore = 0;
+
+  for (const candidate of candidates || []) {
+    if (!candidate?.normalizedName) continue;
+
+    let score = 0;
+    if (candidate.normalizedName === normalizedLabel) {
+      score += 5;
+    }
+    if (candidate.normalizedName.includes(normalizedLabel)) {
+      score += 2;
+    }
+    if (normalizedLabel.includes(candidate.normalizedName)) {
+      score += 1.5;
+    }
+
+    const tokenSet = new Set(candidate.tokens || []);
+    let overlap = 0;
+    for (const token of labelTokens) {
+      if (tokenSet.has(token)) overlap += 1;
+    }
+    score += overlap / Math.max(labelTokens.length, 1);
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+
+  return bestScore >= 1.15 ? best : null;
+}
+
+function enrichArchiveViolationRow(row, violationMatch) {
+  const remarksText = String(row?.remarks || "").trim();
+  const isImported = remarksText.toUpperCase() === "IMPORTED";
+  const hasCategory = String(row?.violation_category || "").trim();
+  const hasDegree = String(row?.violation_degree || "").trim();
+
+  return {
+    ...row,
+    violation_catalog_id:
+      row?.violation_catalog_id ?? violationMatch?.id ?? null,
+    violation_category: hasCategory || violationMatch?.category || "",
+    violation_degree: hasDegree || violationMatch?.degree || "",
+    violation_type_label:
+      hasCategory && hasDegree
+        ? `${hasCategory} - ${hasDegree}`
+        : violationMatch?.category && violationMatch?.degree
+          ? `${violationMatch.category} - ${violationMatch.degree}`
+          : "",
+    remarks: remarksText || (isImported ? "IMPORTED" : ""),
+  };
+}
+
 async function deleteHistoricalWorkbookRecordById(workbookId) {
   if (typeof workbookId !== "string" || !workbookId.startsWith("wb-")) {
     return false;
@@ -899,9 +1241,13 @@ async function deleteHistoricalWorkbookRecordById(workbookId) {
   try {
     const excelModule = await import("exceljs");
     const ExcelJS = excelModule.default || excelModule;
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
-    const worksheet = workbook.worksheets?.[0];
+
+    const { workbook, worksheet } = await runWithWorkbookRetry(async () => {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+      return { workbook: wb, worksheet: wb.worksheets?.[0] };
+    });
+
     if (!worksheet) {
       return false;
     }
@@ -971,7 +1317,9 @@ async function deleteHistoricalWorkbookRecordById(workbookId) {
     }
 
     worksheet.spliceRows(deleteRowNumber, 1);
-    await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+    await runWithWorkbookRetry(async () => {
+      await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+    });
     HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
     HISTORICAL_VIOLATION_CACHE.records = [];
     HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs = 0;
@@ -979,6 +1327,9 @@ async function deleteHistoricalWorkbookRecordById(workbookId) {
 
     return true;
   } catch (error) {
+    if (isWorkbookBusyError(error)) {
+      throw error;
+    }
     console.error("Failed to delete historical workbook record:", error);
     return false;
   }
@@ -988,9 +1339,12 @@ async function deleteHistoricalWorkbookRecordsBySchoolYear(schoolYear) {
   try {
     const excelModule = await import("exceljs");
     const ExcelJS = excelModule.default || excelModule;
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
-    const worksheet = workbook.worksheets?.[0];
+    const { workbook, worksheet } = await runWithWorkbookRetry(async () => {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+      return { workbook: wb, worksheet: wb.worksheets?.[0] };
+    });
+
     if (!worksheet) {
       return 0; // No workbook records
     }
@@ -1045,7 +1399,9 @@ async function deleteHistoricalWorkbookRecordsBySchoolYear(schoolYear) {
     }
 
     if (deletedCount > 0) {
-      await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+      await runWithWorkbookRetry(async () => {
+        await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+      });
       HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
       HISTORICAL_VIOLATION_CACHE.records = [];
       HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs = 0;
@@ -1054,6 +1410,9 @@ async function deleteHistoricalWorkbookRecordsBySchoolYear(schoolYear) {
 
     return deletedCount;
   } catch (error) {
+    if (isWorkbookBusyError(error)) {
+      throw error;
+    }
     console.error(
       "Failed to delete historical workbook records by school year:",
       error,
@@ -6495,12 +6854,20 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
+    void maybeRunArchiveMaintenance(pool).catch((error) => {
+      console.warn(
+        "Archive maintenance skipped/failed:",
+        error?.message || error,
+      );
+    });
+
     const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
     const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
       pool,
       schoolYear,
       semester,
     );
+    const violationCandidates = await getViolationCandidatesForInference(pool);
 
     const result = await pool.query(
       `SELECT 
@@ -6519,11 +6886,14 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
         sva.original_created_at,
         sva.original_updated_at,
         s.full_name as student_name,
+        s.first_name,
+        s.last_name,
         s.school_id,
         s.program,
         s.year_section,
         v.category as violation_category,
-        v.degree as violation_degree
+        v.degree as violation_degree,
+        v.name as violation_name
        FROM student_violation_archives sva
        LEFT JOIN "Students" s ON sva.student_id = s.id
        LEFT JOIN violations v ON sva.violation_catalog_id = v.id
@@ -6532,14 +6902,21 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
       [schoolYear, semester],
     );
 
-    const violations = (result.rows || []).map((row) => ({
-      ...row,
-      year_section:
-        preservedArchiveYearSectionByViolationId.get(row.id) ||
-        row.year_section ||
-        row.student_year_section ||
-        null,
-    }));
+    const violations = (result.rows || []).map((row) => {
+      const closestViolation = inferClosestViolationByKeywords(
+        row.violation_label,
+        violationCandidates,
+      );
+
+      return {
+        ...enrichArchiveViolationRow(row, closestViolation),
+        year_section:
+          preservedArchiveYearSectionByViolationId.get(row.id) ||
+          row.year_section ||
+          row.student_year_section ||
+          null,
+      };
+    });
 
     const workbookViolations = workbookRecords
       .filter(
@@ -6825,7 +7202,15 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
+    void maybeRunArchiveMaintenance(pool).catch((error) => {
+      console.warn(
+        "Archive maintenance skipped/failed:",
+        error?.message || error,
+      );
+    });
+
     const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+    const violationCandidates = await getViolationCandidatesForInference(pool);
 
     // Query archived violations from the archive table for this semester/year, excluding unresolved
     const result = await pool.query(
@@ -6845,11 +7230,14 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
         sva.original_created_at,
         sva.original_updated_at,
         s.full_name as student_name,
+        s.first_name,
+        s.last_name,
         s.school_id,
         s.program,
         s.year_section,
         v.category as violation_category,
-        v.degree as violation_degree
+        v.degree as violation_degree,
+        v.name as violation_name
        FROM student_violation_archives sva
        LEFT JOIN "Students" s ON sva.student_id = s.id
        LEFT JOIN violations v ON sva.violation_catalog_id = v.id
@@ -6858,14 +7246,21 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
       [schoolYear, semester],
     );
 
-    const violations = (result.rows || []).map((row) => ({
-      ...row,
-      year_section:
-        preservedArchiveYearSectionByViolationId.get(row.id) ||
-        row.year_section ||
-        row.student_year_section ||
-        null,
-    }));
+    const violations = (result.rows || []).map((row) => {
+      const closestViolation = inferClosestViolationByKeywords(
+        row.violation_label,
+        violationCandidates,
+      );
+
+      return {
+        ...enrichArchiveViolationRow(row, closestViolation),
+        year_section:
+          preservedArchiveYearSectionByViolationId.get(row.id) ||
+          row.year_section ||
+          row.student_year_section ||
+          null,
+      };
+    });
 
     const workbookViolations = workbookRecords
       .filter(
@@ -7104,7 +7499,15 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
 // PUT update archived violation
 app.put("/api/archive/violations/:id", async (req, res) => {
   const { id } = req.params;
-  const { remarks, reportedBy, isUnresolved } = req.body ?? {};
+  const {
+    remarks,
+    reportedBy,
+    isUnresolved,
+    semester,
+    schoolYear,
+    firstName,
+    lastName,
+  } = req.body ?? {};
 
   if (!hasDbConfig()) {
     return res.status(500).json({
@@ -7119,11 +7522,40 @@ app.put("/api/archive/violations/:id", async (req, res) => {
 
     // Determine if the record is transitioning from unresolved to cleared
     const existingRecord = await pool.query(
-      `SELECT student_id, is_unresolved FROM student_violation_archives WHERE id = $1 LIMIT 1`,
+      `SELECT
+         student_id,
+         is_unresolved,
+         violation_catalog_id,
+         violation_label,
+         archived_at,
+         semester,
+         school_year
+       FROM student_violation_archives
+       WHERE id = $1
+       LIMIT 1`,
       [id],
     );
     const wasUnresolved = existingRecord.rows?.[0]?.is_unresolved;
     const studentId = existingRecord.rows?.[0]?.student_id;
+    const existingViolationCatalogId =
+      existingRecord.rows?.[0]?.violation_catalog_id ?? null;
+    const existingViolationLabel = String(
+      existingRecord.rows?.[0]?.violation_label || "",
+    ).trim();
+    const existingArchivedAt = existingRecord.rows?.[0]?.archived_at || null;
+    const existingSemester = String(
+      existingRecord.rows?.[0]?.semester || "",
+    ).trim();
+    const existingSchoolYear = String(
+      existingRecord.rows?.[0]?.school_year || "",
+    ).trim();
+
+    if (!existingRecord.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "Archived violation not found.",
+      });
+    }
 
     // Preserve the student year section before any possible promotion update
     let preservedYearSection = null;
@@ -7136,13 +7568,52 @@ app.put("/api/archive/violations/:id", async (req, res) => {
     }
 
     // Update archived violation in the archive table
+    const normalizedSemester = normalizeSemester(semester);
+    const normalizedSchoolYear = normalizeSchoolYear(schoolYear);
+    const targetSemester = normalizedSemester || existingSemester;
+    const targetSchoolYear = normalizedSchoolYear || existingSchoolYear;
+
+    // Prevent duplicate archive rows when moving a record between terms and back.
+    const duplicateRecord = await pool.query(
+      `SELECT id
+       FROM student_violation_archives
+       WHERE id <> $1
+         AND student_id IS NOT DISTINCT FROM $2
+         AND COALESCE(violation_catalog_id, -1) = COALESCE($3, -1)
+         AND LOWER(TRIM(COALESCE(violation_label, ''))) = LOWER(TRIM(COALESCE($4, '')))
+         AND school_year = $5
+         AND semester = $6
+         AND archived_at::date = $7::date
+       LIMIT 1`,
+      [
+        id,
+        studentId,
+        existingViolationCatalogId,
+        existingViolationLabel,
+        targetSchoolYear,
+        targetSemester,
+        existingArchivedAt,
+      ],
+    );
+
+    if (duplicateRecord.rows?.[0]) {
+      return res.status(409).json({
+        status: "error",
+        message:
+          "A matching archived record already exists in the selected school year and semester. Duplicate move blocked.",
+        duplicateId: duplicateRecord.rows[0].id,
+      });
+    }
+
     const result = await pool.query(
       `UPDATE student_violation_archives
        SET remarks = COALESCE(NULLIF($1, ''), remarks),
            reported_by = COALESCE(NULLIF($2, ''), reported_by),
            is_unresolved = COALESCE($3, is_unresolved),
+           semester = COALESCE($4, semester),
+           school_year = COALESCE($5, school_year),
            updated_at = NOW()
-       WHERE id = $4
+       WHERE id = $6
        RETURNING id, student_id, violation_label, reported_by, remarks, 
                  signature_image, signature_updated_at, archived_at, 
                  semester, school_year, original_created_at, original_updated_at, is_unresolved`,
@@ -7150,6 +7621,8 @@ app.put("/api/archive/violations/:id", async (req, res) => {
         String(remarks || "").trim() || null,
         String(reportedBy || "").trim() || null,
         typeof isUnresolved === "boolean" ? isUnresolved : null,
+        normalizedSemester || null,
+        normalizedSchoolYear || null,
         id,
       ],
     );
@@ -7162,6 +7635,25 @@ app.put("/api/archive/violations/:id", async (req, res) => {
     }
 
     const updatedViolation = result.rows[0];
+
+    const cleanedFirstName = String(firstName || "").trim();
+    const cleanedLastName = String(lastName || "").trim();
+    if ((cleanedFirstName || cleanedLastName) && updatedViolation.student_id) {
+      const fullName = `${cleanedFirstName} ${cleanedLastName}`.trim();
+      await pool.query(
+        `UPDATE "Students"
+         SET first_name = COALESCE(NULLIF($1, ''), first_name),
+             last_name = COALESCE(NULLIF($2, ''), last_name),
+             full_name = COALESCE(NULLIF($3, ''), full_name)
+         WHERE id = $4`,
+        [
+          cleanedFirstName || null,
+          cleanedLastName || null,
+          fullName || null,
+          updatedViolation.student_id,
+        ],
+      );
+    }
 
     // Log audit event
     await logAuditEvent(req, {
@@ -7268,10 +7760,8 @@ app.post("/api/archive/violations/:id/import", async (req, res) => {
     }
 
     const recordToImport = filteredRecords[index];
-    const dateValue = new Date(recordToImport.date);
-    const archivedAt = Number.isNaN(dateValue.getTime())
-      ? new Date().toISOString()
-      : dateValue.toISOString();
+    const archivedAt =
+      toArchiveTimestamp(recordToImport.date) || new Date().toISOString();
 
     let studentId = await resolveWorkbookStudentId(
       pool,
@@ -7288,23 +7778,23 @@ app.post("/api/archive/violations/:id/import", async (req, res) => {
       recordToImport.typeLabel,
     );
 
-    // Check for duplicates based on student name, violation label, school year, and semester
+    // Check for duplicates based on student name, violation label, school year, semester, and date.
     const duplicateCheck = await pool.query(
       `SELECT id FROM student_violation_archives 
        WHERE student_id = $1 
        AND violation_label = $2
-       AND COALESCE(reported_by, '') = $3
-       AND school_year = $4
-       AND semester = $5
+       AND school_year = $3
+       AND semester = $4
+       AND archived_at::date = $5::date
        AND remarks = 'IMPORTED'
        AND is_unresolved = FALSE
        LIMIT 1`,
       [
         studentId,
         recordToImport.violationLabel || "",
-        recordToImport.typeLabel || "",
         normalizeSchoolYear(recordToImport.schoolYear),
         normalizeSemester(recordToImport.semester),
+        formatWorkbookComparisonDate(recordToImport.date),
       ],
     );
 
@@ -7328,7 +7818,7 @@ app.post("/api/archive/violations/:id/import", async (req, res) => {
         studentId,
         null, // violation_catalog_id - no linked violation
         recordToImport.violationLabel || "",
-        recordToImport.typeLabel || "",
+        "",
         "IMPORTED", // remarks - mark as imported
         "", // signature_image - no signature for workbook records
         null, // signature_updated_at
@@ -7446,10 +7936,8 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
         continue;
       }
 
-      const dateValue = new Date(record.date);
-      const archivedAt = Number.isNaN(dateValue.getTime())
-        ? new Date().toISOString()
-        : dateValue.toISOString();
+      const archivedAt =
+        toArchiveTimestamp(record.date) || new Date().toISOString();
 
       const studentId =
         (await resolveWorkbookStudentId(pool, record.studentName)) ||
@@ -7466,7 +7954,7 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
           studentId,
           null,
           record.violationLabel || "",
-          record.typeLabel || "",
+          "",
           "IMPORTED",
           "",
           null,
@@ -7565,6 +8053,13 @@ app.delete("/api/archive/violations/:id", async (req, res) => {
       message: "Archived violation deleted.",
     });
   } catch (error) {
+    if (isWorkbookBusyError(error)) {
+      return res.status(423).json({
+        status: "error",
+        message:
+          "ViolationRecords1.xlsx is currently in use. Close the file and try deleting again.",
+      });
+    }
     console.error("Error deleting archived violation:", error);
     return res.status(503).json({
       status: "error",

@@ -57,18 +57,26 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
         });
       } else if (editType === "violation") {
         // For archived violations - extract student name from JSX
-        const studentName = record.studentName?.props?.children?.[0]?.props?.children || "";
-        const schoolId = record.studentName?.props?.children?.[1]?.props?.children || "";
+        const studentName =
+          record.studentName?.props?.children?.[0]?.props?.children ||
+          record.student_name ||
+          "";
+        const nameParts = extractNameFromFullName(studentName);
+        const schoolId =
+          record.studentName?.props?.children?.[1]?.props?.children ||
+          record.school_id ||
+          "";
         setFormData({
-          studentName: studentName,
+          firstName: nameParts.firstName || "",
+          lastName: nameParts.lastName || "",
           schoolId: schoolId,
           yearSection: record.yearSection || "",
           violation: record.violation || "",
           type: record.type || "",
-          reportedBy: record.reportedBy || "-",
-          remarks: record.remarks || "-",
-          semester: record.semester || "1ST SEM",
-          schoolYear: record.schoolYear || "2025-2026",
+          reportedBy: record.reportedBy || "",
+          remarks: record.remarks || "",
+          semester: record.semester || "",
+          schoolYear: record.schoolYear || record.school_year || "",
         });
       }
     }
@@ -79,7 +87,7 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
@@ -92,15 +100,17 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
           program: formData.program?.trim() || "",
           yearSection: formData.yearSection?.trim() || "",
         };
-        onSave(record.id, updatedRecord);
+        await onSave(record.id, updatedRecord);
       } else if (editType === "violation") {
         const updatedRecord = {
           remarks: formData.remarks?.trim() || "",
           reportedBy: formData.reportedBy?.trim() || "",
-          semester: formData.semester?.trim() || "1ST SEM",
-          schoolYear: formData.schoolYear?.trim() || "2025-2026",
+          semester: formData.semester?.trim() || "",
+          schoolYear: formData.schoolYear?.trim() || "",
+          firstName: formData.firstName?.trim() || "",
+          lastName: formData.lastName?.trim() || "",
         };
-        onSave(record.id, updatedRecord);
+        await onSave(record.id, updatedRecord);
       }
     } catch (err) {
       setError(err.message || "Failed to save changes");
@@ -192,13 +202,21 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <GlassInput
-                label={<span className="text-sm font-medium text-white mb-2">Student Name</span>}
-                name="studentName"
-                value={formData.studentName}
+                label={<span className="text-sm font-medium text-white mb-2">First Name</span>}
+                name="firstName"
+                value={formData.firstName}
                 onChange={handleChange}
-                placeholder="Student Name"
-                disabled
+                placeholder="First Name"
               />
+              <GlassInput
+                label={<span className="text-sm font-medium text-white mb-2">Last Name</span>}
+                name="lastName"
+                value={formData.lastName}
+                onChange={handleChange}
+                placeholder="Last Name"
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">School ID</span>}
                 name="schoolId"
@@ -207,8 +225,6 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
                 placeholder="School ID"
                 disabled
               />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">Program-Year/Section</span>}
                 name="yearSection"
@@ -217,6 +233,8 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
                 placeholder="Program-Year/Section"
                 disabled
               />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">Violation</span>}
                 name="violation"
@@ -252,6 +270,7 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
                   onChange={handleChange}
                   className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] focus:outline-none focus:border-white/20 transition-all"
                 >
+                  <option value="">Select semester</option>
                   <option value="1ST SEM">1ST SEM</option>
                   <option value="2ND SEM">2ND SEM</option>
                   <option value="SUMMER">SUMMER</option>

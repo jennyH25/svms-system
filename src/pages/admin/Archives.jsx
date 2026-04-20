@@ -157,6 +157,59 @@ const formatProgramYearSection = (program, yearSection) => {
   return programText || yearSectionText || '';
 };
 
+const formatDisplayName = (firstName, lastName, fullName) => {
+  const first = String(firstName || "").trim();
+  const last = String(lastName || "").trim();
+  if (first && last) {
+    return `${first} ${last}`;
+  }
+
+  const combined = String(fullName || "").trim();
+  if (!combined) return "-";
+
+  if (combined.includes(",")) {
+    const [left, ...right] = combined.split(",");
+    const lastPart = String(left || "").trim();
+    const firstPart = right.join(",").trim();
+    const reordered = `${firstPart} ${lastPart}`.trim();
+    return reordered || combined;
+  }
+
+  return combined.replace(/\s+/g, " ").trim();
+};
+
+const isLikelyViolationTypeLabel = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  return /^(minor|major)\s*-\s*.+/i.test(text);
+};
+
+const buildViolationTypeAndReporter = (violation) => {
+  const category = String(violation?.violation_category || "").trim();
+  const degree = String(violation?.violation_degree || "").trim();
+  const explicitType = String(violation?.violation_type_label || "").trim();
+  const reportedByRaw = String(violation?.reported_by || "").trim();
+  const isImportedRecord =
+    String(violation?.remarks || "").trim().toUpperCase() === "IMPORTED" ||
+    Boolean(violation?.isHistoricalWorkbook) ||
+    String(violation?.sourceType || "").trim().toLowerCase() === "workbook";
+
+  const type =
+    category && degree
+      ? `${category} - ${degree}`
+      : explicitType ||
+        (isLikelyViolationTypeLabel(reportedByRaw) ? reportedByRaw : "-");
+
+  const reportedBy =
+    reportedByRaw && !isLikelyViolationTypeLabel(reportedByRaw)
+      ? reportedByRaw
+      : isImportedRecord
+        ? ""
+        : "-";
+
+  return { type, reportedBy };
+};
+
 const Archives = () => {
   const [activeFolder, setActiveFolder] = useState("users");
   const [activeSemester, setActiveSemester] = useState("1ST SEM");
@@ -627,18 +680,20 @@ const Archives = () => {
           body: JSON.stringify(updatedRecord),
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          setArchivedUsers((prev) =>
-            prev.map((u) => (u.id === id ? data.user : u)),
-          );
-          setIsEditOpen(false);
-          setSelectedRow(null);
-        } else {
-          const data = await response.json();
-          setError(data.message || "Failed to save changes");
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.status === "error") {
+          throw new Error(data.message || "Failed to save archived user changes");
         }
-      } else if (editType === "violation") {
+
+        setArchivedUsers((prev) =>
+          prev.map((u) => (u.id === id ? data.user : u)),
+        );
+        setIsEditOpen(false);
+        setSelectedRow(null);
+        return data.user;
+      }
+
+      if (editType === "violation") {
         const response = await fetch(`/api/archive/violations/${id}`, {
           method: "PUT",
           headers: {
@@ -648,20 +703,54 @@ const Archives = () => {
           body: JSON.stringify(updatedRecord),
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          setArchivedViolations((prev) =>
-            prev.map((v) => (v.id === id ? data.violation : v)),
-          );
-          setIsEditOpen(false);
-          setSelectedRow(null);
-        } else {
-          const data = await response.json();
-          setError(data.message || "Failed to save changes");
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.status === "error") {
+          throw new Error(data.message || "Failed to save archived violation changes");
         }
+
+        const updatedViolation = data.violation || {};
+        const movedOutOfCurrentView =
+          activeFolder !== "users" &&
+          ((activeFolder !== "unresolved" &&
+            updatedViolation.school_year &&
+            updatedViolation.semester &&
+            (String(updatedViolation.school_year) !== String(activeFolder) ||
+              String(updatedViolation.semester) !== String(activeSemester))) ||
+            (activeFolder === "unresolved" &&
+              updatedViolation.school_year &&
+              updatedViolation.semester &&
+              (String(updatedViolation.school_year) !== String(selectedUnresolvedYear || "") ||
+                String(updatedViolation.semester) !== String(activeSemester))));
+
+        if (movedOutOfCurrentView) {
+          setArchivedViolations((prev) => prev.filter((v) => v.id !== id));
+        } else {
+          setArchivedViolations((prev) =>
+            prev.map((v) =>
+              v.id === id
+                ? {
+                    ...v,
+                    ...updatedViolation,
+                  }
+                : v,
+            ),
+          );
+        }
+
+        // Invalidate global caches so next global search reflects DB edits.
+        setAllArchivedViolations([]);
+        setAllUnresolvedViolations([]);
+
+        setIsEditOpen(false);
+        setSelectedRow(null);
+        return data.violation;
       }
+
+      throw new Error("Unsupported edit type");
     } catch (err) {
-      setError("Error saving edit: " + err.message);
+      const message = "Error saving edit: " + err.message;
+      setError(message);
+      throw new Error(err.message || "Failed to save changes");
     }
   };
 
@@ -805,15 +894,22 @@ const Archives = () => {
     if (!isGlobalSearch) {
       // Current folder-only search
       if (activeFolder === "users") {
-        return archivedUsers.map((user) => ({
+        return archivedUsers.map((user) => {
+          const formattedFullName = formatDisplayName(
+            user.first_name,
+            user.last_name,
+            user.full_name,
+          );
+
+          return {
           id: user.id,
           no: "",
-          full_name: user.full_name,
+          full_name: formattedFullName,
           firstName: user.first_name || "",
           lastName: user.last_name || "",
           name: (
             <div>
-              <div className="font-semibold">{user.full_name}</div>
+              <div className="font-semibold">{formattedFullName}</div>
               <div className="text-xs text-gray-400">{user.school_id}</div>
             </div>
           ),
@@ -836,8 +932,9 @@ const Archives = () => {
           folderKey: "users",
           recordType: "user",
           sourceType: "archive",
-          searchableText: `${user.full_name || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${user.year_section || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
-        }));
+          searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${user.year_section || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
+          };
+        });
       } else {
         return archivedViolations.map((violation) => {
           const preservedYearSection =
@@ -846,31 +943,40 @@ const Archives = () => {
             violation.program,
             preservedYearSection,
           );
+          const formattedStudentName = formatDisplayName(
+            violation.first_name,
+            violation.last_name,
+            violation.student_name,
+          );
+          const { type, reportedBy } = buildViolationTypeAndReporter(violation);
 
           return {
             id: violation.id,
             no: "",
             studentName: (
               <div>
-                <div className="font-semibold">{violation.student_name}</div>
+                <div className="font-semibold">{formattedStudentName}</div>
                 <div className="text-xs text-gray-400">{violation.school_id}</div>
               </div>
             ),
             yearSection: combinedYearSection,
             program: violation.program || '',
             violation: violation.violation_label,
-            type:
-              violation.violation_category && violation.violation_degree
-                ? `${violation.violation_category} - ${violation.violation_degree}`
-                : "-",
+            type,
             violationCategory: violation.violation_category || "",
             violationDegree: violation.violation_degree || "",
-            reportedBy: violation.reported_by || "-",
+            reportedBy,
             remarks: violation.remarks || "-",
             signature: violation.signature_image ? "Signed" : "No Signature",
             signatureImage: violation.signature_image,
             date: formatDate(violation.archived_at),
             archivedAt: violation.archived_at,
+            semester: violation.semester || activeSemester,
+            schoolYear:
+              violation.school_year ||
+              (activeFolder === "unresolved"
+                ? selectedUnresolvedYear || ""
+                : activeFolder),
             violationId: violation.id,
             folder: activeFolder === "unresolved" ? `UNRESOLVED` : `S.Y. ${activeFolder}`,
             folderKey:
@@ -881,7 +987,7 @@ const Archives = () => {
             recordType: "violation",
             sourceType: violation.sourceType || (violation.isHistoricalWorkbook ? "workbook" : "archive"),
             isHistoricalWorkbook: Boolean(violation.isHistoricalWorkbook),
-            searchableText: `${violation.student_name || ""} ${violation.school_id || ""} ${combinedYearSection || preservedYearSection || violation.year_section || ""} ${violation.violation_label || ""} ${violation.violation_category || ""} ${violation.violation_degree || ""} ${violation.reported_by || ""} ${violation.remarks || ""}`.toLowerCase(),
+            searchableText: `${formattedStudentName || ""} ${violation.school_id || ""} ${combinedYearSection || preservedYearSection || violation.year_section || ""} ${violation.violation_label || ""} ${violation.violation_category || ""} ${violation.violation_degree || ""} ${reportedBy || ""} ${violation.remarks || ""}`.toLowerCase(),
           };
         });
       }
@@ -891,8 +997,13 @@ const Archives = () => {
 
       // Add users from USERS folder, only real entries
       archivedUsers.forEach((user) => {
+        const formattedFullName = formatDisplayName(
+          user.first_name,
+          user.last_name,
+          user.full_name,
+        );
         const hasUser =
-          (user.full_name && user.full_name.trim()) ||
+          (formattedFullName && formattedFullName.trim() && formattedFullName !== "-") ||
           (user.school_id && user.school_id.trim()) ||
           (user.email && user.email.trim());
         if (!hasUser) return;
@@ -900,12 +1011,12 @@ const Archives = () => {
         allData.push({
           id: user.id,
           no: "",
-          full_name: user.full_name,
+          full_name: formattedFullName,
           firstName: user.first_name || "",
           lastName: user.last_name || "",
           name: (
             <div>
-              <div className="font-semibold">{user.full_name}</div>
+              <div className="font-semibold">{formattedFullName}</div>
               <div className="text-xs text-gray-400">{user.school_id}</div>
             </div>
           ),
@@ -929,15 +1040,21 @@ const Archives = () => {
           recordType: "user",
           sourceType: "archive",
           // Add searchable text for global search
-          searchableText: `${user.full_name || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${user.year_section || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
+          searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${user.year_section || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
         });
       });
 
       // Add violations from all school years only if data is loaded
       if (allArchivedViolations.length > 0) {
         allArchivedViolations.forEach((violation) => {
+          const formattedStudentName = formatDisplayName(
+            violation.first_name,
+            violation.last_name,
+            violation.student_name,
+          );
+          const { type, reportedBy } = buildViolationTypeAndReporter(violation);
           const hasViolation =
-            (violation.student_name && violation.student_name.trim()) ||
+            (formattedStudentName && formattedStudentName.trim() && formattedStudentName !== "-") ||
             (violation.school_id && violation.school_id.trim());
           if (!hasViolation) return;
 
@@ -946,25 +1063,24 @@ const Archives = () => {
             no: "",
             studentName: (
               <div>
-                <div className="font-semibold">{violation.student_name}</div>
+                <div className="font-semibold">{formattedStudentName}</div>
                 <div className="text-xs text-gray-400">{violation.school_id}</div>
               </div>
             ),
             yearSection: formatProgramYearSection(violation.program, violation.year_section),
             program: violation.program || '',
             violation: violation.violation_label,
-            type:
-              violation.violation_category && violation.violation_degree
-                ? `${violation.violation_category} - ${violation.violation_degree}`
-                : "-",
+            type,
             violationCategory: violation.violation_category || "",
             violationDegree: violation.violation_degree || "",
-            reportedBy: violation.reported_by || "-",
+            reportedBy,
             remarks: violation.remarks || "-",
             signature: violation.signature_image ? "Signed" : "No Signature",
             signatureImage: violation.signature_image,
             date: formatDate(violation.archived_at),
             archivedAt: violation.archived_at,
+            semester: violation.semester || "",
+            schoolYear: violation.school_year || "",
             violationId: violation.id,
             folder: `S.Y. ${violation.school_year}`,
             folderKey: violation.school_year,
@@ -972,7 +1088,7 @@ const Archives = () => {
             sourceType: violation.sourceType || (violation.isHistoricalWorkbook ? "workbook" : "archive"),
             isHistoricalWorkbook: Boolean(violation.isHistoricalWorkbook),
             // Add searchable text for global search
-            searchableText: `${violation.student_name || ""} ${violation.school_id || ""} ${formatProgramYearSection(violation.program, violation.year_section) || ""} ${violation.violation_label || ""} ${violation.violation_category || ""} ${violation.violation_degree || ""} ${violation.reported_by || ""} ${violation.remarks || ""}`.toLowerCase(),
+            searchableText: `${formattedStudentName || ""} ${violation.school_id || ""} ${formatProgramYearSection(violation.program, violation.year_section) || ""} ${violation.violation_label || ""} ${violation.violation_category || ""} ${violation.violation_degree || ""} ${reportedBy || ""} ${violation.remarks || ""}`.toLowerCase(),
           });
         });
       }
@@ -980,8 +1096,14 @@ const Archives = () => {
       // Add unresolved violations in global search
       if (allUnresolvedViolations.length > 0) {
         allUnresolvedViolations.forEach((violation) => {
+          const formattedStudentName = formatDisplayName(
+            violation.first_name,
+            violation.last_name,
+            violation.student_name,
+          );
+          const { type, reportedBy } = buildViolationTypeAndReporter(violation);
           const hasViolation =
-            (violation.student_name && violation.student_name.trim()) ||
+            (formattedStudentName && formattedStudentName.trim() && formattedStudentName !== "-") ||
             (violation.school_id && violation.school_id.trim());
           if (!hasViolation) return;
 
@@ -990,25 +1112,24 @@ const Archives = () => {
             no: "",
             studentName: (
               <div>
-                <div className="font-semibold">{violation.student_name}</div>
+                <div className="font-semibold">{formattedStudentName}</div>
                 <div className="text-xs text-gray-400">{violation.school_id}</div>
               </div>
             ),
             yearSection: formatProgramYearSection(violation.program, violation.year_section),
             program: violation.program || '',
             violation: violation.violation_label,
-            type:
-              violation.violation_category && violation.violation_degree
-                ? `${violation.violation_category} - ${violation.violation_degree}`
-                : "-",
+            type,
             violationCategory: violation.violation_category || "",
             violationDegree: violation.violation_degree || "",
-            reportedBy: violation.reported_by || "-",
+            reportedBy,
             remarks: violation.remarks || "-",
             signature: violation.signature_image ? "Signed" : "No Signature",
             signatureImage: violation.signature_image,
             date: formatDate(violation.archived_at),
             archivedAt: violation.archived_at,
+            semester: violation.semester || "",
+            schoolYear: violation.school_year || "",
             violationId: violation.id,
             folder: `UNRESOLVED S.Y. ${violation.school_year}`,
             folderKey: `unresolved-${violation.school_year}`,
@@ -1017,9 +1138,8 @@ const Archives = () => {
             sourceType: violation.sourceType || (violation.isHistoricalWorkbook ? "workbook" : "archive"),
             isHistoricalWorkbook: Boolean(violation.isHistoricalWorkbook),
             isUnresolved: true,
-            schoolYear: violation.school_year,
             // Add searchable text for global search
-            searchableText: `${violation.student_name || ""} ${violation.school_id || ""} ${formatProgramYearSection(violation.program, violation.year_section) || ""} ${violation.violation_label || ""} ${violation.violation_category || ""} ${violation.violation_degree || ""} ${violation.reported_by || ""} ${violation.remarks || ""}`.toLowerCase(),
+            searchableText: `${formattedStudentName || ""} ${violation.school_id || ""} ${formatProgramYearSection(violation.program, violation.year_section) || ""} ${violation.violation_label || ""} ${violation.violation_category || ""} ${violation.violation_degree || ""} ${reportedBy || ""} ${violation.remarks || ""}`.toLowerCase(),
           });
         });
       }
@@ -1672,9 +1792,19 @@ const Archives = () => {
       }
 
       setArchivedViolations((items) => items.filter((item) => item.id !== archivedViolationToDelete.id));
+      setAllArchivedViolations([]);
+      setAllUnresolvedViolations([]);
       setIsDeleteArchivedViolationModalOpen(false);
       setArchivedViolationToDelete(null);
     } catch (err) {
+      if (String(err.message || "").toLowerCase().includes("not found")) {
+        setArchivedViolations((items) => items.filter((item) => item.id !== archivedViolationToDelete.id));
+        setAllArchivedViolations([]);
+        setAllUnresolvedViolations([]);
+        setIsDeleteArchivedViolationModalOpen(false);
+        setArchivedViolationToDelete(null);
+        return;
+      }
       setError(err.message || "Unable to delete record.");
     } finally {
       setIsLoading(false);
