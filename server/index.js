@@ -356,6 +356,19 @@ function parseCellDate(rawValue) {
     .replace(/\/+/, "/")
     .replace(/\/{2,}/g, "/")
     .replace(/\s+/g, " ");
+
+  const dmyMatch = normalizedText.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmyMatch) {
+    const firstPart = Number(dmyMatch[1]);
+    const secondPart = Number(dmyMatch[2]);
+    const yearPart = Number(dmyMatch[3]);
+
+    const day = firstPart > 12 ? firstPart : secondPart;
+    const month = firstPart > 12 ? secondPart : firstPart;
+    const parsed = new Date(Date.UTC(yearPart, month - 1, day));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
   const parsed = new Date(normalizedText);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
@@ -383,22 +396,198 @@ function normalizeWorkbookText(value) {
     .trim();
 }
 
+function normalizeWorkbookComparisonText(value) {
+  return normalizeWorkbookText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatWorkbookComparisonDate(value) {
+  const parsedDate = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "";
+  }
+
+  return parsedDate.toISOString().slice(0, 10);
+}
+
+function buildWorkbookImportKey(record) {
+  return [
+    normalizeWorkbookComparisonText(record.studentName || record.student_name),
+    normalizeWorkbookComparisonText(
+      record.violationLabel || record.violation_label,
+    ),
+    normalizeWorkbookComparisonText(
+      record.typeLabel || record.reportedBy || record.reported_by,
+    ),
+    normalizeSemester(record.semester),
+    normalizeSchoolYear(record.schoolYear || record.school_year),
+    formatWorkbookComparisonDate(
+      record.date || record.original_created_at || record.archived_at,
+    ),
+  ].join("|");
+}
+
+async function resolveWorkbookStudentId(pool, studentName) {
+  const normalizedStudentName = normalizeWorkbookText(studentName);
+  if (!normalizedStudentName) {
+    return null;
+  }
+
+  const normalizedNoPunctuation = normalizeWorkbookComparisonText(
+    normalizedStudentName,
+  );
+  const commaMatch = normalizedStudentName.match(/^([^,]+),\s*(.+)$/);
+  const swappedName = commaMatch
+    ? normalizeWorkbookComparisonText(`${commaMatch[2]} ${commaMatch[1]}`)
+    : "";
+  const compactName = normalizedNoPunctuation.replace(/\s+/g, "");
+
+  const result = await pool.query(
+    `SELECT id
+     FROM "Students"
+     WHERE REGEXP_REPLACE(LOWER(TRIM(full_name)), '[^a-z0-9]+', ' ', 'g') = REGEXP_REPLACE(LOWER(TRIM($1)), '[^a-z0-9]+', ' ', 'g')
+        OR REGEXP_REPLACE(LOWER(TRIM(full_name)), '[^a-z0-9]+', ' ', 'g') = $2
+        OR REGEXP_REPLACE(LOWER(TRIM(full_name)), '[^a-z0-9]+', ' ', 'g') = $3
+        OR REGEXP_REPLACE(LOWER(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')))), '[^a-z0-9]+', ' ', 'g') = REGEXP_REPLACE(LOWER(TRIM($1)), '[^a-z0-9]+', ' ', 'g')
+        OR REGEXP_REPLACE(LOWER(TRIM(CONCAT(COALESCE(last_name, ''), ' ', COALESCE(first_name, '')))), '[^a-z0-9]+', ' ', 'g') = REGEXP_REPLACE(LOWER(TRIM($1)), '[^a-z0-9]+', ' ', 'g')
+     LIMIT 1`,
+    [
+      normalizedStudentName,
+      normalizedNoPunctuation,
+      swappedName || compactName,
+    ],
+  );
+
+  return result.rows?.[0]?.id || null;
+}
+
+function splitWorkbookStudentName(studentName) {
+  const normalizedStudentName = normalizeWorkbookText(studentName);
+  if (!normalizedStudentName) {
+    return {
+      firstName: "Historical",
+      lastName: "Student",
+      fullName: "Historical Student",
+    };
+  }
+
+  const commaMatch = normalizedStudentName.match(/^([^,]+),\s*(.+)$/);
+  if (commaMatch) {
+    return {
+      lastName: normalizeWorkbookText(commaMatch[1]) || "Historical",
+      firstName: normalizeWorkbookText(commaMatch[2]) || "Student",
+      fullName: normalizedStudentName,
+    };
+  }
+
+  const parts = normalizedStudentName.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return {
+      firstName: parts[0],
+      lastName: "Student",
+      fullName: normalizedStudentName,
+    };
+  }
+
+  return {
+    firstName: parts.slice(0, -1).join(" "),
+    lastName: parts[parts.length - 1],
+    fullName: normalizedStudentName,
+  };
+}
+
+async function getOrCreateHistoricalWorkbookStudent(pool, record) {
+  const studentName = normalizeWorkbookText(record.studentName);
+  if (!studentName) {
+    throw new Error("Workbook row is missing a student name.");
+  }
+
+  const normalizedComparison = normalizeWorkbookComparisonText(studentName);
+  const normalizedNoSpaces = normalizedComparison.replace(/\s+/g, "");
+  const hashSource = normalizedComparison || studentName.toLowerCase();
+  const hash = crypto
+    .createHash("sha1")
+    .update(hashSource)
+    .digest("hex")
+    .slice(0, 10)
+    .toUpperCase();
+  const generatedEmail = `historical-${normalizedComparison.replace(/\s+/g, "-") || hash.toLowerCase()}@svms.local`;
+  const generatedSchoolId = `WB-${hash}`;
+
+  const existingStudent = await pool.query(
+    `SELECT id
+     FROM "Students"
+     WHERE REGEXP_REPLACE(LOWER(TRIM(full_name)), '[^a-z0-9]+', ' ', 'g') = REGEXP_REPLACE(LOWER(TRIM($1)), '[^a-z0-9]+', ' ', 'g')
+        OR REGEXP_REPLACE(LOWER(TRIM(full_name)), '[^a-z0-9]+', ' ', 'g') = $2
+        OR LOWER(email) = LOWER($3)
+        OR LOWER(school_id) = LOWER($4)
+     LIMIT 1`,
+    [studentName, normalizedNoSpaces, generatedEmail, generatedSchoolId],
+  );
+
+  if (existingStudent.rows?.[0]?.id) {
+    return existingStudent.rows[0].id;
+  }
+
+  const studentParts = splitWorkbookStudentName(studentName);
+  const programText = normalizeWorkbookText(record.program) || "Historical";
+  const yearSectionText =
+    normalizeWorkbookText(record.yearSection) || "Unknown";
+  const currentSemester = normalizeSemester(record.semester) || "1ST SEM";
+  const currentSchoolYear =
+    normalizeSchoolYear(record.schoolYear) || "2024-2025";
+
+  const insertResult = await pool.query(
+    `INSERT INTO "Students"
+     (user_id, email, school_id, first_name, last_name, full_name, program, year_section, year_level, status, violation_count, is_archived, archived_reason, original_status, current_semester, current_school_year)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, TRUE, $11, $12, $13, $14)
+     ON CONFLICT (email) DO UPDATE SET
+       full_name = EXCLUDED.full_name,
+       first_name = EXCLUDED.first_name,
+       last_name = EXCLUDED.last_name,
+       school_id = EXCLUDED.school_id,
+       program = EXCLUDED.program,
+       year_section = EXCLUDED.year_section,
+       archived_reason = EXCLUDED.archived_reason,
+       original_status = EXCLUDED.original_status,
+       current_semester = EXCLUDED.current_semester,
+       current_school_year = EXCLUDED.current_school_year
+     RETURNING id`,
+    [
+      null,
+      generatedEmail,
+      generatedSchoolId,
+      studentParts.firstName,
+      studentParts.lastName,
+      studentParts.fullName,
+      programText,
+      yearSectionText,
+      4,
+      "Graduated",
+      "Historical import",
+      "Historical",
+      currentSemester,
+      currentSchoolYear,
+    ],
+  );
+
+  return insertResult.rows?.[0]?.id || null;
+}
+
 function parseWorkbookTermHeader(rowValues) {
   const cells = rowValues
-    .slice(1, 6)
+    .slice(1)
     .map((value) => normalizeWorkbookText(value))
     .filter(Boolean);
 
-  if (cells.length < 3) {
+  if (cells.length === 0) {
     return null;
   }
 
-  const firstText = cells[0];
-  const allSame = cells.every((value) => value === firstText);
-  if (!allSame) {
-    return null;
-  }
-
+  const firstText = cells.join(" ");
   const semesterMatch = firstText.match(/(1st|2nd) semester/i);
   const schoolYearMatch = firstText.match(/s\.?y\.?\s*(\d{4})\s*-\s*(\d{4})/i);
 
@@ -473,7 +662,9 @@ async function loadHistoricalViolationRecordsFromWorkbook() {
     const fileInfo = await stat(HISTORICAL_VIOLATION_RECORDS_PATH);
     if (
       Number.isFinite(HISTORICAL_VIOLATION_CACHE.mtimeMs) &&
-      HISTORICAL_VIOLATION_CACHE.mtimeMs === fileInfo.mtimeMs
+      HISTORICAL_VIOLATION_CACHE.mtimeMs === fileInfo.mtimeMs &&
+      Array.isArray(HISTORICAL_VIOLATION_CACHE.records) &&
+      HISTORICAL_VIOLATION_CACHE.records.length > 0
     ) {
       return HISTORICAL_VIOLATION_CACHE.records;
     }
@@ -579,6 +770,27 @@ async function loadHistoricalViolationRecordsFromWorkbook() {
   }
 }
 
+async function getImportedWorkbookRecordKeys(pool, schoolYear, semester) {
+  const result = await pool.query(
+    `SELECT
+       sva.violation_label,
+       sva.reported_by,
+       sva.semester,
+       sva.school_year,
+       sva.original_created_at,
+       sva.archived_at,
+       s.full_name AS student_name
+     FROM student_violation_archives sva
+     LEFT JOIN "Students" s ON sva.student_id = s.id
+     WHERE sva.remarks = 'IMPORTED'
+       AND sva.school_year = $1
+       AND sva.semester = $2`,
+    [normalizeSchoolYear(schoolYear), normalizeSemester(semester)],
+  );
+
+  return new Set((result.rows || []).map((row) => buildWorkbookImportKey(row)));
+}
+
 async function deleteHistoricalWorkbookRecordById(workbookId) {
   if (typeof workbookId !== "string" || !workbookId.startsWith("wb-")) {
     return false;
@@ -611,7 +823,9 @@ async function deleteHistoricalWorkbookRecordById(workbookId) {
     const headerRow = worksheet.getRow(1);
     const headerMap = {};
     headerRow.eachCell((cell, colNumber) => {
-      const headerText = String(cell.value || "").trim().toUpperCase();
+      const headerText = String(cell.value || "")
+        .trim()
+        .toUpperCase();
       if (headerText) {
         headerMap[headerText] = colNumber;
       }
@@ -679,6 +893,82 @@ async function deleteHistoricalWorkbookRecordById(workbookId) {
   } catch (error) {
     console.error("Failed to delete historical workbook record:", error);
     return false;
+  }
+}
+
+async function deleteHistoricalWorkbookRecordsBySchoolYear(schoolYear) {
+  try {
+    const excelModule = await import("exceljs");
+    const ExcelJS = excelModule.default || excelModule;
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+    const worksheet = workbook.worksheets?.[0];
+    if (!worksheet) {
+      return 0; // No workbook records
+    }
+
+    const headerRow = worksheet.getRow(1);
+    const headerMap = {};
+    headerRow.eachCell((cell, colNumber) => {
+      const headerText = String(cell.value || "")
+        .trim()
+        .toUpperCase();
+      if (headerText) {
+        headerMap[headerText] = colNumber;
+      }
+    });
+
+    const dateColumn = headerMap.DATE;
+    if (!dateColumn) {
+      return 0;
+    }
+
+    let currentSemester = "";
+    let currentSchoolYear = "";
+    let deletedCount = 0;
+    const rowsToDelete = [];
+
+    // Collect all rows to delete for this school year
+    for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+      const row = worksheet.getRow(rowNumber);
+      const rowValues = row.values;
+      const termHeader = parseWorkbookTermHeader(rowValues);
+      if (termHeader) {
+        currentSemester = termHeader.semester;
+        currentSchoolYear = termHeader.schoolYear;
+        continue;
+      }
+
+      const dateValue = parseCellDate(row.getCell(dateColumn).value);
+      if (!dateValue) {
+        continue;
+      }
+
+      const normalizedSchoolYear = normalizeSchoolYear(currentSchoolYear);
+      if (normalizeSchoolYear(schoolYear) === normalizedSchoolYear) {
+        rowsToDelete.push(rowNumber);
+      }
+    }
+
+    // Delete rows in reverse order to maintain row numbers
+    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+      worksheet.spliceRows(rowsToDelete[i], 1);
+      deletedCount++;
+    }
+
+    if (deletedCount > 0) {
+      await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+      HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
+      HISTORICAL_VIOLATION_CACHE.records = [];
+    }
+
+    return deletedCount;
+  } catch (error) {
+    console.error(
+      "Failed to delete historical workbook records by school year:",
+      error,
+    );
+    return 0;
   }
 }
 
@@ -5312,7 +5602,14 @@ async function checkAndAutoPromoteStudent(
              current_school_year = $4,
              last_promoted_school_year = $5
          WHERE id = $6`,
-        [nextYear, nextYearSection, nextSemester, nextSchoolYear, sourceSchoolYear, studentId],
+        [
+          nextYear,
+          nextYearSection,
+          nextSemester,
+          nextSchoolYear,
+          sourceSchoolYear,
+          studentId,
+        ],
       );
       action = "promoted";
       promoted = true;
@@ -5352,7 +5649,13 @@ async function checkAndAutoPromoteStudent(
                current_school_year = $3,
                last_promoted_school_year = $4
            WHERE id = $5`,
-          [nextYearSection, nextSemester, nextSchoolYear, sourceSchoolYear, studentId],
+          [
+            nextYearSection,
+            nextSemester,
+            nextSchoolYear,
+            sourceSchoolYear,
+            studentId,
+          ],
         );
         action = "promoted";
         promoted = true;
@@ -6056,17 +6359,6 @@ app.get("/api/archive/unresolved-school-years", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
-    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
-    const workbookUnresolvedSchoolYears = new Set();
-    workbookRecords.forEach((record) => {
-      if (
-        normalizeSemester(record.semester) &&
-        normalizeSchoolYear(record.schoolYear)
-      ) {
-        // Historical workbook rows are resolved archive data only.
-      }
-    });
-
     const result = await pool.query(
       `SELECT DISTINCT school_year
        FROM student_violation_archives
@@ -6080,9 +6372,7 @@ app.get("/api/archive/unresolved-school-years", async (req, res) => {
 
     return res.status(200).json({
       status: "ok",
-      schoolYears: Array.from(
-        new Set([...schoolYears, ...workbookUnresolvedSchoolYears]),
-      ).sort((left, right) => right.localeCompare(left)),
+      schoolYears: schoolYears.sort((left, right) => right.localeCompare(left)),
     });
   } catch (error) {
     console.error("Error fetching unresolved school years:", error);
@@ -6116,6 +6406,11 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
     const pool = getDbPool();
 
     const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+    const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
+      pool,
+      schoolYear,
+      semester,
+    );
 
     const result = await pool.query(
       `SELECT 
@@ -6161,7 +6456,8 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
         (record) =>
           normalizeSchoolYear(record.schoolYear) ===
             normalizeSchoolYear(schoolYear) &&
-          normalizeSemester(record.semester) === normalizeSemester(semester),
+          normalizeSemester(record.semester) === normalizeSemester(semester) &&
+          !importedWorkbookKeys.has(buildWorkbookImportKey(record)),
       )
       .map((record, index) => mapWorkbookRecordToArchiveRow(record, index));
 
@@ -6225,8 +6521,6 @@ app.get("/api/archive/school-years", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
-    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
-
     // Get distinct school years from the archive table
     // Only return years that have actual archived data
     const result = await pool.query(
@@ -6240,14 +6534,6 @@ app.get("/api/archive/school-years", async (req, res) => {
       .map((row) => row.school_year)
       .filter((sy) => sy);
 
-    const workbookSchoolYears = Array.from(
-      new Set(
-        workbookRecords
-          .map((record) => normalizeSchoolYear(record.schoolYear))
-          .filter(Boolean),
-      ),
-    );
-
     const settingsResult = await pool.query(
       `
       SELECT current_school_year
@@ -6260,11 +6546,7 @@ app.get("/api/archive/school-years", async (req, res) => {
     const currentSchoolYear = String(settings.current_school_year || "").trim();
 
     const combinedYears = Array.from(
-      new Set(
-        [...schoolYears, ...workbookSchoolYears, currentSchoolYear].filter(
-          Boolean,
-        ),
-      ),
+      new Set([...schoolYears, currentSchoolYear].filter(Boolean)),
     ).sort((left, right) => right.localeCompare(left));
 
     return res.status(200).json({
@@ -6302,38 +6584,41 @@ app.delete("/api/archive/school-years/:schoolYear", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
-    // Check if school year exists and has violations
+    // Check if school year exists in database
     const checkResult = await pool.query(
       `SELECT COUNT(*) as count FROM student_violation_archives WHERE school_year = $1`,
       [schoolYear],
     );
 
-    const violationCount = parseInt(checkResult.rows[0].count);
+    const databaseViolationCount = parseInt(checkResult.rows[0].count);
 
-    if (violationCount === 0) {
-      return res.status(404).json({
-        status: "error",
-        message: `School year ${schoolYear} not found or has no archived violations.`,
-      });
+    // Delete all archived violations for this school year from database only.
+    // The workbook remains the import source and is never mutated by folder deletion.
+    if (databaseViolationCount > 0) {
+      await pool.query(
+        `DELETE FROM student_violation_archives WHERE school_year = $1`,
+        [schoolYear],
+      );
     }
 
-    // Delete all archived violations for this school year
-    await pool.query(
-      `DELETE FROM student_violation_archives WHERE school_year = $1`,
-      [schoolYear],
-    );
+    if (databaseViolationCount === 0) {
+      return res.status(200).json({
+        status: "ok",
+        message: `School year ${schoolYear} has no database archive records. Workbook source remains unchanged.`,
+      });
+    }
 
     // Log the audit event
     await logAuditEvent(req, {
       action: "DELETE_SCHOOL_YEAR",
       targetType: "ARCHIVE_SCHOOL_YEAR",
       targetId: schoolYear,
-      details: `Deleted school year ${schoolYear} with ${violationCount} archived violations`,
+      details: `Deleted school year ${schoolYear} with ${databaseViolationCount} database violations`,
     });
 
     return res.status(200).json({
       status: "ok",
-      message: `Successfully deleted school year ${schoolYear} and ${violationCount} archived violations.`,
+      message: `Successfully deleted school year ${schoolYear} (${databaseViolationCount} database records).`,
     });
   } catch (error) {
     console.error("Error deleting school year:", error);
@@ -6831,6 +7116,319 @@ app.put("/api/archive/violations/:id", async (req, res) => {
   }
 });
 
+// IMPORT workbook record into database archive
+app.post("/api/archive/violations/:id/import", async (req, res) => {
+  const { id } = req.params;
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  // Only allow importing workbook records
+  if (typeof id !== "string" || !id.startsWith("wb-")) {
+    return res.status(400).json({
+      status: "error",
+      message:
+        "Only workbook records can be imported. This appears to be a database record.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    // Parse workbook ID: wb-YYYY-YYYY-SEMESTER-index
+    const chunks = id.split("-");
+    if (chunks.length < 5) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid workbook record ID format.",
+      });
+    }
+
+    const indexString = chunks.pop();
+    const index = Number(indexString);
+    if (!Number.isFinite(index) || index < 0) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid workbook record index.",
+      });
+    }
+
+    const schoolYear = `${chunks[1]}-${chunks[2]}`;
+    const semester = chunks.slice(3).join("-");
+
+    // Load workbook records to find the one to import
+    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+    const filteredRecords = workbookRecords.filter(
+      (record) =>
+        normalizeSchoolYear(record.schoolYear) ===
+          normalizeSchoolYear(schoolYear) &&
+        normalizeSemester(record.semester) === normalizeSemester(semester),
+    );
+
+    if (index >= filteredRecords.length) {
+      return res.status(404).json({
+        status: "error",
+        message: "Workbook record not found.",
+      });
+    }
+
+    const recordToImport = filteredRecords[index];
+    const dateValue = new Date(recordToImport.date);
+    const archivedAt = Number.isNaN(dateValue.getTime())
+      ? new Date().toISOString()
+      : dateValue.toISOString();
+
+    let studentId = await resolveWorkbookStudentId(
+      pool,
+      recordToImport.studentName,
+    );
+    if (!studentId) {
+      studentId = await getOrCreateHistoricalWorkbookStudent(
+        pool,
+        recordToImport,
+      );
+    }
+
+    const { category, degree, label } = parseWorkbookTypeLabel(
+      recordToImport.typeLabel,
+    );
+
+    // Check for duplicates based on student name, violation label, school year, and semester
+    const duplicateCheck = await pool.query(
+      `SELECT id FROM student_violation_archives 
+       WHERE student_id = $1 
+       AND violation_label = $2
+       AND COALESCE(reported_by, '') = $3
+       AND school_year = $4
+       AND semester = $5
+       AND remarks = 'IMPORTED'
+       AND is_unresolved = FALSE
+       LIMIT 1`,
+      [
+        studentId,
+        recordToImport.violationLabel || "",
+        recordToImport.typeLabel || "",
+        normalizeSchoolYear(recordToImport.schoolYear),
+        normalizeSemester(recordToImport.semester),
+      ],
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      return res.status(409).json({
+        status: "error",
+        message:
+          "This record has already been imported. Duplicate records are not allowed.",
+      });
+    }
+
+    // Insert record into database
+    const insertResult = await pool.query(
+      `INSERT INTO student_violation_archives 
+       (student_id, violation_catalog_id, violation_label, reported_by, remarks, 
+        signature_image, signature_updated_at, semester, school_year, is_unresolved,
+        archived_by_user_id, archived_by_name, original_created_at, original_updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING id`,
+      [
+        studentId,
+        null, // violation_catalog_id - no linked violation
+        recordToImport.violationLabel || "",
+        recordToImport.typeLabel || "",
+        "IMPORTED", // remarks - mark as imported
+        "", // signature_image - no signature for workbook records
+        null, // signature_updated_at
+        normalizeSemester(recordToImport.semester),
+        normalizeSchoolYear(recordToImport.schoolYear),
+        false, // is_unresolved - import as resolved, not unresolved
+        req.user?.id || null,
+        req.user?.full_name || "System",
+        archivedAt,
+        archivedAt,
+      ],
+    );
+
+    if (!insertResult.rows?.[0]) {
+      return res.status(500).json({
+        status: "error",
+        message: "Failed to create database record.",
+      });
+    }
+
+    const importedRecordId = insertResult.rows[0].id;
+
+    // Keep workbook rows as the canonical source file; do not delete on import.
+
+    // Log audit event
+    await logAuditEvent(req, {
+      action: "IMPORT_WORKBOOK_VIOLATION",
+      targetType: "StudentViolation",
+      targetId: importedRecordId,
+      details: `Imported workbook record for student: ${recordToImport.studentName || "Unknown"}, violation: ${recordToImport.violationLabel || "Unknown"}`,
+    });
+
+    // Return the imported record with all details
+    const importedRecord = await pool.query(
+      `SELECT * FROM student_violation_archives WHERE id = $1`,
+      [importedRecordId],
+    );
+
+    return res.status(201).json({
+      status: "ok",
+      message: "Record imported successfully.",
+      violation: {
+        ...importedRecord.rows[0],
+        student_name: recordToImport.studentName || "",
+        school_id: recordToImport.schoolId || "",
+        program: recordToImport.program || "",
+        year_section: recordToImport.yearSection || "",
+        violation_category: category,
+        violation_degree: degree,
+      },
+    });
+  } catch (error) {
+    console.error("Error importing workbook record:", error);
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to import workbook record (${error.message}).`,
+    });
+  }
+});
+
+// CLEANUP and RE-IMPORT all workbook records (delete existing imported records, then re-import all)
+app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+
+    // Delete first from database so the re-import is clean and non-duplicated.
+    const cleanupResult = await pool.query(
+      `DELETE FROM student_violation_archives
+       WHERE remarks = 'IMPORTED'
+       RETURNING id`,
+    );
+
+    const cleanupCount = Array.isArray(cleanupResult.rows)
+      ? cleanupResult.rows.length
+      : 0;
+
+    // If workbook has no rows, treat as successful cleanup (no-op import), not a hard error.
+    if (!workbookRecords.length) {
+      await logAuditEvent(req, {
+        action: "CLEANUP_AND_REIMPORT_WORKBOOK",
+        targetType: "StudentViolation",
+        targetId: "BULK_WORKBOOK",
+        details: `Cleaned up ${cleanupCount} existing records. Workbook has no rows to import.`,
+      });
+
+      return res.status(200).json({
+        status: "ok",
+        message:
+          "Cleanup completed. No rows found in ViolationRecords1.xlsx to re-import.",
+        cleanupCount,
+        importCount: 0,
+        importedRecords: [],
+      });
+    }
+
+    let importCount = 0;
+    const importedRecords = [];
+
+    for (let index = 0; index < workbookRecords.length; index += 1) {
+      const record = workbookRecords[index];
+      const normalizedSemester = normalizeSemester(record.semester);
+      const normalizedSchoolYear = normalizeSchoolYear(record.schoolYear);
+
+      if (!normalizedSemester || !normalizedSchoolYear) {
+        continue;
+      }
+
+      const dateValue = new Date(record.date);
+      const archivedAt = Number.isNaN(dateValue.getTime())
+        ? new Date().toISOString()
+        : dateValue.toISOString();
+
+      const studentId =
+        (await resolveWorkbookStudentId(pool, record.studentName)) ||
+        (await getOrCreateHistoricalWorkbookStudent(pool, record));
+
+      const insertResult = await pool.query(
+        `INSERT INTO student_violation_archives 
+         (student_id, violation_catalog_id, violation_label, reported_by, remarks, 
+          signature_image, signature_updated_at, semester, school_year, is_unresolved,
+          archived_by_user_id, archived_by_name, original_created_at, original_updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         RETURNING id`,
+        [
+          studentId,
+          null,
+          record.violationLabel || "",
+          record.typeLabel || "",
+          "IMPORTED",
+          "",
+          null,
+          normalizedSemester,
+          normalizedSchoolYear,
+          false,
+          req.user?.id || null,
+          req.user?.full_name || "System",
+          archivedAt,
+          archivedAt,
+        ],
+      );
+
+      if (insertResult.rows?.[0]) {
+        importCount += 1;
+        importedRecords.push({
+          id: insertResult.rows[0].id,
+          studentName: record.studentName,
+          violationLabel: record.violationLabel,
+          semester: normalizedSemester,
+          schoolYear: normalizedSchoolYear,
+        });
+      }
+    }
+
+    // Log audit event
+    await logAuditEvent(req, {
+      action: "CLEANUP_AND_REIMPORT_WORKBOOK",
+      targetType: "StudentViolation",
+      targetId: "BULK_WORKBOOK",
+      details: `Cleaned up ${cleanupCount} existing records and imported ${importCount} workbook records`,
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      message: `Successfully cleaned up ${cleanupCount} existing records and imported ${importCount} workbook records.`,
+      cleanupCount,
+      importCount,
+      importedRecords,
+    });
+  } catch (error) {
+    console.error(
+      "Error cleaning up and re-importing workbook records:",
+      error,
+    );
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to cleanup and re-import workbook records (${error.message}).`,
+    });
+  }
+});
+
 // DELETE archived violation
 app.delete("/api/archive/violations/:id", async (req, res) => {
   const { id } = req.params;
@@ -6911,32 +7509,32 @@ async function ensureAuthDatabaseReady() {
     const runFullSynchronization = async () => {
       // Group 1: Run base table syncs sequentially with small delays to avoid connection pool exhaustion
       await syncAuthDatabase({ seedAccounts });
-      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
+      await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
 
       await syncStudentsDatabase();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       await syncSystemSettingsDatabase();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       await syncViolationsDatabase();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       await syncAuditLogsDatabase();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       // Group 2: Run dependent table syncs sequentially
       await syncStudentsFromUsers();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       await syncNotificationsDatabase();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       await syncPasswordResetDatabase();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       await syncStudentViolationLogsDatabase();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       await syncAppStateDatabase();
     };
@@ -6948,31 +7546,31 @@ async function ensureAuthDatabaseReady() {
         try {
           // Keep this fast but resilient: refresh core schemas sequentially with delays to avoid connection pool issues
           await syncAuthDatabase({ seedAccounts, skipSchemaCheck: true });
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           await syncStudentsDatabase();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           await syncSystemSettingsDatabase();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           await syncViolationsDatabase();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           await syncAuditLogsDatabase();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           await syncStudentsFromUsers();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           await syncNotificationsDatabase();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           await syncPasswordResetDatabase();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           await syncStudentViolationLogsDatabase();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           await syncAppStateDatabase();
           return;

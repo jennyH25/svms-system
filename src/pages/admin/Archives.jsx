@@ -4,7 +4,7 @@ import SearchBar from "../../components/ui/SearchBar";
 import Button from "../../components/ui/Button";
 import DataTable from "../../components/ui/DataTable";
 import TableTabs from "../../components/ui/TableTabs";
-import { Folder, Download, X, AlertCircle, MoreVertical, Edit, RotateCcw, Trash2, Check, Tag, CalendarDays, SortAsc } from "lucide-react";
+import { Folder, Download, X, AlertCircle, MoreVertical, Edit, RotateCcw, Trash2, Check, Tag, CalendarDays, SortAsc, Upload } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -230,6 +230,16 @@ const Archives = () => {
   const [showDownloadAlertModal, setShowDownloadAlertModal] = useState(false);
   const [downloadAlertMessage, setDownloadAlertMessage] = useState("");
 
+  // Import workbook records states
+  const [isImportConfirmModalOpen, setIsImportConfirmModalOpen] = useState(false);
+  const [recordToImport, setRecordToImport] = useState(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Cleanup and Re-import workbook records states
+  const [isCleanupReimportModalOpen, setIsCleanupReimportModalOpen] = useState(false);
+  const [isCleanupReimporting, setIsCleanupReimporting] = useState(false);
+  const [cleanupSecretKey, setCleanupSecretKey] = useState("");
+
   // Load archived users on mount
   useEffect(() => {
     const loadArchivedUsers = async () => {
@@ -329,7 +339,7 @@ const Archives = () => {
     return false;
   };
 
-  // Load school years on mount and set up periodic refresh
+  // Load school years on mount and refresh on meaningful events only.
   useEffect(() => {
     const loadSchoolYears = async () => {
       try {
@@ -344,7 +354,6 @@ const Archives = () => {
         }
         
         const data = await response.json();
-        console.log("Loaded archive school years:", data.schoolYears);
 
         if (data.status === "ok" && Array.isArray(data.schoolYears)) {
           const years = data.schoolYears || [];
@@ -360,22 +369,22 @@ const Archives = () => {
     };
 
     loadSchoolYears();
-    
-    // Refresh school years more frequently to catch new archives
-    const interval = setInterval(loadSchoolYears, 2000);
-    
-    // Listen for storage changes (for cross-tab communication)
+
     const handleStorageChange = () => {
-      console.log("Storage changed, reloading school years");
       loadSchoolYears();
     };
+    const handleWindowFocus = () => {
+      loadSchoolYears();
+    };
+
     window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("focus", handleWindowFocus);
     
     return () => {
-      clearInterval(interval);
       window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("focus", handleWindowFocus);
     };
-  }, [activeFolder]);
+  }, []);
 
   // Load unresolved school years for UNRESOLVED folder
   useEffect(() => {
@@ -1235,6 +1244,7 @@ const Archives = () => {
                 </DropdownMenu>
               );
             } else {
+              const isWorkbookRecord = Boolean(row.isHistoricalWorkbook || row.sourceType === "workbook");
               return (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -1243,10 +1253,17 @@ const Archives = () => {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
-                    <DropdownMenuItem onClick={() => handleEdit(row, "violation")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
-                      <Edit className="w-4 h-4" />
-                      <span>Edit</span>
-                    </DropdownMenuItem>
+                    {isWorkbookRecord ? (
+                      <DropdownMenuItem onClick={() => handleImportClick(row)} className="gap-2 cursor-pointer text-blue-600 hover:bg-blue-100 hover:text-blue-700 focus:bg-blue-100 focus:text-blue-700">
+                        <Upload className="w-4 h-4" />
+                        <span>Import to Database</span>
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onClick={() => handleEdit(row, "violation")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
+                        <Edit className="w-4 h-4" />
+                        <span>Edit</span>
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem onClick={() => handleDeleteArchivedViolation(row)} className="gap-2 cursor-pointer text-red-700 hover:bg-red-100 hover:text-red-800 focus:bg-red-100 focus:text-red-800">
                       <Trash2 className="w-4 h-4" />
                       <span>Delete</span>
@@ -1406,25 +1423,35 @@ const Archives = () => {
             key: "actions",
             label: "",
             align: "center",
-            render: (_value, row) => (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-[#3D4654] transition-colors">
-                    <MoreVertical className="w-5 h-5 text-[#A3AED0]" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
-                  <DropdownMenuItem onClick={() => handleEdit(row, "violation")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
-                    <Edit className="w-4 h-4" />
-                    <span>Edit</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleDeleteArchivedViolation(row)} className="gap-2 cursor-pointer text-red-700 hover:bg-red-100 hover:text-red-800 focus:bg-red-100 focus:text-red-800">
-                    <Trash2 className="w-4 h-4" />
-                    <span>Delete</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ),
+            render: (_value, row) => {
+              const isWorkbookRecord = Boolean(row.isHistoricalWorkbook || row.sourceType === "workbook");
+              return (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-[#3D4654] transition-colors">
+                      <MoreVertical className="w-5 h-5 text-[#A3AED0]" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
+                    {isWorkbookRecord ? (
+                      <DropdownMenuItem onClick={() => handleImportClick(row)} className="gap-2 cursor-pointer text-blue-600 hover:bg-blue-100 hover:text-blue-700 focus:bg-blue-100 focus:text-blue-700">
+                        <Upload className="w-4 h-4" />
+                        <span>Import to Database</span>
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onClick={() => handleEdit(row, "violation")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
+                        <Edit className="w-4 h-4" />
+                        <span>Edit</span>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onClick={() => handleDeleteArchivedViolation(row)} className="gap-2 cursor-pointer text-red-700 hover:bg-red-100 hover:text-red-800 focus:bg-red-100 focus:text-red-800">
+                      <Trash2 className="w-4 h-4" />
+                      <span>Delete</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              );
+            },
           },
         ];
       }
@@ -1493,25 +1520,35 @@ const Archives = () => {
           key: "actions",
           label: "",
           align: "center",
-          render: (_value, row) => (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-[#3D4654] transition-colors">
-                  <MoreVertical className="w-5 h-5 text-[#A3AED0]" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
-                <DropdownMenuItem onClick={() => handleEdit(row, "violation")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
-                  <Edit className="w-4 h-4" />
-                  <span>Edit</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleDeleteArchivedViolation(row)} className="gap-2 cursor-pointer text-red-700 hover:bg-red-100 hover:text-red-800 focus:bg-red-100 focus:text-red-800">
-                  <Trash2 className="w-4 h-4" />
-                  <span>Delete</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ),
+          render: (_value, row) => {
+            const isWorkbookRecord = Boolean(row.isHistoricalWorkbook || row.sourceType === "workbook");
+            return (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-[#3D4654] transition-colors">
+                    <MoreVertical className="w-5 h-5 text-[#A3AED0]" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
+                  {isWorkbookRecord ? (
+                    <DropdownMenuItem onClick={() => handleImportClick(row)} className="gap-2 cursor-pointer text-blue-600 hover:bg-blue-100 hover:text-blue-700 focus:bg-blue-100 focus:text-blue-700">
+                      <Upload className="w-4 h-4" />
+                      <span>Import to Database</span>
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem onClick={() => handleEdit(row, "violation")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
+                      <Edit className="w-4 h-4" />
+                      <span>Edit</span>
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={() => handleDeleteArchivedViolation(row)} className="gap-2 cursor-pointer text-red-700 hover:bg-red-100 hover:text-red-800 focus:bg-red-100 focus:text-red-800">
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            );
+          },
         },
       ];
     }
@@ -1644,6 +1681,129 @@ const Archives = () => {
     setSelectedRow(row);
     setEditType(type);
     setIsEditOpen(true);
+  };
+
+  const handleImportClick = (row) => {
+    setRecordToImport(row);
+    setIsImportConfirmModalOpen(true);
+  };
+
+  const handleConfirmImport = async () => {
+    if (!recordToImport?.id) return;
+
+    try {
+      setIsImporting(true);
+      setError("");
+
+      const response = await fetch(`/api/archive/violations/${recordToImport.id}/import`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuditHeaders(),
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.message || "Failed to import record");
+        return;
+      }
+
+      if (data.status === "ok") {
+        // Show success message
+        setArchiveSuccessMessage(`✓ Record imported successfully with remarks: "IMPORTED"`);
+        setTimeout(() => setArchiveSuccessMessage(""), 3000);
+
+        // Refresh violations list
+        const endpoint =
+          activeFolder === "unresolved"
+            ? `/api/archive/unresolved/${encodeURIComponent(selectedUnresolvedYear)}/${encodeURIComponent(activeSemester)}`
+            : `/api/archive/violations/${encodeURIComponent(activeFolder)}/${encodeURIComponent(activeSemester)}`;
+
+        const refreshResponse = await fetch(endpoint, {
+          headers: { ...getAuditHeaders() },
+        });
+
+        if (refreshResponse.ok) {
+          const refreshData = await refreshResponse.json();
+          if (refreshData.status === "ok") {
+            setArchivedViolations(refreshData.violations || []);
+          }
+        }
+
+        // Close modal
+        setIsImportConfirmModalOpen(false);
+        setRecordToImport(null);
+      }
+    } catch (err) {
+      console.error("Error importing record:", err);
+      setError("Error importing record: " + err.message);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleCleanupAndReimport = async () => {
+    if (cleanupSecretKey.trim() !== "2026") {
+      setError("Invalid secret key. Cleanup requires key 2026.");
+      return;
+    }
+
+    try {
+      setIsCleanupReimporting(true);
+      setError("");
+
+      const response = await fetch("/api/archive/cleanup-and-reimport-workbook", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuditHeaders(),
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.message || "Failed to cleanup and re-import workbook records");
+        return;
+      }
+
+      if (data.status === "ok") {
+        // Show success message
+        setArchiveSuccessMessage(
+          `✓ Cleanup complete: Removed ${data.cleanupCount || 0} old records. Re-imported ${data.importCount || 0} workbook records with remarks: "IMPORTED"`
+        );
+        setTimeout(() => setArchiveSuccessMessage(""), 5000);
+
+        // Refresh the entire view
+        // Reset to default view
+        setActiveFolder("users");
+        setActiveSemester("1ST SEM");
+        setSelectedUnresolvedYear("");
+
+        // Reload school years
+        const schoolYearsResponse = await fetch("/api/archive/school-years", {
+          headers: { ...getAuditHeaders() },
+        });
+
+        if (schoolYearsResponse.ok) {
+          const schoolYearsData = await schoolYearsResponse.json();
+          if (schoolYearsData.status === "ok") {
+            setSchoolYears(schoolYearsData.schoolYears || []);
+          }
+        }
+
+        // Close modal
+        setIsCleanupReimportModalOpen(false);
+        setCleanupSecretKey("");
+      }
+    } catch (err) {
+      console.error("Error cleaning up and re-importing workbook records:", err);
+      setError("Error cleaning up and re-importing: " + err.message);
+    } finally {
+      setIsCleanupReimporting(false);
+    }
   };
 
   const clearFilters = () => {
@@ -2475,7 +2635,7 @@ const Archives = () => {
           )}
 
           <div className="flex justify-between items-center mb-4">
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               {activeFolder !== "users" && !isGlobalSearch && (
                 <>
                   {/* Violation Type Filter */}
@@ -2588,16 +2748,33 @@ const Archives = () => {
                   <X className="w-4 h-4" /> Clear Filters
                 </Button>
               )}
+
             </div>
 
-            <Button
-              variant="secondary"
-              size="sm"
-              className="gap-2 bg-[#A3AED0] text-[#23262B] hover:bg-[#8B9CB8] border-0"
-              onClick={() => setDownloadModalOpen(true)}
-            >
-              <Download className="w-4 h-4" /> Export
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                className="gap-2 bg-[#A3AED0] text-[#23262B] hover:bg-[#8B9CB8] border-0"
+                onClick={() => setDownloadModalOpen(true)}
+              >
+                <Download className="w-4 h-4" /> Export
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="p-2 bg-blue-600 hover:bg-blue-700 text-white border-0"
+                onClick={() => {
+                  setCleanupSecretKey("");
+                  setIsCleanupReimportModalOpen(true);
+                }}
+                title="Cleanup & Re-Import Workbook"
+                aria-label="Cleanup and Re-Import Workbook"
+              >
+                <Upload className="w-4 h-4" />
+              </Button>
+            </div>
+
           </div>
 
           {isLoading ? (
@@ -2734,6 +2911,107 @@ const Archives = () => {
           editType={editType}
           onSave={handleSaveEdit}
         />
+      )}
+
+      {/* Import Workbook Record Confirmation Modal */}
+      {isImportConfirmModalOpen && recordToImport && (
+        <Modal isOpen={isImportConfirmModalOpen} onClose={() => { setIsImportConfirmModalOpen(false); setRecordToImport(null); }} showCloseButton={true}>
+          <div className="bg-transparent">
+            <div className="flex items-center gap-3 mb-4">
+              <Upload className="w-6 h-6 text-blue-400" />
+              <h3 className="text-lg font-bold text-white">Import Record to Database</h3>
+            </div>
+            <p className="text-gray-300 mb-6">
+              Are you sure you want to import this record to the database?
+              <br />
+              <span className="text-sm text-gray-400 mt-2 block">
+                Student: <span className="text-[#A3AED0] font-semibold">{recordToImport.student_name || "Unknown"}</span>
+                <br />
+                Violation: <span className="text-[#A3AED0] font-semibold">{recordToImport.violation_label || "Unknown"}</span>
+                <br />
+                Remarks will be set to: <span className="text-green-400 font-semibold">IMPORTED</span>
+              </span>
+            </p>
+            <ModalFooter>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setIsImportConfirmModalOpen(false);
+                  setRecordToImport(null);
+                }}
+                className="bg-[#3D4654] hover:bg-[#4d5664] border-0"
+                disabled={isImporting}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleConfirmImport}
+                disabled={isImporting}
+                className="bg-blue-600 hover:bg-blue-700 border-0 text-white"
+              >
+                {isImporting ? "Importing..." : "Import Record"}
+              </Button>
+            </ModalFooter>
+          </div>
+        </Modal>
+      )}
+
+      {/* Cleanup and Re-Import Workbook Confirmation Modal */}
+      {isCleanupReimportModalOpen && (
+        <Modal isOpen={isCleanupReimportModalOpen} onClose={() => { setIsCleanupReimportModalOpen(false); setCleanupSecretKey(""); }} showCloseButton={true}>
+          <div className="bg-transparent">
+            <div className="flex items-center gap-3 mb-4">
+              <RotateCcw className="w-6 h-6 text-blue-400" />
+              <h3 className="text-lg font-bold text-white">Cleanup & Re-Import Workbook</h3>
+            </div>
+            <p className="text-gray-300 mb-4">
+              This will:
+            </p>
+            <ul className="text-gray-300 text-sm mb-6 ml-4 list-disc space-y-1">
+              <li>Remove all existing imported records from the database that match workbook data</li>
+              <li>Re-import all records from <span className="font-semibold">ViolationRecords1.xlsx</span></li>
+              <li>Create new school year folders for each record</li>
+              <li>Set all imported records to <span className="text-green-400 font-semibold">IMPORTED</span> in remarks</li>
+              <li>Ensure all records go to their designated SY folder (not unresolved)</li>
+            </ul>
+            <p className="text-yellow-300 text-sm mb-6 bg-yellow-400/10 p-3 rounded-lg border border-yellow-400/30">
+              ⚠️ This action will delete and re-import all matching records. Make sure you have a backup if needed.
+            </p>
+            <div className="mb-6">
+              <label className="block text-sm text-gray-300 mb-2" htmlFor="cleanup-secret-key">
+                Enter secret key to continue
+              </label>
+              <input
+                id="cleanup-secret-key"
+                type="password"
+                value={cleanupSecretKey}
+                onChange={(e) => setCleanupSecretKey(e.target.value)}
+                placeholder="Secret key"
+                className="w-full rounded-lg border border-gray-500/30 bg-[#1a1a1a] px-3 py-2 text-sm text-white outline-none focus:border-cyan-400"
+              />
+            </div>
+            <ModalFooter>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setIsCleanupReimportModalOpen(false);
+                  setCleanupSecretKey("");
+                }}
+                className="bg-[#3D4654] hover:bg-[#4d5664] border-0"
+                disabled={isCleanupReimporting}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCleanupAndReimport}
+                disabled={isCleanupReimporting || cleanupSecretKey.trim() !== "2026"}
+                className="bg-blue-600 hover:bg-blue-700 border-0 text-white"
+              >
+                {isCleanupReimporting ? "Processing..." : "Cleanup & Re-Import"}
+              </Button>
+            </ModalFooter>
+          </div>
+        </Modal>
       )}
 
       {/* Restore Confirmation Modal */}
