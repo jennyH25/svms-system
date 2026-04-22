@@ -667,6 +667,7 @@ export async function syncStudentsDatabase() {
       email VARCHAR(255) NOT NULL UNIQUE,
       school_id VARCHAR(50) NOT NULL UNIQUE,
       first_name VARCHAR(100) NOT NULL,
+      middle_initial VARCHAR(5),
       last_name VARCHAR(100) NOT NULL,
       full_name VARCHAR(255) NOT NULL,
       program VARCHAR(50) NOT NULL,
@@ -693,6 +694,11 @@ export async function syncStudentsDatabase() {
   await dbPool.query(`
     ALTER TABLE "Students"
     ADD COLUMN IF NOT EXISTS school_id VARCHAR(50)
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE "Students"
+    ADD COLUMN IF NOT EXISTS middle_initial VARCHAR(5)
   `);
 
   await dbPool.query(`

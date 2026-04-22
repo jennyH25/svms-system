@@ -463,6 +463,71 @@ function normalizeWorkbookComparisonText(value) {
     .trim();
 }
 
+function normalizeWorkbookPersonKey(value) {
+  const normalized = normalizeWorkbookComparisonText(value);
+  if (!normalized) return "";
+
+  // Drop 1-letter tokens so "Bjay M Pema" and "Bjay Pema" map to the same person key.
+  const tokens = normalized
+    .split(" ")
+    .filter(Boolean)
+    .filter((token) => token.length > 1);
+  return tokens.join(" ");
+}
+
+function splitMiddleInitialFromFirstName(firstName, middleInitial) {
+  const cleanedFirstName = String(firstName || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const explicitMiddle = String(middleInitial || "")
+    .replace(/\./g, "")
+    .trim();
+
+  if (!cleanedFirstName) {
+    return {
+      firstName: "",
+      middleInitial: explicitMiddle
+        ? explicitMiddle.charAt(0).toUpperCase()
+        : "",
+    };
+  }
+
+  const parts = cleanedFirstName.split(" ").filter(Boolean);
+  const hasTrailingInitial =
+    parts.length >= 2 &&
+    /^[a-z]$/i.test(String(parts[parts.length - 1] || "").replace(/\./g, ""));
+  const derivedMiddle = hasTrailingInitial
+    ? String(parts[parts.length - 1] || "")
+        .replace(/\./g, "")
+        .toUpperCase()
+    : "";
+  const normalizedFirstName = hasTrailingInitial
+    ? parts.slice(0, -1).join(" ")
+    : cleanedFirstName;
+
+  if (explicitMiddle) {
+    return {
+      firstName: normalizedFirstName,
+      middleInitial: explicitMiddle.charAt(0).toUpperCase(),
+    };
+  }
+
+  if (parts.length >= 2) {
+    const tail = String(parts[parts.length - 1] || "").replace(/\./g, "");
+    if (/^[a-z]$/i.test(tail)) {
+      return {
+        firstName: normalizedFirstName,
+        middleInitial: derivedMiddle || tail.toUpperCase(),
+      };
+    }
+  }
+
+  return {
+    firstName: normalizedFirstName,
+    middleInitial: "",
+  };
+}
+
 function formatWorkbookComparisonDate(value) {
   const parsedDate = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(parsedDate.getTime())) {
@@ -474,7 +539,7 @@ function formatWorkbookComparisonDate(value) {
 
 function buildWorkbookImportKey(record) {
   return [
-    normalizeWorkbookComparisonText(record.studentName || record.student_name),
+    normalizeWorkbookPersonKey(record.studentName || record.student_name),
     normalizeWorkbookComparisonText(
       record.violationLabel || record.violation_label,
     ),
@@ -3117,6 +3182,7 @@ app.get("/api/students", async (req, res) => {
         s.school_id,
         s.full_name,
         s.first_name,
+        s.middle_initial,
         s.last_name,
         s.program,
         s.year_section,
@@ -6887,6 +6953,7 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
         sva.original_updated_at,
         s.full_name as student_name,
         s.first_name,
+        s.middle_initial,
         s.last_name,
         s.school_id,
         s.program,
@@ -6955,7 +7022,7 @@ app.get("/api/archive/users", async (req, res) => {
     const pool = getDbPool();
 
     const result = await pool.query(
-      `SELECT id, user_id, email, school_id, full_name, first_name, last_name, 
+      `SELECT id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, 
               program, year_section, status, violation_count, is_archived, archived_at, archived_reason, original_status
        FROM "Students"
        WHERE is_archived = true
@@ -7210,6 +7277,11 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
     });
 
     const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+    const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
+      pool,
+      schoolYear,
+      semester,
+    );
     const violationCandidates = await getViolationCandidatesForInference(pool);
 
     // Query archived violations from the archive table for this semester/year, excluding unresolved
@@ -7231,6 +7303,7 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
         sva.original_updated_at,
         s.full_name as student_name,
         s.first_name,
+        s.middle_initial,
         s.last_name,
         s.school_id,
         s.program,
@@ -7267,7 +7340,8 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
         (record) =>
           normalizeSchoolYear(record.schoolYear) ===
             normalizeSchoolYear(schoolYear) &&
-          normalizeSemester(record.semester) === normalizeSemester(semester),
+          normalizeSemester(record.semester) === normalizeSemester(semester) &&
+          !importedWorkbookKeys.has(buildWorkbookImportKey(record)),
       )
       .map((record, index) => mapWorkbookRecordToArchiveRow(record, index));
 
@@ -7287,7 +7361,8 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
 // PUT update archived user
 app.put("/api/archive/users/:id", async (req, res) => {
   const { id } = req.params;
-  const { firstName, lastName, program, yearSection, status } = req.body ?? {};
+  const { firstName, middleInitial, lastName, program, yearSection, status } =
+    req.body ?? {};
 
   if (!hasDbConfig()) {
     return res.status(500).json({
@@ -7301,26 +7376,42 @@ app.put("/api/archive/users/:id", async (req, res) => {
     const pool = getDbPool();
 
     // Only create fullName if both firstName and lastName are provided and non-empty
-    const cleanedFirstName = String(firstName || "").trim();
+    const normalizedName = splitMiddleInitialFromFirstName(
+      firstName,
+      middleInitial,
+    );
+    const cleanedFirstName = normalizedName.firstName;
+    const cleanedMiddleInitial = normalizedName.middleInitial;
     const cleanedLastName = String(lastName || "").trim();
     const fullName =
       cleanedFirstName && cleanedLastName
-        ? `${cleanedFirstName} ${cleanedLastName}`
+        ? [
+            cleanedFirstName,
+            cleanedMiddleInitial ? `${cleanedMiddleInitial}.` : "",
+            cleanedLastName,
+          ]
+            .filter(Boolean)
+            .join(" ")
         : null;
 
     const result = await pool.query(
       `UPDATE "Students"
        SET first_name = COALESCE(NULLIF($1, ''), first_name),
-           last_name = COALESCE(NULLIF($2, ''), last_name),
-           full_name = COALESCE(NULLIF($3, ''), full_name),
-           program = COALESCE(NULLIF($4, ''), program),
-           year_section = COALESCE(NULLIF($5, ''), year_section),
-           status = COALESCE(NULLIF($6, ''), status)
-       WHERE id = $7 AND is_archived = true
-       RETURNING id, user_id, email, school_id, full_name, first_name, last_name, 
-                 program, year_section, status, violation_count, is_archived, archived_at`,
+           middle_initial = NULLIF($2, ''),
+           last_name = COALESCE(NULLIF($3, ''), last_name),
+           full_name = COALESCE(NULLIF($4, ''), full_name),
+           program = COALESCE(NULLIF($5, ''), program),
+           year_section = COALESCE(NULLIF($6, ''), year_section),
+           status = CASE
+             WHEN UPPER(COALESCE(archived_reason, '')) = 'IMPORTED' THEN status
+             ELSE COALESCE(NULLIF($7, ''), status)
+           END
+       WHERE id = $8 AND is_archived = true
+       RETURNING id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, 
+                 program, year_section, status, violation_count, is_archived, archived_at, archived_reason`,
       [
         cleanedFirstName || null,
+        cleanedMiddleInitial || "",
         cleanedLastName || null,
         fullName,
         String(program || "").trim() || null,
@@ -7506,6 +7597,7 @@ app.put("/api/archive/violations/:id", async (req, res) => {
     semester,
     schoolYear,
     firstName,
+    middleInitial,
     lastName,
   } = req.body ?? {};
 
@@ -7527,6 +7619,7 @@ app.put("/api/archive/violations/:id", async (req, res) => {
          is_unresolved,
          violation_catalog_id,
          violation_label,
+         remarks,
          archived_at,
          semester,
          school_year
@@ -7542,6 +7635,10 @@ app.put("/api/archive/violations/:id", async (req, res) => {
     const existingViolationLabel = String(
       existingRecord.rows?.[0]?.violation_label || "",
     ).trim();
+    const existingRemarks = String(
+      existingRecord.rows?.[0]?.remarks || "",
+    ).trim();
+    const isImportedRecord = existingRemarks.toUpperCase() === "IMPORTED";
     const existingArchivedAt = existingRecord.rows?.[0]?.archived_at || null;
     const existingSemester = String(
       existingRecord.rows?.[0]?.semester || "",
@@ -7607,13 +7704,16 @@ app.put("/api/archive/violations/:id", async (req, res) => {
 
     const result = await pool.query(
       `UPDATE student_violation_archives
-       SET remarks = COALESCE(NULLIF($1, ''), remarks),
+       SET remarks = CASE
+             WHEN $6 THEN 'IMPORTED'
+             ELSE COALESCE(NULLIF($1, ''), remarks)
+           END,
            reported_by = COALESCE(NULLIF($2, ''), reported_by),
            is_unresolved = COALESCE($3, is_unresolved),
            semester = COALESCE($4, semester),
            school_year = COALESCE($5, school_year),
            updated_at = NOW()
-       WHERE id = $6
+       WHERE id = $7
        RETURNING id, student_id, violation_label, reported_by, remarks, 
                  signature_image, signature_updated_at, archived_at, 
                  semester, school_year, original_created_at, original_updated_at, is_unresolved`,
@@ -7623,6 +7723,7 @@ app.put("/api/archive/violations/:id", async (req, res) => {
         typeof isUnresolved === "boolean" ? isUnresolved : null,
         normalizedSemester || null,
         normalizedSchoolYear || null,
+        isImportedRecord,
         id,
       ],
     );
@@ -7636,18 +7737,35 @@ app.put("/api/archive/violations/:id", async (req, res) => {
 
     const updatedViolation = result.rows[0];
 
-    const cleanedFirstName = String(firstName || "").trim();
+    const normalizedName = splitMiddleInitialFromFirstName(
+      firstName,
+      middleInitial,
+    );
+    const cleanedFirstName = normalizedName.firstName;
+    const cleanedMiddleInitial = normalizedName.middleInitial;
     const cleanedLastName = String(lastName || "").trim();
-    if ((cleanedFirstName || cleanedLastName) && updatedViolation.student_id) {
-      const fullName = `${cleanedFirstName} ${cleanedLastName}`.trim();
+    if (
+      (cleanedFirstName || cleanedMiddleInitial || cleanedLastName) &&
+      updatedViolation.student_id
+    ) {
+      const fullName = [
+        cleanedFirstName,
+        cleanedMiddleInitial ? `${cleanedMiddleInitial}.` : "",
+        cleanedLastName,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
       await pool.query(
         `UPDATE "Students"
          SET first_name = COALESCE(NULLIF($1, ''), first_name),
-             last_name = COALESCE(NULLIF($2, ''), last_name),
-             full_name = COALESCE(NULLIF($3, ''), full_name)
-         WHERE id = $4`,
+             middle_initial = NULLIF($2, ''),
+             last_name = COALESCE(NULLIF($3, ''), last_name),
+             full_name = COALESCE(NULLIF($4, ''), full_name)
+         WHERE id = $5`,
         [
           cleanedFirstName || null,
+          cleanedMiddleInitial || "",
           cleanedLastName || null,
           fullName || null,
           updatedViolation.student_id,
@@ -7678,9 +7796,34 @@ app.put("/api/archive/violations/:id", async (req, res) => {
       );
     }
 
+    let responseViolation = updatedViolation;
+    if (updatedViolation.student_id) {
+      const refreshedStudent = await pool.query(
+        `SELECT full_name, first_name, middle_initial, last_name, school_id, program, year_section
+         FROM "Students"
+         WHERE id = $1
+         LIMIT 1`,
+        [updatedViolation.student_id],
+      );
+
+      if (refreshedStudent.rows?.[0]) {
+        const student = refreshedStudent.rows[0];
+        responseViolation = {
+          ...updatedViolation,
+          student_name: student.full_name || "",
+          first_name: student.first_name || "",
+          middle_initial: student.middle_initial || "",
+          last_name: student.last_name || "",
+          school_id: student.school_id || "",
+          program: student.program || "",
+          year_section: student.year_section || "",
+        };
+      }
+    }
+
     const response = {
       status: "ok",
-      violation: updatedViolation,
+      violation: responseViolation,
       preservedYearSection,
     };
 

@@ -7,17 +7,81 @@ import { AlertCircle } from "lucide-react";
 function extractNameFromFullName(fullName) {
   const normalized = String(fullName || "").trim();
   if (!normalized) {
-    return { firstName: "", lastName: "" };
+    return { firstName: "", middleInitial: "", lastName: "" };
   }
 
   const parts = normalized.split(/\s+/).filter(Boolean);
   if (parts.length === 1) {
-    return { firstName: parts[0], lastName: "" };
+    return { firstName: parts[0], middleInitial: "", lastName: "" };
+  }
+
+  if (parts.length === 2) {
+    return {
+      firstName: parts[0],
+      middleInitial: "",
+      lastName: parts[1],
+    };
+  }
+
+  const middleTokenRaw = String(parts[parts.length - 2] || "").trim();
+  const middleToken = middleTokenRaw.replace(/\./g, "");
+  const hasMiddleInitial = /^[a-z]$/i.test(middleToken);
+
+  return {
+    firstName: hasMiddleInitial
+      ? parts.slice(0, -2).join(" ")
+      : parts.slice(0, -1).join(" "),
+    middleInitial: hasMiddleInitial ? middleToken.charAt(0).toUpperCase() : "",
+    lastName: parts[parts.length - 1],
+  };
+}
+
+function splitMiddleInitialFromFirstName(firstName, middleInitial) {
+  const cleanedFirst = String(firstName || "").replace(/\s+/g, " ").trim();
+  const explicitMiddle = String(middleInitial || "")
+    .replace(/\./g, "")
+    .trim();
+
+  if (!cleanedFirst) {
+    return {
+      firstName: "",
+      middleInitial: explicitMiddle ? explicitMiddle.charAt(0).toUpperCase() : "",
+    };
+  }
+
+  const tokens = cleanedFirst.split(" ").filter(Boolean);
+  const hasTrailingInitial =
+    tokens.length >= 2 &&
+    /^[a-z]$/i.test(String(tokens[tokens.length - 1] || "").replace(/\./g, ""));
+  const derivedMiddle = hasTrailingInitial
+    ? String(tokens[tokens.length - 1] || "")
+        .replace(/\./g, "")
+        .toUpperCase()
+    : "";
+  const normalizedFirst = hasTrailingInitial
+    ? tokens.slice(0, -1).join(" ")
+    : cleanedFirst;
+
+  if (explicitMiddle) {
+    return {
+      firstName: normalizedFirst,
+      middleInitial: explicitMiddle.charAt(0).toUpperCase(),
+    };
+  }
+
+  if (tokens.length >= 2) {
+    const tail = String(tokens[tokens.length - 1] || "").replace(/\./g, "");
+    if (/^[a-z]$/i.test(tail)) {
+      return {
+        firstName: normalizedFirst,
+        middleInitial: derivedMiddle || tail.toUpperCase(),
+      };
+    }
   }
 
   return {
-    firstName: parts.slice(0, -1).join(" "),
-    lastName: parts[parts.length - 1],
+    firstName: normalizedFirst,
+    middleInitial: "",
   };
 }
 
@@ -33,14 +97,15 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
       if (editType === "user") {
         const fullName = record.full_name || record.fullName || "";
         const fallbackNames = extractNameFromFullName(fullName);
+        const normalizedName = splitMiddleInitialFromFirstName(
+          record.firstName || record.first_name || fallbackNames.firstName || "",
+          record.middleInitial || record.middle_initial || fallbackNames.middleInitial || "",
+        );
 
         // For archived users
         setFormData({
-          firstName:
-            record.firstName ||
-            record.first_name ||
-            fallbackNames.firstName ||
-            "",
+          firstName: normalizedName.firstName || "",
+          middleInitial: normalizedName.middleInitial || "",
           lastName:
             record.lastName ||
             record.last_name ||
@@ -62,12 +127,17 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
           record.student_name ||
           "";
         const nameParts = extractNameFromFullName(studentName);
+        const normalizedName = splitMiddleInitialFromFirstName(
+          record.firstName || record.first_name || nameParts.firstName || "",
+          record.middleInitial || record.middle_initial || nameParts.middleInitial || "",
+        );
         const schoolId =
           record.studentName?.props?.children?.[1]?.props?.children ||
           record.school_id ||
           "";
         setFormData({
-          firstName: nameParts.firstName || "",
+          firstName: normalizedName.firstName || "",
+          middleInitial: normalizedName.middleInitial || "",
           lastName: nameParts.lastName || "",
           schoolId: schoolId,
           yearSection: record.yearSection || "",
@@ -94,20 +164,30 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
 
     try {
       if (editType === "user") {
+        const normalizedName = splitMiddleInitialFromFirstName(
+          formData.firstName,
+          formData.middleInitial,
+        );
         const updatedRecord = {
-          firstName: formData.firstName?.trim() || "",
+          firstName: normalizedName.firstName || "",
+          middleInitial: normalizedName.middleInitial || "",
           lastName: formData.lastName?.trim() || "",
           program: formData.program?.trim() || "",
           yearSection: formData.yearSection?.trim() || "",
         };
         await onSave(record.id, updatedRecord);
       } else if (editType === "violation") {
+        const normalizedName = splitMiddleInitialFromFirstName(
+          formData.firstName,
+          formData.middleInitial,
+        );
         const updatedRecord = {
           remarks: formData.remarks?.trim() || "",
           reportedBy: formData.reportedBy?.trim() || "",
           semester: formData.semester?.trim() || "",
           schoolYear: formData.schoolYear?.trim() || "",
-          firstName: formData.firstName?.trim() || "",
+          firstName: normalizedName.firstName || "",
+          middleInitial: normalizedName.middleInitial || "",
           lastName: formData.lastName?.trim() || "",
         };
         await onSave(record.id, updatedRecord);
@@ -147,13 +227,21 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
 
         {editType === "user" ? (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">First Name</span>}
                 name="firstName"
                 value={formData.firstName}
                 onChange={handleChange}
                 placeholder="First Name"
+              />
+              <GlassInput
+                label={<span className="text-sm font-medium text-white mb-2">Middle Initial</span>}
+                name="middleInitial"
+                value={formData.middleInitial}
+                onChange={handleChange}
+                placeholder="M"
+                maxLength={2}
               />
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">Last Name</span>}
@@ -200,13 +288,21 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
           </>
         ) : (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">First Name</span>}
                 name="firstName"
                 value={formData.firstName}
                 onChange={handleChange}
                 placeholder="First Name"
+              />
+              <GlassInput
+                label={<span className="text-sm font-medium text-white mb-2">Middle Initial</span>}
+                name="middleInitial"
+                value={formData.middleInitial}
+                onChange={handleChange}
+                placeholder="M"
+                maxLength={2}
               />
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">Last Name</span>}

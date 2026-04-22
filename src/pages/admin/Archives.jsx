@@ -157,11 +157,20 @@ const formatProgramYearSection = (program, yearSection) => {
   return programText || yearSectionText || '';
 };
 
-const formatDisplayName = (firstName, lastName, fullName) => {
+const formatDisplayMiddleInitial = (middleInitial) => {
+  const normalized = String(middleInitial || "")
+    .replace(/\./g, "")
+    .trim();
+  if (!normalized) return "";
+  return `${normalized.charAt(0).toUpperCase()}.`;
+};
+
+const formatDisplayName = (firstName, lastName, fullName, middleInitial = "") => {
   const first = String(firstName || "").trim();
   const last = String(lastName || "").trim();
+  const middle = formatDisplayMiddleInitial(middleInitial);
   if (first && last) {
-    return `${first} ${last}`;
+    return [first, middle, last].filter(Boolean).join(" ");
   }
 
   const combined = String(fullName || "").trim();
@@ -176,6 +185,42 @@ const formatDisplayName = (firstName, lastName, fullName) => {
   }
 
   return combined.replace(/\s+/g, " ").trim();
+};
+
+const splitMiddleInitialFromFirstName = (firstName, middleInitial) => {
+  const cleanedFirst = String(firstName || "").replace(/\s+/g, " ").trim();
+  const explicitMiddle = String(middleInitial || "")
+    .replace(/\./g, "")
+    .trim();
+
+  if (!cleanedFirst) {
+    return {
+      firstName: "",
+      middleInitial: explicitMiddle ? explicitMiddle.charAt(0).toUpperCase() : "",
+    };
+  }
+
+  const tokens = cleanedFirst.split(" ").filter(Boolean);
+  const hasTrailingInitial =
+    tokens.length >= 2 &&
+    /^[a-z]$/i.test(String(tokens[tokens.length - 1] || "").replace(/\./g, ""));
+  const normalizedFirst = hasTrailingInitial
+    ? tokens.slice(0, -1).join(" ")
+    : cleanedFirst;
+
+  if (explicitMiddle) {
+    return {
+      firstName: normalizedFirst,
+      middleInitial: explicitMiddle.charAt(0).toUpperCase(),
+    };
+  }
+
+  return {
+    firstName: normalizedFirst,
+    middleInitial: hasTrailingInitial
+      ? String(tokens[tokens.length - 1] || "").replace(/\./g, "").toUpperCase()
+      : "",
+  };
 };
 
 const isLikelyViolationTypeLabel = (value) => {
@@ -895,17 +940,23 @@ const Archives = () => {
       // Current folder-only search
       if (activeFolder === "users") {
         return archivedUsers.map((user) => {
-          const formattedFullName = formatDisplayName(
+          const normalizedName = splitMiddleInitialFromFirstName(
             user.first_name,
+            user.middle_initial,
+          );
+          const formattedFullName = formatDisplayName(
+            normalizedName.firstName,
             user.last_name,
             user.full_name,
+            normalizedName.middleInitial,
           );
 
           return {
           id: user.id,
           no: "",
           full_name: formattedFullName,
-          firstName: user.first_name || "",
+          firstName: normalizedName.firstName || "",
+          middleInitial: normalizedName.middleInitial || "",
           lastName: user.last_name || "",
           name: (
             <div>
@@ -947,6 +998,7 @@ const Archives = () => {
             violation.first_name,
             violation.last_name,
             violation.student_name,
+            violation.middle_initial,
           );
           const { type, reportedBy } = buildViolationTypeAndReporter(violation);
 
@@ -959,6 +1011,7 @@ const Archives = () => {
                 <div className="text-xs text-gray-400">{violation.school_id}</div>
               </div>
             ),
+            middle_initial: violation.middle_initial || "",
             yearSection: combinedYearSection,
             program: violation.program || '',
             violation: violation.violation_label,
@@ -997,10 +1050,15 @@ const Archives = () => {
 
       // Add users from USERS folder, only real entries
       archivedUsers.forEach((user) => {
-        const formattedFullName = formatDisplayName(
+        const normalizedName = splitMiddleInitialFromFirstName(
           user.first_name,
+          user.middle_initial,
+        );
+        const formattedFullName = formatDisplayName(
+          normalizedName.firstName,
           user.last_name,
           user.full_name,
+          normalizedName.middleInitial,
         );
         const hasUser =
           (formattedFullName && formattedFullName.trim() && formattedFullName !== "-") ||
@@ -1012,7 +1070,8 @@ const Archives = () => {
           id: user.id,
           no: "",
           full_name: formattedFullName,
-          firstName: user.first_name || "",
+          firstName: normalizedName.firstName || "",
+          middleInitial: normalizedName.middleInitial || "",
           lastName: user.last_name || "",
           name: (
             <div>
@@ -1051,6 +1110,7 @@ const Archives = () => {
             violation.first_name,
             violation.last_name,
             violation.student_name,
+            violation.middle_initial,
           );
           const { type, reportedBy } = buildViolationTypeAndReporter(violation);
           const hasViolation =
@@ -1067,6 +1127,7 @@ const Archives = () => {
                 <div className="text-xs text-gray-400">{violation.school_id}</div>
               </div>
             ),
+            middle_initial: violation.middle_initial || "",
             yearSection: formatProgramYearSection(violation.program, violation.year_section),
             program: violation.program || '',
             violation: violation.violation_label,
@@ -1100,6 +1161,7 @@ const Archives = () => {
             violation.first_name,
             violation.last_name,
             violation.student_name,
+            violation.middle_initial,
           );
           const { type, reportedBy } = buildViolationTypeAndReporter(violation);
           const hasViolation =
@@ -1116,6 +1178,7 @@ const Archives = () => {
                 <div className="text-xs text-gray-400">{violation.school_id}</div>
               </div>
             ),
+            middle_initial: violation.middle_initial || "",
             yearSection: formatProgramYearSection(violation.program, violation.year_section),
             program: violation.program || '',
             violation: violation.violation_label,
