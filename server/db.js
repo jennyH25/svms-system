@@ -672,7 +672,7 @@ export async function syncStudentsDatabase() {
       full_name VARCHAR(255) NOT NULL,
       program VARCHAR(50) NOT NULL,
       year_section VARCHAR(20) NOT NULL,
-      status VARCHAR(20) NOT NULL CHECK (status IN ('Regular', 'Irregular', 'Graduated')),
+      status VARCHAR(20) NOT NULL CHECK (status IN ('Regular', 'Irregular', 'Graduated', 'Imported')),
       violation_count INTEGER NOT NULL DEFAULT 0,
       is_archived BOOLEAN NOT NULL DEFAULT FALSE,
       archived_at TIMESTAMPTZ,
@@ -757,7 +757,7 @@ export async function syncStudentsDatabase() {
     ON "Students" (school_id)
   `);
 
-  // Drop the old CHECK constraint and add the new one with 'Graduated' status
+  // Drop the old CHECK constraint and add the updated one including 'Imported'.
   await dbPool.query(`
     ALTER TABLE "Students"
     DROP CONSTRAINT IF EXISTS "Students_status_check"
@@ -765,7 +765,19 @@ export async function syncStudentsDatabase() {
 
   await dbPool.query(`
     ALTER TABLE "Students"
-    ADD CONSTRAINT "Students_status_check" CHECK (status IN ('Regular', 'Irregular', 'Graduated'))
+    ADD CONSTRAINT "Students_status_check" CHECK (status IN ('Regular', 'Irregular', 'Graduated', 'Imported'))
+  `);
+
+  // Historical workbook imports were previously stored as Graduated.
+  // Normalize them to Imported so DB status matches system labeling.
+  await dbPool.query(`
+    UPDATE "Students"
+    SET status = 'Imported'
+    WHERE status = 'Graduated'
+      AND (
+        UPPER(COALESCE(archived_reason, '')) = 'IMPORTED'
+        OR UPPER(COALESCE(original_status, '')) = 'HISTORICAL'
+      )
   `);
 
   await dbPool.query(`

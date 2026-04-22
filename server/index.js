@@ -716,6 +716,10 @@ async function getOrCreateHistoricalWorkbookStudent(pool, record) {
            full_name = COALESCE(NULLIF(full_name, ''), $5),
            school_id = NULL,
            violation_count = GREATEST(COALESCE($6, 0), 0),
+           status = CASE
+             WHEN status = 'Graduated' THEN 'Imported'
+             ELSE status
+           END,
            archived_reason = CASE
              WHEN archived_reason IS NULL OR archived_reason = '' OR archived_reason = 'Historical import' THEN 'IMPORTED'
              ELSE archived_reason
@@ -768,7 +772,7 @@ async function getOrCreateHistoricalWorkbookStudent(pool, record) {
       programText,
       yearSectionText,
       4,
-      "Graduated",
+      "Imported",
       violationCount,
       "IMPORTED",
       "Historical",
