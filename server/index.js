@@ -290,23 +290,40 @@ function calculateLinearRegressionNextY(points) {
 }
 
 function calculateForecastCount(termSeries, nextSemester) {
+  if (!Array.isArray(termSeries) || termSeries.length === 0) {
+    return 0;
+  }
+
+  const values = termSeries.map((entry) => Number(entry.totalViolations) || 0);
+  const lastValue = values[values.length - 1] || 0;
+
   const regressionPoints = termSeries.map((entry) => ({
     x: entry.index,
     y: entry.totalViolations,
   }));
 
-  const regressionPrediction = Math.max(
+  const regressionPrediction = Math.max(0, calculateLinearRegressionNextY(regressionPoints));
+
+  const recentSlice = values.slice(-3);
+  const recentWeights = [0.2, 0.3, 0.5].slice(3 - recentSlice.length);
+  const recentWeightTotal = recentWeights.reduce((sum, weight) => sum + weight, 0) || 1;
+  const recentPrediction = recentSlice.reduce(
+    (sum, value, index) => sum + value * recentWeights[index],
     0,
-    Math.round(calculateLinearRegressionNextY(regressionPoints)),
-  );
+  ) / recentWeightTotal;
 
   const sameSemesterCounts = termSeries
     .filter((entry) => parseTermKey(entry.termKey).semester === nextSemester)
     .map((entry) => Number(entry.totalViolations) || 0);
 
-  const sameSemesterBaseline = sameSemesterCounts.length
-    ? sameSemesterCounts.reduce((sum, value) => sum + value, 0) /
-      sameSemesterCounts.length
+  const seasonalSlice = sameSemesterCounts.slice(-3);
+  const seasonalWeights = [0.1, 0.3, 0.6].slice(3 - seasonalSlice.length);
+  const seasonalWeightTotal = seasonalWeights.reduce((sum, weight) => sum + weight, 0) || 1;
+  const sameSemesterBaseline = seasonalSlice.length
+    ? seasonalSlice.reduce(
+        (sum, value, index) => sum + value * seasonalWeights[index],
+        0,
+      ) / seasonalWeightTotal
     : null;
 
   const allTermBaseline = termSeries.length
@@ -319,23 +336,41 @@ function calculateForecastCount(termSeries, nextSemester) {
   const baseline =
     sameSemesterBaseline != null ? sameSemesterBaseline : allTermBaseline;
 
-  let forecast = regressionPrediction;
-  if (baseline > 0) {
-    if (regressionPrediction <= 0) {
-      forecast = Math.round(baseline);
-    } else {
-      forecast = Math.round(regressionPrediction * 0.65 + baseline * 0.35);
-    }
+  let regressionWeight = termSeries.length >= 6 ? 0.5 : termSeries.length >= 3 ? 0.35 : 0.2;
+  let recentWeight = termSeries.length >= 6 ? 0.35 : termSeries.length >= 3 ? 0.5 : 0.7;
+  let seasonalWeight = sameSemesterBaseline != null ? 0.15 : 0;
+
+  const totalWeight = regressionWeight + recentWeight + seasonalWeight || 1;
+  regressionWeight /= totalWeight;
+  recentWeight /= totalWeight;
+  seasonalWeight /= totalWeight;
+
+  let forecast =
+    regressionPrediction * regressionWeight +
+    recentPrediction * recentWeight +
+    (sameSemesterBaseline != null ? sameSemesterBaseline * seasonalWeight : 0);
+
+  if (!Number.isFinite(forecast) || forecast < 0) {
+    forecast = baseline;
   }
 
+  const recentMax = recentSlice.length ? Math.max(...recentSlice) : lastValue;
+  const upperBound = Math.max(
+    baseline * 1.8,
+    recentMax * 1.6,
+    lastValue + Math.max(2, Math.sqrt(Math.max(lastValue, 0)) * 2),
+  );
+  const lowerBound = Math.max(0, Math.min(lastValue * 0.35, baseline * 0.35));
+  forecast = Math.min(Math.max(forecast, lowerBound), upperBound);
+
   if (
-    forecast === 0 &&
+    Math.round(forecast) === 0 &&
     termSeries.some((entry) => (Number(entry.totalViolations) || 0) > 0)
   ) {
     forecast = 1;
   }
 
-  return Math.max(0, forecast);
+  return Math.max(0, Math.round(forecast));
 }
 
 function parseCellDate(rawValue) {

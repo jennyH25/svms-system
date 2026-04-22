@@ -1390,12 +1390,36 @@ const StudentViolation = () => {
                   showAxis
                   showHoverLabel
                 />
-                <p className="text-xs text-gray-300 mt-4 leading-5">
-                  Next term forecast: {analyticsData.studentAnalytics.predictedNextTerm?.predictedViolations ?? 0} violations
-                  {analyticsData.studentAnalytics.predictedNextTerm?.label
-                    ? ` (${analyticsData.studentAnalytics.predictedNextTerm.label})`
-                    : ""}
-                </p>
+                <div className="mt-4 rounded-2xl border border-white/10 bg-[linear-gradient(135deg,rgba(16,185,129,0.16),rgba(15,23,42,0.4))] px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.22em] font-semibold text-emerald-100/60">
+                        Forecast outlook
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-white">
+                        Projected next-term violations
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-100/75">
+                      Predictive
+                    </span>
+                  </div>
+                  <div className="mt-4 flex items-end justify-between gap-3">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-semibold tracking-tight text-white">
+                        {analyticsData.studentAnalytics.predictedNextTerm?.predictedViolations ?? 0}
+                      </span>
+                      <span className="text-xs uppercase tracking-[0.16em] text-emerald-100/65">
+                        violations
+                      </span>
+                    </div>
+                    {analyticsData.studentAnalytics.predictedNextTerm?.label ? (
+                      <span className="max-w-[55%] text-right text-[11px] font-medium text-emerald-50/70 break-words">
+                        {analyticsData.studentAnalytics.predictedNextTerm.label}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             </Card>
           </AnimatedContent>
@@ -1672,17 +1696,31 @@ const StudentViolation = () => {
               {analyticsData.studentAnalytics.predictedChangePercent >= 0 ? '+' : ''}{analyticsData.studentAnalytics.predictedChangePercent}%
             </p>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 min-h-[110px]">
-            <p className="text-sm text-gray-400">Next term forecast</p>
-            <p className="mt-3 text-3xl font-semibold text-white">
-              {analyticsData.studentAnalytics.predictedNextTerm?.predictedViolations ?? 0}
-            </p>
-            <p className="text-sm text-gray-400 mt-2">
-              violations
-            </p>
-            <p className="text-xs text-gray-500 mt-1 whitespace-normal break-words">
-              {analyticsData.studentAnalytics.predictedNextTerm?.label || "No term label available"}
-            </p>
+          <div className="min-h-[110px] rounded-2xl border border-white/10 bg-[linear-gradient(145deg,rgba(16,185,129,0.14),rgba(255,255,255,0.04))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-100/60">
+                  Forecast outlook
+                </p>
+                <p className="mt-1 text-sm text-white/90">Projected next-term violations</p>
+              </div>
+              <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-100/75">
+                Predictive
+              </span>
+            </div>
+            <div className="mt-4 flex items-end justify-between gap-4">
+              <div>
+                <p className="text-3xl font-semibold tracking-tight text-white">
+                  {analyticsData.studentAnalytics.predictedNextTerm?.predictedViolations ?? 0}
+                </p>
+                <p className="mt-1 text-xs uppercase tracking-[0.16em] text-emerald-100/65">
+                  expected violations
+                </p>
+              </div>
+              <p className="max-w-[52%] text-right text-xs text-emerald-50/70 whitespace-normal break-words">
+                {analyticsData.studentAnalytics.predictedNextTerm?.label || "No term label available"}
+              </p>
+            </div>
           </div>
         </div>
       </Modal>
