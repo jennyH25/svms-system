@@ -2,6 +2,7 @@ import postgres from "postgres";
 import bcrypt from "bcryptjs";
 
 const requiredVars = ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE"];
+const DEFAULT_DB_POOL_MAX = Number(process.env.DB_POOL_MAX || 1);
 
 function getConnectionUrl() {
   return process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || "";
@@ -23,7 +24,7 @@ function getSqlOptions() {
   const useSsl = process.env.PGSSL !== "false";
 
   return {
-    max: 100, // Increased from 50 to handle sync operations
+    max: DEFAULT_DB_POOL_MAX,
     connect_timeout: 10,
     idle_timeout: 60,
     max_lifetime: 60 * 60 * 24,

@@ -3976,11 +3976,10 @@ app.get("/api/violation-analytics", async (req, res) => {
   try {
     workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
 
-    if (workbookRecords.length === 0 && hasDbConfig()) {
+    if (hasDbConfig()) {
       await ensureAuthDatabaseReady();
       const pool = getDbPool();
 
-      // Get current settings
       const settingsResult = await pool.query(
         `
         SELECT current_semester, current_school_year
@@ -4013,7 +4012,6 @@ app.get("/api/violation-analytics", async (req, res) => {
         targetSemester &&
         normalizedCurrentSemester === targetSemester;
 
-      let currentRecords = [];
       if (isCurrentTargetTerm && targetSemester) {
         const currentResult = await pool.query(
           `
@@ -4036,7 +4034,7 @@ app.get("/api/violation-analytics", async (req, res) => {
           [targetSchoolYear, targetSemester],
         );
 
-        currentRecords = (currentResult.rows || []).map((row, index) => {
+        databaseRecords = (currentResult.rows || []).map((row, index) => {
           const createdAt = new Date(row.created_at);
           const inferredTerm = inferAcademicTermFromDate(createdAt);
           const semester =
@@ -4067,8 +4065,6 @@ app.get("/api/violation-analytics", async (req, res) => {
             schoolYear,
           };
         });
-
-        databaseRecords = [...currentRecords];
       } else {
         const archivedResult = await pool.query(
           `
@@ -4076,55 +4072,103 @@ app.get("/api/violation-analytics", async (req, res) => {
             sva.id,
             sva.student_id,
             sva.created_at,
+            sva.original_created_at,
+            sva.archived_at,
             sva.semester,
             sva.school_year,
             sva.violation_label,
             s.full_name,
             s.program,
-            sva.year_section,
+            s.year_section,
             v.degree AS violation_degree
           FROM student_violation_archives sva
           LEFT JOIN "Students" s ON s.id = sva.student_id
           LEFT JOIN violations v ON v.id = sva.violation_catalog_id
-          WHERE sva.school_year = $1 AND sva.semester = $2 AND sva.is_unresolved = FALSE
+          WHERE sva.school_year = $1 AND sva.semester = $2
           ORDER BY sva.created_at ASC, sva.id ASC
           `,
           [targetSchoolYear, targetSemester],
         );
 
-        archivedRecords = (archivedResult.rows || []).map((row, index) => {
-          const createdAt = new Date(row.created_at);
-          const semester = normalizeSemester(row.semester);
-          const schoolYear = normalizeSchoolYear(row.school_year);
+        const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
+          pool,
+          targetSchoolYear,
+          targetSemester,
+        );
 
-          const safeName = String(row.full_name || "").trim();
-          const studentKey = Number.isFinite(Number(row.student_id))
-            ? `student:${Number(row.student_id)}`
-            : safeName
-              ? `name:${safeName.toLowerCase()}`
-              : `archive-row:${index}`;
+        const archiveDatabaseRecords = (archivedResult.rows || []).map(
+          (row, index) => {
+            const createdAt = new Date(
+              row.original_created_at || row.archived_at || row.created_at,
+            );
+            const semester = normalizeSemester(row.semester);
+            const schoolYear = normalizeSchoolYear(row.school_year);
 
-          return {
-            source: "archived",
-            studentKey,
-            studentName: safeName,
-            program: String(row.program || "").trim(),
-            yearSection: String(row.year_section || "").trim(),
-            violationLabel: String(row.violation_label || "").trim(),
-            degreeRank: parseDegreeRank(row.violation_degree),
-            date: createdAt,
-            monthLabel: toMonthLabel(createdAt),
-            semester,
-            schoolYear,
-          };
-        });
+            const safeName = String(row.full_name || "").trim();
+            const studentKey = Number.isFinite(Number(row.student_id))
+              ? `student:${Number(row.student_id)}`
+              : safeName
+                ? `name:${safeName.toLowerCase()}`
+                : `archive-row:${index}`;
 
+            return {
+              source: "archived",
+              studentKey,
+              studentName: safeName,
+              program: String(row.program || "").trim(),
+              yearSection: String(row.year_section || "").trim(),
+              violationLabel: String(row.violation_label || "").trim(),
+              degreeRank: parseDegreeRank(row.violation_degree),
+              date: createdAt,
+              monthLabel: toMonthLabel(createdAt),
+              semester,
+              schoolYear,
+            };
+          },
+        );
+
+        const archiveWorkbookRecords = workbookRecords
+          .filter(
+            (record) =>
+              normalizeSchoolYear(record.schoolYear) === targetSchoolYear &&
+              normalizeSemester(record.semester) === targetSemester &&
+              !importedWorkbookKeys.has(buildWorkbookImportKey(record)),
+          )
+          .map((record, index) => {
+            const archivedRow = mapWorkbookRecordToArchiveRow(record, index);
+            const createdAt = new Date(
+              archivedRow.original_created_at || archivedRow.archived_at,
+            );
+
+            return {
+              source: archivedRow.sourceType || "workbook",
+              studentKey: archivedRow.student_id
+                ? `student:${Number(archivedRow.student_id)}`
+                : archivedRow.student_name
+                  ? `name:${String(archivedRow.student_name).toLowerCase()}`
+                  : `workbook-row:${index}`,
+              studentName: String(archivedRow.student_name || "").trim(),
+              program: String(archivedRow.program || "").trim(),
+              yearSection: String(archivedRow.year_section || "").trim(),
+              violationLabel: String(archivedRow.violation_label || "").trim(),
+              degreeRank: parseDegreeRank(archivedRow.violation_degree),
+              date: createdAt,
+              monthLabel: toMonthLabel(createdAt),
+              semester: normalizeSemester(archivedRow.semester),
+              schoolYear: normalizeSchoolYear(archivedRow.school_year),
+            };
+          });
+
+        archivedRecords = [
+          ...archiveDatabaseRecords,
+          ...archiveWorkbookRecords,
+        ];
         databaseRecords = [...archivedRecords];
       }
     }
 
     const selectedRecordsSource =
-      workbookRecords.length > 0 ? workbookRecords : databaseRecords;
+      databaseRecords.length > 0 ? databaseRecords : workbookRecords;
     const mergedRecords = selectedRecordsSource.filter((record) => {
       const semester = normalizeSemester(record.semester);
       const schoolYear = normalizeSchoolYear(record.schoolYear);
@@ -4225,8 +4269,7 @@ app.get("/api/student-violations", async (_req, res) => {
       FROM student_violation_logs svl
       INNER JOIN "Students" s ON s.id = svl.student_id
       INNER JOIN violations v ON v.id = svl.violation_catalog_id
-      WHERE svl.cleared_at IS NULL
-      ORDER BY svl.created_at DESC, svl.id DESC
+      ORDER BY svl.cleared_at NULLS FIRST, svl.created_at DESC, svl.id DESC
       `,
       [],
     );
@@ -7059,37 +7102,91 @@ app.get("/api/archive/school-years", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
-    // Get distinct school years from the archive table
-    // Only return years that have actual archived data
-    const result = await pool.query(
-      `SELECT DISTINCT school_year
-       FROM student_violation_archives
-       WHERE school_year IS NOT NULL
-       ORDER BY school_year DESC`,
+    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+
+    const archiveResult = await pool.query(
+      `
+      SELECT DISTINCT school_year, semester
+      FROM student_violation_archives
+      WHERE school_year IS NOT NULL
+        AND semester IS NOT NULL
+      ORDER BY school_year DESC, semester ASC
+      `,
     );
 
-    const schoolYears = (result.rows || [])
-      .map((row) => row.school_year)
-      .filter((sy) => sy);
+    const archiveTerms = (archiveResult.rows || [])
+      .map((row) => ({
+        schoolYear: normalizeSchoolYear(row.school_year),
+        semester: normalizeSemester(row.semester),
+      }))
+      .filter((row) => row.schoolYear && row.semester);
+
+    const workbookTerms = Array.isArray(workbookRecords)
+      ? workbookRecords
+          .map((record) => ({
+            schoolYear: normalizeSchoolYear(record.schoolYear),
+            semester: normalizeSemester(record.semester),
+          }))
+          .filter((row) => row.schoolYear && row.semester)
+      : [];
 
     const settingsResult = await pool.query(
       `
-      SELECT current_school_year
+      SELECT current_school_year, current_semester
       FROM "SystemSettings"
       WHERE setting_key = 'system_config'
       LIMIT 1
       `,
     );
     const settings = settingsResult.rows?.[0] || {};
-    const currentSchoolYear = String(settings.current_school_year || "").trim();
+    const currentSchoolYear =
+      normalizeSchoolYear(settings.current_school_year) ||
+      String(settings.current_school_year || "").trim();
+    const currentSemester = normalizeSemester(settings.current_semester);
 
-    const combinedYears = Array.from(
-      new Set([...schoolYears, currentSchoolYear].filter(Boolean)),
-    ).sort((left, right) => right.localeCompare(left));
+    const semesterOrder = {
+      "1ST SEM": 1,
+      "2ND SEM": 2,
+      SUMMER: 3,
+    };
+
+    const schoolYearSet = new Set(
+      [...archiveTerms, ...workbookTerms]
+        .map((term) => term.schoolYear)
+        .filter(Boolean),
+    );
+    if (currentSchoolYear) {
+      schoolYearSet.add(currentSchoolYear);
+    }
+
+    const combinedYears = Array.from(schoolYearSet)
+      .sort(
+        (left, right) => getSchoolYearStart(right) - getSchoolYearStart(left),
+      )
+      .slice(0, 4);
+
+    const semestersBySchoolYear = combinedYears.reduce((acc, schoolYear) => {
+      const semesters = [...archiveTerms, ...workbookTerms]
+        .filter((term) => term.schoolYear === schoolYear)
+        .map((term) => term.semester);
+
+      if (schoolYear === currentSchoolYear && currentSemester) {
+        semesters.push(currentSemester);
+      }
+
+      acc[schoolYear] = Array.from(new Set(semesters.filter(Boolean))).sort(
+        (left, right) =>
+          (semesterOrder[left] || 99) - (semesterOrder[right] || 99),
+      );
+      return acc;
+    }, {});
 
     return res.status(200).json({
       status: "ok",
       schoolYears: combinedYears,
+      semestersBySchoolYear,
+      currentSchoolYear,
+      currentSemester,
     });
   } catch (error) {
     console.error("Error fetching school years:", error);

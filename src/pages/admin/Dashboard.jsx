@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Card from "../../components/ui/Card";
 import AdminStatCard from "../../components/ui/AdminStatCard";
@@ -65,6 +65,14 @@ const normalizeSemester = (value) => {
   return "";
 };
 
+const formatSemesterLabel = (value) => {
+  const normalized = normalizeSemester(value);
+  if (normalized === "1ST SEM") return "1st Sem";
+  if (normalized === "2ND SEM") return "2nd Sem";
+  if (normalized === "SUMMER") return "Summer";
+  return "";
+};
+
 const parseYearSection = (value) => {
   const normalized = String(value || "").trim().toUpperCase();
   if (!normalized) {
@@ -125,9 +133,11 @@ const Dashboard = () => {
   const [trendTermBySemester, setTrendTermBySemester] = useState({});
   const [selectedSchoolYear, setSelectedSchoolYear] = useState("");
   const [availableSchoolYears, setAvailableSchoolYears] = useState([]);
+  const [availableSemestersBySchoolYear, setAvailableSemestersBySchoolYear] = useState({});
   const [currentSemester, setCurrentSemester] = useState("");
   const [currentSchoolYear, setCurrentSchoolYear] = useState("");
   const [ongoingSemesters, setOngoingSemesters] = useState({});
+  const hasInitializedTrendSelectionRef = useRef(false);
 
   const [rankingData, setRankingData] = useState([]);
   const [isLoadingRanking, setIsLoadingRanking] = useState(true);
@@ -174,6 +184,27 @@ const Dashboard = () => {
       Array.from(new Set(rankingData.map((student) => String(student.section || "").trim()).filter(Boolean))).sort(),
     [rankingData],
   );
+
+  const availableSemesterOptions = useMemo(() => {
+    const semesterOrder = {
+      "1st Sem": 1,
+      "2nd Sem": 2,
+      Summer: 3,
+    };
+
+    const semesters = Array.isArray(availableSemestersBySchoolYear[selectedSchoolYear])
+      ? availableSemestersBySchoolYear[selectedSchoolYear]
+      : [];
+
+    const labels = semesters
+      .map((semester) => formatSemesterLabel(semester))
+      .filter(Boolean);
+
+    const fallbackLabels = ["1st Sem", "2nd Sem", "Summer"];
+    return Array.from(new Set(labels.length > 0 ? labels : fallbackLabels)).sort(
+      (left, right) => (semesterOrder[left] || 99) - (semesterOrder[right] || 99),
+    );
+  }, [availableSemestersBySchoolYear, selectedSchoolYear]);
 
   const rankingExportRows = useMemo(
     () =>
@@ -1171,10 +1202,7 @@ const Dashboard = () => {
           const payload = result.data || {};
           if (payload.status === "ok" && Array.isArray(payload.schoolYears)) {
             setAvailableSchoolYears(payload.schoolYears);
-            // Set default to current year if available
-            if (payload.schoolYears.length > 0 && !selectedSchoolYear) {
-              setSelectedSchoolYear(payload.schoolYears[0]);
-            }
+            setAvailableSemestersBySchoolYear(payload.semestersBySchoolYear || {});
           }
         }
       } catch (error) {
@@ -1419,6 +1447,23 @@ const Dashboard = () => {
       isMounted = false;
     };
   }, [selectedSchoolYear, selectedSemester]);
+
+  useEffect(() => {
+    if (hasInitializedTrendSelectionRef.current) return;
+    if (!currentSchoolYear || !currentSemester) return;
+
+    hasInitializedTrendSelectionRef.current = true;
+    setSelectedSchoolYear(currentSchoolYear);
+    setSelectedSemester(formatSemesterLabel(currentSemester) || "1st Sem");
+  }, [currentSchoolYear, currentSemester]);
+
+  useEffect(() => {
+    if (!selectedSchoolYear) return;
+    if (availableSemesterOptions.length === 0) return;
+    if (!availableSemesterOptions.includes(selectedSemester)) {
+      setSelectedSemester(availableSemesterOptions[0]);
+    }
+  }, [availableSemesterOptions, selectedSchoolYear, selectedSemester]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1680,21 +1725,14 @@ const Dashboard = () => {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={() => setSelectedSemester("1st Sem")}
-                    >
-                      1st Sem
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setSelectedSemester("2nd Sem")}
-                    >
-                      2nd Sem
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setSelectedSemester("Summer")}
-                    >
-                      Summer
-                    </DropdownMenuItem>
+                    {availableSemesterOptions.map((semester) => (
+                      <DropdownMenuItem
+                        key={semester}
+                        onClick={() => setSelectedSemester(semester)}
+                      >
+                        {semester}
+                      </DropdownMenuItem>
+                    ))}
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <button
@@ -1832,15 +1870,14 @@ const Dashboard = () => {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setSelectedSemester("1st Sem")}>
-                1st Sem
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSelectedSemester("2nd Sem")}>
-                2nd Sem
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSelectedSemester("Summer")}>
-                Summer
-              </DropdownMenuItem>
+              {availableSemesterOptions.map((semester) => (
+                <DropdownMenuItem
+                  key={semester}
+                  onClick={() => setSelectedSemester(semester)}
+                >
+                  {semester}
+                </DropdownMenuItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
           <button
