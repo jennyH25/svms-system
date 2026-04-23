@@ -947,7 +947,14 @@ const UserManagement = () => {
 
     const workbook = new Workbook();
     const sheet = workbook.addWorksheet("User Management", {
-      views: [{ state: "frozen", ySplit: 6 }],
+      views: [{ state: "frozen", ySplit: 9 }],
+      pageSetup: {
+        orientation: "landscape",
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        horizontalCentered: true,
+      },
     });
 
     sheet.columns = [
@@ -960,21 +967,26 @@ const UserManagement = () => {
       { key: "violationCount", width: 16 },
     ];
 
-    sheet.mergeCells("A1:G3");
-    sheet.mergeCells("A4:G4");
-    sheet.mergeCells("A5:G5");
-    sheet.getRow(1).height = 26;
-    sheet.getRow(2).height = 26;
-    sheet.getRow(3).height = 26;
-    sheet.getRow(4).height = 28;
-    sheet.getRow(5).height = 18;
+    // Use more rows for header image (rows 1-7)
+    sheet.mergeCells("A1:G7");
+    sheet.mergeCells("A8:G8");
+    sheet.mergeCells("A9:G9");
+    sheet.getRow(1).height = 30;
+    sheet.getRow(2).height = 30;
+    sheet.getRow(3).height = 30;
+    sheet.getRow(4).height = 30;
+    sheet.getRow(5).height = 30;
+    sheet.getRow(6).height = 30;
+    sheet.getRow(7).height = 30;
+    sheet.getRow(8).height = 32;
+    sheet.getRow(9).height = 20;
 
-    const titleCell = sheet.getCell("A4");
+    const titleCell = sheet.getCell("A8");
     titleCell.value = "User Management Report";
     titleCell.font = { name: "Calibri", size: 18, bold: true };
     titleCell.alignment = { horizontal: "center", vertical: "middle" };
 
-    const subtitleCell = sheet.getCell("A5");
+    const subtitleCell = sheet.getCell("A9");
     subtitleCell.value = `Generated: ${new Date().toLocaleString()}`;
     subtitleCell.font = { name: "Calibri", size: 11, color: { argb: "FF4B5563" } };
     subtitleCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -983,16 +995,14 @@ const UserManagement = () => {
       (total, column) => total + (Number(column.width || 10) * 7.5),
       0,
     );
-    const headerRegionHeightPx = [1, 2, 3].reduce(
+    const headerRegionHeightPx = [1, 2, 3, 4, 5, 6, 7].reduce(
       (total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
       0,
     );
     const imageScale = Math.min(
       (headerRegionWidthPx - 24) / dimensions.width,
-      (headerRegionHeightPx - 6) / dimensions.height,
-      EXCEL_HEADER_IMAGE_WIDTH_PX / dimensions.width,
-      EXCEL_HEADER_IMAGE_HEIGHT_PX / dimensions.height,
-      1,
+      (headerRegionHeightPx - 12) / dimensions.height,
+      1.5,
     );
     const imageWidthPx = Math.max(8, Math.round(dimensions.width * imageScale));
     const imageHeightPx = Math.max(8, Math.round(dimensions.height * imageScale));
@@ -1013,14 +1023,14 @@ const UserManagement = () => {
 
     const toRowCoordinate = (pixelOffset) => {
       let remaining = pixelOffset;
-      for (let rowIndex = 1; rowIndex <= 3; rowIndex += 1) {
+      for (let rowIndex = 1; rowIndex <= 7; rowIndex += 1) {
         const rowPx = Number(sheet.getRow(rowIndex).height || 15) * 1.333;
         if (remaining <= rowPx) {
           return (rowIndex - 1) + remaining / rowPx;
         }
         remaining -= rowPx;
       }
-      return 2;
+      return 6;
     };
 
     const imageId = workbook.addImage({ base64: dataUrl, extension: "png" });
@@ -1035,7 +1045,7 @@ const UserManagement = () => {
       },
     });
 
-    const headerRowNumber = 6;
+    const headerRowNumber = 10;
     const headerRow = sheet.getRow(headerRowNumber);
     headerRow.values = [
       "No",

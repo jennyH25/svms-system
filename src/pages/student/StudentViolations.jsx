@@ -407,10 +407,29 @@ const createDownload = useCallback(async (record, format) => {
 
 		sheet.mergeCells('B1:H5');
 		if (headerImage.dataUrl && headerImage.dimensions) {
+			const headerRegionWidthPx = [2, 3, 4, 5, 6, 7, 8].reduce(
+				(total, colIndex) => total + (Number(sheet.getColumn(colIndex).width || 18) * 7.5),
+				0,
+			);
+			const headerRegionHeightPx = [1, 2, 3, 4, 5].reduce(
+				(total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 18) * 1.333),
+				0,
+			);
+			const imageScale = Math.min(
+				(headerRegionWidthPx - 12) / headerImage.dimensions.width,
+				(headerRegionHeightPx - 6) / headerImage.dimensions.height,
+				1.25,
+			);
+			const headerWidth = Math.max(8, Math.round(headerImage.dimensions.width * imageScale));
+			const headerHeight = Math.max(8, Math.round(headerImage.dimensions.height * imageScale));
+			const leftOffsetPx = Math.max((headerRegionWidthPx - headerWidth) / 2, 0);
+			const topOffsetPx = Math.max((headerRegionHeightPx - headerHeight) / 2, 0);
+			const colPx = (sheet.getColumn(2).width || 18) * 7.5;
+			const rowPx = Number(sheet.getRow(1).height || 18) * 1.333;
 			const headerId = workbook.addImage({ base64: headerImage.dataUrl, extension: 'png' });
 			sheet.addImage(headerId, {
-				tl: { col: 1, row: 0 },
-				br: { col: 8, row: 6 },
+				tl: { col: 1 + leftOffsetPx / colPx, row: topOffsetPx / rowPx },
+				ext: { width: headerWidth, height: headerHeight },
 			});
 		}
 
@@ -601,9 +620,9 @@ if (format === 'pdf') {
 		let cursorY = 10;
 
 		if (headerImage.dataUrl && headerImage.dimensions) {
-			const imageScale = Math.min(1, contentWidth / headerImage.dimensions.width);
-			const headerWidth = headerImage.dimensions.width * imageScale;
-			const headerHeight = Math.min(headerImage.dimensions.height * imageScale, 50);
+			const imageScale = Math.min(1.25, contentWidth / headerImage.dimensions.width);
+			const headerWidth = Math.round(headerImage.dimensions.width * imageScale);
+			const headerHeight = Math.min(Math.round(headerImage.dimensions.height * imageScale), 50);
 			const headerX = margin + (contentWidth - headerWidth) / 2;
 			doc.addImage(headerImage.dataUrl, 'PNG', headerX, cursorY, headerWidth, headerHeight);
 			cursorY += headerHeight + 6;
@@ -955,7 +974,7 @@ if (format === 'jpeg') {
 			const imageScale = Math.min(
 				(headerRegionWidthPx - 24) / dimensions.width,
 				(headerRegionHeightPx - 6) / dimensions.height,
-				1,
+				1.25,
 			);
 			const imageWidthPx = Math.max(8, Math.round(dimensions.width * imageScale));
 			const imageHeightPx = Math.max(8, Math.round(dimensions.height * imageScale));

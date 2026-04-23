@@ -1063,6 +1063,13 @@ const StudentViolation = () => {
     const workbook = new Workbook();
     const sheet = workbook.addWorksheet("Student Violations", {
       views: [{ state: "frozen", ySplit: 6 }],
+      pageSetup: {
+        orientation: "landscape",
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        horizontalCentered: true,
+      },
     });
 
     sheet.columns = [
@@ -1107,14 +1114,16 @@ const StudentViolation = () => {
       (total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
       0,
     );
-    const leftOffsetPx = Math.max(
-      (headerRegionWidthPx - EXCEL_HEADER_IMAGE_WIDTH_PX) / 2,
-      0,
+    const dimensions = await getDataUrlDimensions(dataUrl);
+    const imageScale = Math.min(
+      (headerRegionWidthPx - 24) / dimensions.width,
+      (headerRegionHeightPx - 6) / dimensions.height,
+      1.25,
     );
-    const topOffsetPx = Math.max(
-      (headerRegionHeightPx - EXCEL_HEADER_IMAGE_HEIGHT_PX) / 2,
-      0,
-    );
+    const imageWidthPx = Math.max(8, Math.round(dimensions.width * imageScale));
+    const imageHeightPx = Math.max(8, Math.round(dimensions.height * imageScale));
+    const leftOffsetPx = Math.max((headerRegionWidthPx - imageWidthPx) / 2, 0);
+    const topOffsetPx = Math.max((headerRegionHeightPx - imageHeightPx) / 2, 0);
     const toColCoordinate = (pixelOffset) => {
       let remaining = pixelOffset;
       for (let colIndex = 0; colIndex < sheet.columns.length; colIndex += 1) {
@@ -1146,8 +1155,8 @@ const StudentViolation = () => {
         row: toRowCoordinate(topOffsetPx),
       },
       ext: {
-        width: EXCEL_HEADER_IMAGE_WIDTH_PX,
-        height: EXCEL_HEADER_IMAGE_HEIGHT_PX,
+        width: imageWidthPx,
+        height: imageHeightPx,
       },
     });
 
@@ -1281,16 +1290,16 @@ const StudentViolation = () => {
     ]);
 
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const margin = 10;
+    const pageWidth = doc.internal.pageSize.getWidth();
     const { dataUrl, imageFormat } = await resolveHeaderImage();
     let startY = 22;
 
     if (dataUrl) {
       const imgProps = doc.getImageProperties(dataUrl);
-      const maxHeaderWidth = 220;
-      const calculatedHeight = (imgProps.height * maxHeaderWidth) / imgProps.width;
-      const headerWidth = Math.min(maxHeaderWidth, 260);
-      const headerHeight = calculatedHeight;
-      const headerX = (doc.internal.pageSize.getWidth() - headerWidth) / 2;
+      const headerWidth = pageWidth - margin * 2;
+      const headerHeight = (imgProps.height * headerWidth) / imgProps.width;
+      const headerX = margin;
       doc.addImage(dataUrl, imageFormat, headerX, 8, headerWidth, headerHeight);
       startY = 8 + headerHeight + 8;
     }
