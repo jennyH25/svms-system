@@ -18,6 +18,8 @@ import {
   CheckCircle,
   PenTool,
   Archive,
+  Minus,
+  Trash2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -143,6 +145,8 @@ const StudentViolation = () => {
   const [selectedDate, setSelectedDate] = useState("");
   const [activeStatusTab, setActiveStatusTab] = useState("pending");
   const [selectedRiskLevel, setSelectedRiskLevel] = useState("");
+  const [selectedViolationIds, setSelectedViolationIds] = useState(new Set());
+  const [showSelectionCheckboxes, setShowSelectionCheckboxes] = useState(false);
 
   const statusTabs = [
     { key: "pending", label: "Pending" },
@@ -317,13 +321,56 @@ const StudentViolation = () => {
     setConfirmAction(null);
   };
 
+  const deleteSelectedViolations = async (ids) => {
+    if (!Array.isArray(ids) || ids.length === 0) return;
+
+    const failedIds = [];
+    const deletedIds = [];
+
+    for (const violationId of ids) {
+      try {
+        const response = await fetch(`/api/student-violations/${violationId}`, {
+          method: "DELETE",
+          headers: {
+            ...getAuditHeaders(),
+          },
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(result?.message || "Unable to delete record.");
+        }
+        deletedIds.push(violationId);
+      } catch (error) {
+        failedIds.push(violationId);
+      }
+    }
+
+    if (deletedIds.length > 0) {
+      setRecords((prev) => prev.filter((r) => !deletedIds.includes(r.id)));
+      setSelectedViolationIds((prev) => {
+        const next = new Set(prev);
+        deletedIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+
+    if (failedIds.length > 0) {
+      alert(
+        `Failed to delete ${failedIds.length} selected violation(s). Please try again.`,
+      );
+    }
+  };
+
   const handleConfirmAction = async () => {
-    if (!confirmAction?.row) return;
+    if (!confirmAction) return;
 
     setIsConfirmingAction(true);
     try {
       if (confirmAction.type === "delete") {
         await deleteRecord(confirmAction.row);
+      }
+      if (confirmAction.type === "bulk-delete") {
+        await deleteSelectedViolations(confirmAction.ids || []);
       }
       if (confirmAction.type === "clear") {
         await clearRecord(confirmAction.row);
@@ -479,6 +526,57 @@ const StudentViolation = () => {
     setSignatureTarget(row.raw);
     setShowSignatureModal(true);
   };
+
+  const handleToggleCheckbox = (violationId) => {
+    setShowSelectionCheckboxes(true);
+    setSelectedViolationIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(violationId)) {
+        next.delete(violationId);
+      } else {
+        next.add(violationId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedViolationIds.size === filteredRecords.length) {
+      setSelectedViolationIds(new Set());
+      setShowSelectionCheckboxes(false);
+      return;
+    }
+
+    setSelectedViolationIds(new Set(filteredRecords.map((row) => row.id)));
+    setShowSelectionCheckboxes(true);
+  };
+
+  const handleHeaderToggle = () => {
+    setShowSelectionCheckboxes(true);
+    setSelectedViolationIds(new Set(filteredRecords.map((row) => row.id)));
+  };
+
+  const handleRowSelect = (row) => {
+    handleToggleCheckbox(row.id);
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedViolationIds.size === 0) {
+      alert("Please select at least one violation record to delete.");
+      return;
+    }
+
+    setConfirmAction({
+      type: "bulk-delete",
+      ids: Array.from(selectedViolationIds),
+    });
+  };
+
+  useEffect(() => {
+    if (selectedViolationIds.size === 0 && showSelectionCheckboxes) {
+      setShowSelectionCheckboxes(false);
+    }
+  }, [selectedViolationIds, showSelectionCheckboxes]);
 
   const handleSignatureSave = async (signatureImage) => {
     if (!signatureTarget?.id) return;
@@ -739,6 +837,42 @@ const StudentViolation = () => {
   }, [records]);
 
   const columns = [
+    {
+      key: "select",
+      label: showSelectionCheckboxes ? (
+        <input
+          type="checkbox"
+          checked={selectedViolationIds.size === filteredRecords.length && filteredRecords.length > 0}
+          onChange={handleSelectAll}
+          className="w-4 h-4 cursor-pointer"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={handleHeaderToggle}
+          className="text-gray-400 font-semibold leading-none"
+          aria-label="Show selection checkboxes"
+        >
+          -
+        </button>
+      ),
+      width: "w-10",
+      render: (_value, row) => {
+        if (!showSelectionCheckboxes) {
+          return null;
+        }
+
+        return (
+          <input
+            type="checkbox"
+            checked={selectedViolationIds.has(row.id)}
+            onChange={() => handleToggleCheckbox(row.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="w-4 h-4 cursor-pointer"
+          />
+        );
+      },
+    },
     { key: "no", label: "No", width: "w-10" },
     { key: "date", label: "Date" },
     {
@@ -1309,11 +1443,17 @@ const StudentViolation = () => {
   ];
 
   const confirmModalTitle =
-    confirmAction?.type === "delete" ? "Delete Violation Log" : "Mark as Cleared";
+    confirmAction?.type === "delete"
+      ? "Delete Violation Log"
+      : confirmAction?.type === "bulk-delete"
+      ? "Delete Selected Violations"
+      : "Mark as Cleared";
 
   const confirmModalMessage =
     confirmAction?.type === "delete"
       ? "This will permanently delete this student violation log."
+      : confirmAction?.type === "bulk-delete"
+      ? `This will permanently delete ${confirmAction.ids?.length || 0} selected violation(s).`
       : "This will mark the selected violation as cleared.";
 
   return (
@@ -1390,7 +1530,13 @@ const StudentViolation = () => {
                   showAxis
                   showHoverLabel
                 />
-                <div className="mt-4 rounded-2xl border border-white/10 bg-[linear-gradient(135deg,rgba(16,185,129,0.16),rgba(15,23,42,0.4))] px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                <div
+                  className="mt-4 rounded-2xl border border-white/10 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+                  style={{
+                    backgroundImage:
+                      "linear-gradient(135deg, rgb(67 70 77 / 42%), rgba(15, 23, 42, 0.4))",
+                  }}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-[10px] uppercase tracking-[0.22em] font-semibold text-emerald-100/60">
@@ -1400,7 +1546,10 @@ const StudentViolation = () => {
                         Projected next-term violations
                       </p>
                     </div>
-                    <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-100/75">
+                    <span
+                      className="rounded-full border border-emerald-300/20 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-100/75"
+                      style={{ backgroundColor: "rgb(37 45 42 / 0.1)" }}
+                    >
                       Predictive
                     </span>
                   </div>
@@ -1549,18 +1698,42 @@ const StudentViolation = () => {
             ) : null}
           </div>
 
-          <Button
-            variant="secondary"
-            size="sm"
-            className="px-6 gap-2"
-            onClick={() => {
-              setExportFormat("excel");
-              setShowExportModal(true);
-            }}
-          >
-            <Download className="w-4 h-4" />
-            Export
-          </Button>
+          <div className="flex items-center gap-2">
+            {selectedViolationIds.size > 0 && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="gap-2 bg-gray-600 hover:bg-gray-700 border-0"
+                  onClick={() => setSelectedViolationIds(new Set())}
+                >
+                  <Minus className="w-4 h-4" />
+                  Clear Selection
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="gap-2 bg-red-600/30 hover:bg-red-600/50 border-red-600/50 border"
+                  onClick={handleBulkDelete}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete  ({selectedViolationIds.size})
+                </Button>
+              </>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="px-6 gap-2"
+              onClick={() => {
+                setExportFormat("excel");
+                setShowExportModal(true);
+              }}
+            >
+              <Download className="w-4 h-4" />
+              Export
+            </Button>
+          </div>
         </div>
       </AnimatedContent>
 
@@ -1577,7 +1750,7 @@ const StudentViolation = () => {
         {isLoading ? (
           <div className="text-gray-300">Loading...</div>
         ) : (
-          <DataTable columns={columns} data={tableData} actions={actions} />
+          <DataTable columns={columns} data={tableData} actions={actions} onRowClick={handleRowSelect} />
         )}
       </AnimatedContent>
 
@@ -1696,7 +1869,12 @@ const StudentViolation = () => {
               {analyticsData.studentAnalytics.predictedChangePercent >= 0 ? '+' : ''}{analyticsData.studentAnalytics.predictedChangePercent}%
             </p>
           </div>
-          <div className="min-h-[110px] rounded-2xl border border-white/10 bg-[linear-gradient(145deg,rgba(16,185,129,0.14),rgba(255,255,255,0.04))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+          <div
+            className="min-h-[110px] rounded-2xl border border-white/10 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+            style={{
+              backgroundColor: "rgb(255 255 255 / 0.05)",
+            }}
+          >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-100/60">
@@ -1704,7 +1882,10 @@ const StudentViolation = () => {
                 </p>
                 <p className="mt-1 text-sm text-white/90">Projected next-term violations</p>
               </div>
-              <span className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-100/75">
+              <span
+                className="rounded-full border border-emerald-300/20 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-100/75"
+                style={{ backgroundColor: "rgb(37 45 42 / 0.1)" }}
+              >
                 Predictive
               </span>
             </div>
