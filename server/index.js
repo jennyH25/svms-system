@@ -1833,6 +1833,65 @@ function isPersistedLogoPath(value) {
   );
 }
 
+/**
+ * Validate password against strong requirements
+ * Requirements:
+ * - At least 12 characters
+ * - Uppercase letter (A–Z)
+ * - Lowercase letter (a–z)
+ * - Number (0–9)
+ * - Special character (! @ # $ % ^ & *)
+ */
+function validatePasswordStrength(password) {
+  const pwd = String(password || '');
+
+  return {
+    minLength: pwd.length >= 12,
+    hasUppercase: /[A-Z]/.test(pwd),
+    hasLowercase: /[a-z]/.test(pwd),
+    hasNumber: /[0-9]/.test(pwd),
+    hasSpecial: /[!@#$%^&*]/.test(pwd),
+  };
+}
+
+function isPasswordStrong(password) {
+  const validation = validatePasswordStrength(password);
+  return Object.values(validation).every(v => v === true);
+}
+
+function getPasswordValidationError(password) {
+  const pwd = String(password || '');
+
+  if (pwd.length === 0) {
+    return 'Password is required';
+  }
+
+  const validation = validatePasswordStrength(pwd);
+  const failedRequirements = [];
+
+  if (!validation.minLength) {
+    failedRequirements.push('at least 12 characters');
+  }
+  if (!validation.hasUppercase) {
+    failedRequirements.push('uppercase letter (A–Z)');
+  }
+  if (!validation.hasLowercase) {
+    failedRequirements.push('lowercase letter (a–z)');
+  }
+  if (!validation.hasNumber) {
+    failedRequirements.push('number (0–9)');
+  }
+  if (!validation.hasSpecial) {
+    failedRequirements.push('special character (! @ # $ % ^ & *)');
+  }
+
+  if (failedRequirements.length > 0) {
+    return `Password must contain: ${failedRequirements.join(', ')}`;
+  }
+
+  return null;
+}
+
 async function getPasswordResetSession(pool, email) {
   const lookup = await pool.query(
     `
@@ -2775,10 +2834,10 @@ app.post("/api/auth/forgot-password/reset", async (req, res) => {
     });
   }
 
-  if (String(newPassword).length < 6) {
+  if (!isPasswordStrong(newPassword)) {
     return res.status(400).json({
       status: "error",
-      message: "Password must be at least 6 characters.",
+      message: getPasswordValidationError(newPassword),
     });
   }
 
@@ -3084,10 +3143,10 @@ app.put("/api/profile/student", async (req, res) => {
         });
       }
 
-      if (String(newPassword).length < 6) {
+      if (!isPasswordStrong(newPassword)) {
         return res.status(400).json({
           status: "error",
-          message: "New password must be at least 6 characters.",
+          message: getPasswordValidationError(newPassword),
         });
       }
 

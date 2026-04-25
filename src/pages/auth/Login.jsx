@@ -4,6 +4,8 @@ import logo from "../../assets/css_logo.png";
 import GradientText from "../../components/ui/GradientText";
 import AnimatedContent from "../../components/ui/AnimatedContent";
 import GlassInput from "../../components/ui/GlassInput";
+import PasswordRequirements from "../../components/ui/PasswordRequirements";
+import { isPasswordValid, getPasswordErrorMessage } from "../../lib/passwordValidator";
 
 const Login = () => {
   const [username, setUsername] = useState("");
@@ -25,6 +27,8 @@ const Login = () => {
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [showPasswordRequirements, setShowPasswordRequirements] = useState(false);
+  const [passwordValidationError, setPasswordValidationError] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -100,6 +104,8 @@ const Login = () => {
     setIsSendingCode(false);
     setIsVerifyingCode(false);
     setIsResettingPassword(false);
+    setShowPasswordRequirements(false);
+    setPasswordValidationError("");
   };
 
   const requestForgotPasswordCode = async () => {
@@ -211,14 +217,18 @@ const Login = () => {
     e.preventDefault();
     setForgotPasswordError("");
     setForgotPasswordSuccess("");
+    setPasswordValidationError("");
+
     if (!newPassword.trim() || !confirmPassword.trim()) {
       setForgotPasswordError("Please fill in all fields");
       return;
     }
-    if (newPassword.length < 6) {
-      setForgotPasswordError("Password must be at least 6 characters");
+
+    if (!isPasswordValid(newPassword)) {
+      setPasswordValidationError(getPasswordErrorMessage(newPassword));
       return;
     }
+
     if (newPassword !== confirmPassword) {
       setForgotPasswordError("Passwords do not match");
       return;
@@ -559,13 +569,26 @@ const Login = () => {
                     <p className="text-gray-400 text-sm mb-6">
                       Enter your new password
                     </p>
+                    {passwordValidationError && (
+                      <div className="bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg mb-6 text-sm">
+                        {passwordValidationError}
+                      </div>
+                    )}
                     <form onSubmit={handleNewPassword} className="space-y-8">
                       <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                          NEW PASSWORD <span className="text-red-400">*</span> <span className="text-xs text-gray-500">(Required)</span>
+                        </label>
                         <GlassInput
-                          label="NEW PASSWORD"
                           type={showNewPassword ? "text" : "password"}
                           value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
+                          onChange={(e) => {
+                            setNewPassword(e.target.value);
+                            setPasswordValidationError("");
+                          }}
+                          onFocus={() => setShowPasswordRequirements(true)}
+                          onBlur={() => newPassword === "" && setShowPasswordRequirements(false)}
+                          placeholder="Enter new password (must be strong)"
                           endIcon={
                             <button
                               type="button"
@@ -612,13 +635,23 @@ const Login = () => {
                             </button>
                           }
                         />
+                        <PasswordRequirements 
+                          password={newPassword} 
+                          showRequirements={showPasswordRequirements}
+                        />
                       </div>
                       <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                          CONFIRM PASSWORD <span className="text-red-400">*</span> <span className="text-xs text-gray-500">(Required)</span>
+                        </label>
                         <GlassInput
-                          label="CONFIRM PASSWORD"
                           type={showConfirmPassword ? "text" : "password"}
                           value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          onChange={(e) => {
+                            setConfirmPassword(e.target.value);
+                            setPasswordValidationError("");
+                          }}
+                          placeholder="Confirm your password"
                           endIcon={
                             <button
                               type="button"

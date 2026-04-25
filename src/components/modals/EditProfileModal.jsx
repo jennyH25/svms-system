@@ -3,6 +3,8 @@ import { Eye, EyeOff, Loader2, CheckCircle } from 'lucide-react'
 import Modal, { ModalFooter, ModalDivider } from '../ui/Modal'
 import GlassInput from '../ui/GlassInput'
 import Button from '../ui/Button'
+import PasswordRequirements from '../ui/PasswordRequirements'
+import { isPasswordValid, getPasswordErrorMessage } from '../../lib/passwordValidator'
 
 /**
  * EditProfileModal - Modal for editing user profile
@@ -50,8 +52,56 @@ const EditProfileModal = ({
     confirmPassword: false,
   })
 
+  const [showPasswordRequirements, setShowPasswordRequirements] = useState(false)
+  const [passwordError, setPasswordError] = useState('')
+  const [validationErrors, setValidationErrors] = useState({})
+
   const togglePasswordVisibility = (field) => {
     setShowPassword(prev => ({ ...prev, [field]: !prev[field] }))
+  }
+
+  const handlePasswordInputChange = (e) => {
+    const { name, value } = e.target
+    handleChange(name)(e)
+    
+    // Clear validation error when user starts typing
+    if (validationErrors[name]) {
+      setValidationErrors(prev => {
+        const newErrors = { ...prev }
+        delete newErrors[name]
+        return newErrors
+      })
+    }
+  }
+
+  const validatePasswordFields = () => {
+    const errors = {}
+    const { currentPassword, newPassword, confirmPassword } = formData
+
+    // Only validate if user is trying to change password
+    const wantsPasswordChange = currentPassword || newPassword || confirmPassword
+
+    if (wantsPasswordChange) {
+      if (!currentPassword) {
+        errors.currentPassword = 'Current password is required'
+      }
+      if (!newPassword) {
+        errors.newPassword = 'New password is required'
+      }
+      if (!confirmPassword) {
+        errors.confirmPassword = 'Confirm password is required'
+      }
+
+      if (newPassword && !isPasswordValid(newPassword)) {
+        errors.newPassword = getPasswordErrorMessage(newPassword)
+      }
+
+      if (newPassword && confirmPassword && newPassword !== confirmPassword) {
+        errors.confirmPassword = 'Passwords do not match'
+      }
+    }
+
+    return errors
   }
 
   const handleChange = (field) => (e) => {
@@ -60,6 +110,15 @@ const EditProfileModal = ({
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    
+    // Validate password fields
+    const errors = validatePasswordFields()
+    if (Object.keys(errors).length > 0) {
+      setValidationErrors(errors)
+      return
+    }
+
+    setValidationErrors({})
     await onSave?.(formData)
   }
 
@@ -140,18 +199,21 @@ const EditProfileModal = ({
         <ModalDivider />
 
         {/* Change Password Section */}
-        <p className="text-sm text-gray-400 mb-4">Change Password</p>
+        <p className="text-sm text-gray-400 mb-4">
+          Change Password <span className="text-red-400">*</span> <span className="text-xs text-gray-500">(Optional - only if you want to change your password)</span>
+        </p>
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-white mb-2">Current Password</label>
+            <label className="block text-sm font-medium text-white mb-2">Current Password <span className="text-red-400">*</span></label>
             <div className="relative">
               <GlassInput
                 type={showPassword.currentPassword ? 'text' : 'password'}
+                name="currentPassword"
                 value={formData.currentPassword}
-                onChange={handleChange('currentPassword')}
+                onChange={handlePasswordInputChange}
                 placeholder="Enter current password"
-                className="pr-10"
+                className={`pr-10 ${validationErrors.currentPassword ? 'border-red-400/50' : ''}`}
               />
               <button
                 type="button"
@@ -161,17 +223,25 @@ const EditProfileModal = ({
                 {showPassword.currentPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
             </div>
+            {validationErrors.currentPassword && (
+              <p className="text-red-400 text-xs mt-1">{validationErrors.currentPassword}</p>
+            )}
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-white mb-2">New Password</label>
+            <label className="block text-sm font-medium text-white mb-2">
+              New Password <span className="text-red-400">*</span>
+            </label>
             <div className="relative">
               <GlassInput
                 type={showPassword.newPassword ? 'text' : 'password'}
+                name="newPassword"
                 value={formData.newPassword}
-                onChange={handleChange('newPassword')}
-                placeholder="Enter new password"
-                className="pr-10"
+                onChange={handlePasswordInputChange}
+                onFocus={() => setShowPasswordRequirements(true)}
+                onBlur={() => formData.newPassword === '' && setShowPasswordRequirements(false)}
+                placeholder="Enter new password (must be strong)"
+                className={`pr-10 ${validationErrors.newPassword ? 'border-red-400/50' : ''}`}
               />
               <button
                 type="button"
@@ -181,17 +251,25 @@ const EditProfileModal = ({
                 {showPassword.newPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
             </div>
+            {validationErrors.newPassword && (
+              <p className="text-red-400 text-xs mt-1">{validationErrors.newPassword}</p>
+            )}
+            <PasswordRequirements 
+              password={formData.newPassword} 
+              showRequirements={showPasswordRequirements}
+            />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-white mb-2">Confirm Password</label>
+            <label className="block text-sm font-medium text-white mb-2">Confirm Password <span className="text-red-400">*</span></label>
             <div className="relative">
               <GlassInput
                 type={showPassword.confirmPassword ? 'text' : 'password'}
+                name="confirmPassword"
                 value={formData.confirmPassword}
-                onChange={handleChange('confirmPassword')}
+                onChange={handlePasswordInputChange}
                 placeholder="Confirm new password"
-                className="pr-10"
+                className={`pr-10 ${validationErrors.confirmPassword ? 'border-red-400/50' : ''}`}
               />
               <button
                 type="button"
@@ -201,6 +279,9 @@ const EditProfileModal = ({
                 {showPassword.confirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
             </div>
+            {validationErrors.confirmPassword && (
+              <p className="text-red-400 text-xs mt-1">{validationErrors.confirmPassword}</p>
+            )}
           </div>
         </div>
 
