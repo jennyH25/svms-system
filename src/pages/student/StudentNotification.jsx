@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Trash2, MoreVertical, Loader, Eye } from 'lucide-react';
+import { Trash2, MoreVertical, Loader, Eye, Minus } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import AnimatedContent from '../../components/ui/AnimatedContent';
 import Card from '../../components/ui/Card';
@@ -21,6 +21,7 @@ const StudentNotification = () => {
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [selectedForDeletion, setSelectedForDeletion] = useState(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isMarking, setIsMarking] = useState(false);
   const [showCheckboxes, setShowCheckboxes] = useState(false);
   const isFetchingRef = useRef(false);
   const navigate = useNavigate();
@@ -31,6 +32,18 @@ const StudentNotification = () => {
     () => notifications.find((note) => String(note.id) === String(selectedAlertNotificationId)) || null,
     [notifications, selectedAlertNotificationId],
   );
+
+  // Determine if all selected/all notifications are read
+  const areAllSelectedRead = useMemo(() => {
+    if (selectedForDeletion.size === 0) {
+      // Check if all notifications are read
+      return notifications.length > 0 && notifications.every(n => n.read_at);
+    }
+    // Check if all selected notifications are read
+    const selectedIds = Array.from(selectedForDeletion);
+    const selectedNotifications = notifications.filter(n => selectedIds.includes(n.id));
+    return selectedNotifications.length > 0 && selectedNotifications.every(n => n.read_at);
+  }, [notifications, selectedForDeletion]);
 
   const handleCheckboxChange = (notificationId) => {
     setSelectedForDeletion(prev => {
@@ -79,6 +92,11 @@ const StudentNotification = () => {
     setIsDeleting(true);
 
     try {
+      // Optimistic update - remove from state immediately
+      setNotifications(prev => prev.filter(n => !idsToDelete.includes(n.id)));
+      setSelectedForDeletion(new Set());
+      setShowDeleteConfirmModal(false);
+      
       let response;
       if (idsToDelete.length === 1) {
         // Single delete
@@ -100,23 +118,20 @@ const StudentNotification = () => {
 
       const data = await response.json().catch(() => ({}));
       
-      if (response.ok) {
-        // Remove deleted notifications from state
-        setNotifications(prev => prev.filter(n => !idsToDelete.includes(n.id)));
-        setShowDeleteConfirmModal(false);
-        setSelectedForDeletion(new Set());
-        // Hide checkboxes if no more selections
-        if (selectedForDeletion.size === 0) {
-          setShowCheckboxes(false);
-        }
-        window.dispatchEvent(new Event('notificationsDeleted'));
-      } else {
+      if (!response.ok) {
         console.error('Delete failed:', data.message);
         setError(data.message || 'Failed to delete notification(s)');
+        // Revert optimistic update - reload notifications
+        window.location.reload();
+      } else {
+        // Delete was successful
+        window.dispatchEvent(new Event('notificationsDeleted'));
       }
     } catch (err) {
       console.error('Delete error:', err);
       setError('Network error while deleting notification(s)');
+      // Revert optimistic update - reload notifications
+      window.location.reload();
     } finally {
       setIsDeleting(false);
     }
@@ -125,22 +140,22 @@ const StudentNotification = () => {
   const handleToggleReadStatus = async (notificationId, isCurrentlyRead) => {
     try {
       const endpoint = isCurrentlyRead ? 'mark-unread' : 'mark-read';
-      await fetch(`/api/notifications/${notificationId}/${endpoint}`, {
-        method: 'PUT',
-        headers: { ...getAuditHeaders() },
-      });
-
+      
+      // Optimistic update - update state immediately
       if (isCurrentlyRead) {
-        // Mark as unread - set read_at to null
         setNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, read_at: null } : n));
       } else {
-        // Mark as read - set read_at to current time
         setNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, read_at: new Date().toISOString() } : n));
         window.dispatchEvent(new Event('notificationRead'));
       }
+      
+      // Send API request in background (fire-and-forget)
+      fetch(`/api/notifications/${notificationId}/${endpoint}`, {
+        method: 'PUT',
+        headers: { ...getAuditHeaders() },
+      }).catch(() => null);
     } catch (err) {
       console.error(`Failed to mark notification ${isCurrentlyRead ? 'unread' : 'read'}`, err);
-      setError(`Failed to mark notification ${isCurrentlyRead ? 'unread' : 'read'}`);
     }
   };
 
@@ -154,6 +169,11 @@ const StudentNotification = () => {
 
     setIsDeleting(true);
     try {
+      // Optimistic update - remove from state immediately
+      setNotifications(prev => prev.filter(n => n.id !== notificationToDelete.id));
+      setShowSingleDeleteConfirmModal(false);
+      setNotificationToDelete(null);
+      
       const response = await fetch(`/api/notifications/${notificationToDelete.id}`, {
         method: 'DELETE',
         headers: { ...getAuditHeaders() },
@@ -161,18 +181,19 @@ const StudentNotification = () => {
 
       const data = await response.json().catch(() => ({}));
 
-      if (response.ok) {
-        setNotifications(prev => prev.filter(n => n.id !== notificationToDelete.id));
-        setShowSingleDeleteConfirmModal(false);
-        setNotificationToDelete(null);
-        window.dispatchEvent(new Event('notificationsDeleted'));
-      } else {
+      if (!response.ok) {
         console.error('Delete failed:', data.message);
         setError(data.message || 'Failed to delete notification');
+        // Revert optimistic update - reload notifications
+        window.location.reload();
+      } else {
+        window.dispatchEvent(new Event('notificationsDeleted'));
       }
     } catch (err) {
       console.error('Delete error:', err);
       setError('Network error while deleting notification');
+      // Revert optimistic update - reload notifications
+      window.location.reload();
     } finally {
       setIsDeleting(false);
     }
@@ -220,6 +241,9 @@ const StudentNotification = () => {
               metadata: parseNotificationMetadata(note.metadata),
             }));
             setNotifications(notifications);
+            // Clear selections when notifications are refreshed
+            setSelectedForDeletion(new Set());
+            setShowCheckboxes(false);
             if (!silent) setError('');
           }
         } else {
@@ -310,33 +334,115 @@ const StudentNotification = () => {
                 )
               )}
               {selectedForDeletion.size > 0 && (
-                <button
-                  className="text-red-300 hover:text-red-200 border border-red-400/40 bg-red-500/15 hover:bg-red-500/25 rounded-lg px-3 py-2 transition-colors text-sm flex items-center gap-1"
-                  onClick={handleDeleteSelected}
-                  disabled={isDeleting}
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete ({selectedForDeletion.size})
-                </button>
+                <>
+                  <button
+                    className="text-gray-300 hover:text-gray-200 border border-gray-400/40 bg-gray-500/15 hover:bg-gray-500/25 rounded-lg px-3 py-2 transition-colors text-sm flex items-center gap-1"
+                    onClick={() => setSelectedForDeletion(new Set())}
+                  >
+                    <Minus className="w-4 h-4" />
+                    Clear All
+                  </button>
+                  <button
+                    className="text-red-300 hover:text-red-200 border border-red-400/40 bg-red-500/15 hover:bg-red-500/25 rounded-lg px-3 py-2 transition-colors text-sm flex items-center gap-1"
+                    onClick={handleDeleteSelected}
+                    disabled={isDeleting}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete ({selectedForDeletion.size})
+                  </button>
+                </>
               )}
             </div>
             <div className="flex items-center gap-3">
               <button
-                className="text-gray-400 hover:text-white transition-colors"
+                className="text-gray-400 hover:text-white transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={async () => {
+                  setError('');
                   try {
-                    await fetch('/api/notifications/mark-read-all', {
-                      method: 'PUT',
-                      headers: { ...getAuditHeaders() },
-                    });
-                    setNotifications(prev => prev.map(n => ({ ...n, read_at: new Date().toISOString() })));
-                    window.dispatchEvent(new Event('notificationsRead'));
+                    if (selectedForDeletion.size > 0) {
+                      // Mark selected notifications
+                      const selectedIds = Array.from(selectedForDeletion);
+                      const endpoint = areAllSelectedRead ? 'mark-unread' : 'mark-read';
+                      
+                      // Store original state for reverting
+                      const originalNotifications = notifications;
+                      
+                      // Optimistic update - update state immediately
+                      if (areAllSelectedRead) {
+                        setNotifications(prev => prev.map(n =>
+                          selectedIds.includes(n.id) ? { ...n, read_at: null } : n
+                        ));
+                      } else {
+                        setNotifications(prev => prev.map(n =>
+                          selectedIds.includes(n.id) ? { ...n, read_at: new Date().toISOString() } : n
+                        ));
+                      }
+                      
+                      window.dispatchEvent(new Event('notificationsRead'));
+                      
+                      // Send API requests in background (fire-and-forget for speed)
+                      Promise.all(
+                        selectedIds.map(id =>
+                          fetch(`/api/notifications/${id}/${endpoint}`, {
+                            method: 'PUT',
+                            headers: { ...getAuditHeaders() },
+                          }).catch(() => null)
+                        )
+                      ).then(responses => {
+                        if (!responses || responses.some(res => res && !res.ok)) {
+                          // Silent failure - data persisted optimistically on client
+                          console.warn('Some notifications failed to update on server');
+                        }
+                      }).catch(() => null);
+                    } else {
+                      // Mark all notifications
+                      const originalNotifications = notifications;
+                      
+                      if (areAllSelectedRead) {
+                        // Mark all as unread - optimistic update
+                        setNotifications(prev => prev.map(n => ({ ...n, read_at: null })));
+                        window.dispatchEvent(new Event('notificationsRead'));
+                        
+                        // Fire-and-forget API call
+                        fetch('/api/notifications/mark-unread-all', {
+                          method: 'PUT',
+                          headers: { ...getAuditHeaders() },
+                        }).then(response => {
+                          if (!response.ok && response.status === 404) {
+                            // Fallback: send individual requests
+                            Promise.all(
+                              originalNotifications.map(n =>
+                                fetch(`/api/notifications/${n.id}/mark-unread`, {
+                                  method: 'PUT',
+                                  headers: { ...getAuditHeaders() },
+                                }).catch(() => null)
+                              )
+                            ).catch(() => null);
+                          }
+                        }).catch(() => null);
+                      } else {
+                        // Mark all as read - optimistic update
+                        setNotifications(prev => prev.map(n => ({ ...n, read_at: new Date().toISOString() })));
+                        window.dispatchEvent(new Event('notificationsRead'));
+                        
+                        // Fire-and-forget API call
+                        fetch('/api/notifications/mark-read-all', {
+                          method: 'PUT',
+                          headers: { ...getAuditHeaders() },
+                        }).catch(() => null);
+                      }
+                    }
                   } catch (err) {
-                    console.error('Failed to mark all read', err);
+                    console.error('Failed to mark as read/unread', err);
+                    setError('Error updating notification status');
                   }
                 }}
+                disabled={isMarking}
               >
-                Mark all as read
+                {selectedForDeletion.size > 0 
+                  ? `${areAllSelectedRead ? 'Mark as unread' : 'Mark as read'} (${selectedForDeletion.size})`
+                  : `${areAllSelectedRead ? 'Mark all as unread' : 'Mark all as read'}`
+                }
               </button>
             </div>
           </div>
@@ -359,23 +465,23 @@ const StudentNotification = () => {
                     type="checkbox"
                     checked={selectedForDeletion.has(note.id)}
                     onChange={() => handleCheckboxChange(note.id)}
-                    className={`w-4 h-4 rounded border-white/30 bg-white/10 cursor-pointer accent-blue-500 flex-shrink-0 ${showCheckboxes ? '' : 'opacity-0 pointer-events-none'}`}
+                    className={`w-4 h-4 rounded border-white/30 bg-white/10 cursor-pointer accent-blue-500 flex-shrink-0 transition-opacity ${showCheckboxes ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'}`}
                     onClick={(e) => e.stopPropagation()}
                   />
                   <div
                     className="flex-1 cursor-pointer hover:opacity-80 transition-opacity"
-                    onClick={async () => {
-                      // Mark as read if not already
+                    onClick={() => {
+                      // Mark as read if not already (optimistic update)
                       if (!note.read_at) {
-                        try {
-                          await fetch(`/api/notifications/${note.id}/mark-read`, {
-                            method: 'PUT',
-                            headers: { ...getAuditHeaders() },
-                          });
-                          setNotifications(prev => prev.map(n => n.id === note.id ? { ...n, read_at: new Date().toISOString() } : n));
-                        } catch (err) {
-                          console.error('Failed to mark read', err);
-                        }
+                        // Update state immediately
+                        setNotifications(prev => prev.map(n => n.id === note.id ? { ...n, read_at: new Date().toISOString() } : n));
+                        window.dispatchEvent(new Event('notificationRead'));
+                        
+                        // Send API request in background (fire-and-forget)
+                        fetch(`/api/notifications/${note.id}/mark-read`, {
+                          method: 'PUT',
+                          headers: { ...getAuditHeaders() },
+                        }).catch(() => null);
                       }
                       // Navigate based on metadata
                       const metadataType = String(note.metadata?.type || '');
