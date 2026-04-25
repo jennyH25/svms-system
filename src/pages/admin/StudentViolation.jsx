@@ -1077,7 +1077,7 @@ const StudentViolation = () => {
       { key: "date", width: 13 },
       { key: "studentName", width: 22 },
       { key: "schoolId", width: 14 },
-      { key: "yearSection", width: 12 },
+      { key: "yearSection", width: 22.22 },
       { key: "violation", width: 38 },
       { key: "reportedBy", width: 17 },
       { key: "remarks", width: 24 },
@@ -1085,32 +1085,32 @@ const StudentViolation = () => {
       { key: "status", width: 14 },
     ];
 
-    // Header image space and report header rows (compact, PDF-like spacing).
-    sheet.mergeCells("A1:J3");
-    sheet.mergeCells("A4:J4");
-    sheet.mergeCells("A5:J5");
-    sheet.getRow(1).height = 26;
-    sheet.getRow(2).height = 26;
-    sheet.getRow(3).height = 26;
-    sheet.getRow(4).height = 28;
-    sheet.getRow(5).height = 18;
+    // Header image space spanning full width across 8 rows for proper printing.
+    sheet.mergeCells("A1:J8");
+    sheet.mergeCells("A9:J9");
+    sheet.mergeCells("A10:J10");
+    for (let i = 1; i <= 8; i += 1) {
+      sheet.getRow(i).height = 35;
+    }
+    sheet.getRow(9).height = 28;
+    sheet.getRow(10).height = 18;
 
-    const titleCell = sheet.getCell("A4");
+    const titleCell = sheet.getCell("A9");
     titleCell.value = "Student Violation Report";
     titleCell.font = { name: "Calibri", size: 18, bold: true };
     titleCell.alignment = { horizontal: "center", vertical: "middle" };
 
-    const subtitleCell = sheet.getCell("A5");
+    const subtitleCell = sheet.getCell("A10");
     subtitleCell.value = `Generated: ${new Date().toLocaleString()}`;
     subtitleCell.font = { name: "Calibri", size: 11, color: { argb: "FF4B5563" } };
     subtitleCell.alignment = { horizontal: "center", vertical: "middle" };
 
-    // Deterministic centered header image placement in A1:J3 region.
+    // Deterministic centered header image placement spanning full width across 8 rows.
     const headerRegionWidthPx = sheet.columns.reduce(
       (total, column) => total + (Number(column.width || 10) * 7.5),
       0,
     );
-    const headerRegionHeightPx = [1, 2, 3].reduce(
+    const headerRegionHeightPx = [1, 2, 3, 4, 5, 6, 7, 8].reduce(
       (total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
       0,
     );
@@ -1138,14 +1138,14 @@ const StudentViolation = () => {
 
     const toRowCoordinate = (pixelOffset) => {
       let remaining = pixelOffset;
-      for (let rowIndex = 1; rowIndex <= 3; rowIndex += 1) {
+      for (let rowIndex = 1; rowIndex <= 8; rowIndex += 1) {
         const rowPx = Number(sheet.getRow(rowIndex).height || 15) * 1.333;
         if (remaining <= rowPx) {
           return (rowIndex - 1) + remaining / rowPx;
         }
         remaining -= rowPx;
       }
-      return 2;
+      return 7;
     };
 
     const imageId = workbook.addImage({ base64: dataUrl, extension: "png" });
@@ -1161,7 +1161,7 @@ const StudentViolation = () => {
     });
 
     // Table header.
-    const headerRowNumber = 6;
+    const headerRowNumber = 11;
     const headerRow = sheet.getRow(headerRowNumber);
     headerRow.values = [
       "No",
@@ -1364,7 +1364,7 @@ const StudentViolation = () => {
         1: { cellWidth: 22 },
         2: { cellWidth: 36 },
         3: { cellWidth: 26 },
-        4: { cellWidth: 22 },
+        4: { cellWidth: 24.44 },
         5: { cellWidth: 40 },
         6: { cellWidth: 26 },
         7: { cellWidth: 50 },

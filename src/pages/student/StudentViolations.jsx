@@ -946,20 +946,21 @@ if (format === 'jpeg') {
 						{ key: 'Status', width: 22 },
 					];
 
-		sheet.mergeCells('A1:H3');
-		sheet.mergeCells('A4:H4');
-		sheet.mergeCells('A5:H5');
+		sheet.mergeCells('A1:H9');
+		sheet.mergeCells('A10:H10');
+		sheet.mergeCells('A11:H11');
 		sheet.pageSetup = {
 			orientation: 'landscape',
 			fitToPage: true,
 			fitToWidth: 1,
-			fitToHeight: 1,
+			fitToHeight: 0,
 		};
-		sheet.getRow(1).height = 40;
-		sheet.getRow(2).height = 40;
-		sheet.getRow(3).height = 40;
-		sheet.getRow(4).height = 35;
-		sheet.getRow(5).height = 28;
+		for (let i = 1; i <= 9; i += 1) {
+			sheet.getRow(i).height = 35;
+		}
+		sheet.getRow(10).height = 28;
+		sheet.getRow(11).height = 20;
+		sheet.getRow(12).height = 24;
 
 		// Add header image if available
 		if (dataUrl && dimensions) {
@@ -967,13 +968,13 @@ if (format === 'jpeg') {
 				(total, colIndex) => total + (Number(sheet.getColumn(colIndex).width || 10) * 7.5),
 				0,
 			);
-			const headerRegionHeightPx = [1, 2, 3].reduce(
+			const headerRegionHeightPx = [1, 2, 3, 4, 5, 6, 7, 8, 9].reduce(
 				(total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
 				0,
 			);
 			const imageScale = Math.min(
 				(headerRegionWidthPx - 24) / dimensions.width,
-				(headerRegionHeightPx - 6) / dimensions.height,
+				(headerRegionHeightPx - 12) / dimensions.height,
 				1.25,
 			);
 			const imageWidthPx = Math.max(8, Math.round(dimensions.width * imageScale));
@@ -985,36 +986,36 @@ if (format === 'jpeg') {
 			const toColCoordinate = (pixelOffset) => {
 				let colIndex = 0;
 				let accumulatedPx = 0;
-					for (let i = 1; i <= 8; i += 1) {
-						const colWidth = sheet.getColumn(i).width || 15;
-						const colPx = colWidth * 7.5;
-						if (accumulatedPx + colPx >= pixelOffset) {
-							const offsetInCol = pixelOffset - accumulatedPx;
-							return (i - 1) + (offsetInCol / colPx);
-						}
-						accumulatedPx += colPx;
-						colIndex = i;
+				for (let i = 1; i <= 8; i += 1) {
+					const colWidth = sheet.getColumn(i).width || 15;
+					const colPx = colWidth * 7.5;
+					if (accumulatedPx + colPx >= pixelOffset) {
+						const offsetInCol = pixelOffset - accumulatedPx;
+						return (i - 1) + (offsetInCol / colPx);
 					}
-					return colIndex - 1;
-				};
+					accumulatedPx += colPx;
+					colIndex = i;
+				}
+				return colIndex - 1;
+			};
 
-				const toRowCoordinate = (pixelOffset) => {
-					let rowIndex = 0;
-					let accumulatedPx = 0;
-					for (let i = 1; i <= 3; i += 1) {
-						const rowPx = Number(sheet.getRow(i).height || 15) * 1.333;
-						if (accumulatedPx + rowPx >= pixelOffset) {
-							const offsetInRow = pixelOffset - accumulatedPx;
-							return (i - 1) + (offsetInRow / rowPx);
-						}
-						accumulatedPx += rowPx;
-						rowIndex = i;
+			const toRowCoordinate = (pixelOffset) => {
+				let rowIndex = 0;
+				let accumulatedPx = 0;
+				for (let i = 1; i <= 9; i += 1) {
+					const rowPx = Number(sheet.getRow(i).height || 15) * 1.333;
+					if (accumulatedPx + rowPx >= pixelOffset) {
+						const offsetInRow = pixelOffset - accumulatedPx;
+						return (i - 1) + (offsetInRow / rowPx);
 					}
-					return rowIndex - 1;
-				};
+					accumulatedPx += rowPx;
+					rowIndex = i;
+				}
+				return rowIndex - 1;
+			};
 
-				const imageId = workbook.addImage({ base64: dataUrl, extension: 'png' });
-				sheet.addImage(imageId, {
+			const imageId = workbook.addImage({ base64: dataUrl, extension: 'png' });
+			sheet.addImage(imageId, {
 					tl: {
 						col: toColCoordinate(leftOffsetPx),
 						row: toRowCoordinate(topOffsetPx),
@@ -1025,12 +1026,12 @@ if (format === 'jpeg') {
 					},
 				});
 
-const titleCell = sheet.getCell('A4');
+		const titleCell = sheet.getCell('A10');
 			titleCell.value = 'STUDENT VIOLATION REPORT';
 			titleCell.font = { name: 'Calibri', size: 20, bold: true, color: { argb: 'FF000000' } };
 			titleCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-		const subtitleCell = sheet.getCell('A5');
+		const subtitleCell = sheet.getCell('A11');
 			const generatedDateRaw = new Date();
 			const month = generatedDateRaw.toLocaleString(undefined, { month: 'long' });
 			const day = generatedDateRaw.getDate();
@@ -1040,17 +1041,7 @@ const titleCell = sheet.getCell('A4');
 			subtitleCell.font = { name: 'Calibri', size: 12, color: { argb: 'FF4B5563' } };
 			subtitleCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-				sheet.mergeCells('A6:H6');
-				sheet.getCell('A6').value = `Name: ${studentInfo.lastName.toUpperCase()}, ${studentInfo.firstName.toUpperCase()}`;
-				sheet.getCell('A6').font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF111827' } };
-				sheet.getCell('A6').alignment = { horizontal: 'left', vertical: 'middle' };
-
-				sheet.mergeCells('A7:H7');
-				sheet.getCell('A7').value = `Current Year/Section: ${studentInfo.yearSection || '-'}`;
-				sheet.getCell('A7').font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF111827' } };
-				sheet.getCell('A7').alignment = { horizontal: 'left', vertical: 'middle' };
-
-				const headerRowNumber = 8;
+				const headerRowNumber = 12;
 				const headerRow = sheet.getRow(headerRowNumber);
 				headerRow.values = Object.keys(sheetData[0]);
 				headerRow.height = 24;
@@ -1159,7 +1150,7 @@ const titleCell = sheet.getCell('A4');
 				});
 
 				// Student metadata is now shown above the table.
-			} else {
+		} else {
 				// Fallback if header image not available
 sheet.mergeCells('A1:H3');
 		sheet.mergeCells('A4:H4');

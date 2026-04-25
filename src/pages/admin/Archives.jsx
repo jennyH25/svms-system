@@ -2174,18 +2174,18 @@ const Archives = () => {
         }));
 
         const headerCellEnd = String.fromCharCode(65 + headers.length - 1);
-        sheet.mergeCells(`A1:${headerCellEnd}7`);
+        sheet.mergeCells(`A1:${headerCellEnd}9`);
 
         if (activeFolder === 'users') {
-          // Users folder: title row 9 and generated row 10
-          sheet.mergeCells(`A9:${headerCellEnd}9`);
-          sheet.mergeCells(`A10:${headerCellEnd}10`);
-        } else {
-          // Violations: full layout with year and semester
-          sheet.mergeCells(`A8:${headerCellEnd}8`);
-          sheet.mergeCells(`A9:${headerCellEnd}9`);
+          // Users folder: title row 10 and generated row 11
           sheet.mergeCells(`A10:${headerCellEnd}10`);
           sheet.mergeCells(`A11:${headerCellEnd}11`);
+        } else {
+          // Violations: full layout with year and semester - rows 10-13
+          sheet.mergeCells(`A10:${headerCellEnd}10`);
+          sheet.mergeCells(`A11:${headerCellEnd}11`);
+          sheet.mergeCells(`A12:${headerCellEnd}12`);
+          sheet.mergeCells(`A13:${headerCellEnd}13`);
         }
         
         sheet.pageSetup = {
@@ -2200,25 +2200,20 @@ const Archives = () => {
           verticalCentered: false,
         };
         
-        sheet.getRow(1).height = 30;
-        sheet.getRow(2).height = 30;
-        sheet.getRow(3).height = 30;
-        sheet.getRow(4).height = 30;
-        sheet.getRow(5).height = 30;
-        sheet.getRow(6).height = 30;
-        sheet.getRow(7).height = 30;
+        for (let i = 1; i <= 9; i += 1) {
+          sheet.getRow(i).height = 32;
+        }
         
         if (activeFolder === 'users') {
-          sheet.getRow(8).height = 10;
-          sheet.getRow(9).height = 28;
-          sheet.getRow(10).height = 18;
-          sheet.getRow(11).height = 24;
-        } else {
-          sheet.getRow(8).height = 28;
-          sheet.getRow(9).height = 20;
-          sheet.getRow(10).height = 20;
+          sheet.getRow(10).height = 28;
           sheet.getRow(11).height = 20;
           sheet.getRow(12).height = 24;
+        } else {
+          sheet.getRow(10).height = 28;
+          sheet.getRow(11).height = 20;
+          sheet.getRow(12).height = 20;
+          sheet.getRow(13).height = 20;
+          sheet.getRow(14).height = 24;
         }
 
         // Add header image if available
@@ -2236,7 +2231,7 @@ const Archives = () => {
             const width = sheet.getColumn(index + 1).width || 10;
             return Number(width) * 7.5;
           }).reduce((total, width) => total + width, 0);
-          const headerRegionHeightPx = [1, 2, 3, 4, 5, 6, 7].reduce(
+          const headerRegionHeightPx = [1, 2, 3, 4, 5, 6, 7, 8, 9].reduce(
             (total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
             0,
           );
@@ -2266,7 +2261,7 @@ const Archives = () => {
 
           const toRowCoordinate = (pixelOffset) => {
             let accumulatedPx = 0;
-            for (let i = 1; i <= 7; i += 1) {
+            for (let i = 1; i <= 9; i += 1) {
               const rowPx = Number(sheet.getRow(i).height || 15) * 1.333;
               if (accumulatedPx + rowPx >= pixelOffset) {
                 const offsetInRow = pixelOffset - accumulatedPx;
@@ -2274,7 +2269,7 @@ const Archives = () => {
               }
               accumulatedPx += rowPx;
             }
-            return 6;
+            return 8;
           };
 
           const imageId = workbook.addImage({ base64: headerImage.dataUrl, extension: 'png' });
@@ -2292,13 +2287,13 @@ const Archives = () => {
 
         // Title and subtitle
         if (activeFolder === 'users') {
-          // Users folder: title in A9 and generated date in A10
-          const titleCell = sheet.getCell('A9');
+          // Users folder: title in A10 and generated date in A11
+          const titleCell = sheet.getCell('A10');
           titleCell.value = title;
           titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FF000000' } };
           titleCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-          const generatedCell = sheet.getCell('A10');
+          const generatedCell = sheet.getCell('A11');
           const generatedDateRaw = new Date();
           const month = generatedDateRaw.toLocaleString(undefined, { month: 'long' });
           const day = generatedDateRaw.getDate();
@@ -2308,23 +2303,23 @@ const Archives = () => {
           generatedCell.font = { name: 'Calibri', size: 11, color: { argb: 'FF4B5563' } };
           generatedCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         } else {
-          // Violations layout: title in A8, year in A9, semester in A10, generated in A11
-          const titleCell = sheet.getCell('A8');
+          // Violations layout: title in A10, year in A11, semester in A12, generated in A13
+          const titleCell = sheet.getCell('A10');
           titleCell.value = title;
           titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FF000000' } };
           titleCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-          const yearCell = sheet.getCell('A9');
+          const yearCell = sheet.getCell('A11');
           yearCell.value = yearLine || '';
           yearCell.font = { name: 'Calibri', size: 12, color: { argb: 'FF1F2937' } };
           yearCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-          const semesterCell = sheet.getCell('A10');
+          const semesterCell = sheet.getCell('A12');
           semesterCell.value = semesterLine || '';
           semesterCell.font = { name: 'Calibri', size: 12, color: { argb: 'FF1F2937' } };
           semesterCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-          const generatedCell = sheet.getCell('A11');
+          const generatedCell = sheet.getCell('A13');
           const generatedDateRaw = new Date();
           const month = generatedDateRaw.toLocaleString(undefined, { month: 'long' });
           const day = generatedDateRaw.getDate();
@@ -2336,7 +2331,7 @@ const Archives = () => {
         }
 
         // Header row
-        const headerRow = sheet.getRow(activeFolder === 'users' ? 11 : 12);
+        const headerRow = sheet.getRow(activeFolder === 'users' ? 12 : 14);
         headerRow.values = headers;
         headerRow.height = 24;
         headerRow.eachCell((cell) => {
@@ -2356,7 +2351,7 @@ const Archives = () => {
         });
 
         // Data rows
-        const dataRowStart = activeFolder === 'users' ? 12 : 13;
+        const dataRowStart = activeFolder === 'users' ? 13 : 15;
         sheetData.forEach((row, index) => {
           const excelRow = sheet.getRow(dataRowStart + index);
           excelRow.values = Object.values(row);
