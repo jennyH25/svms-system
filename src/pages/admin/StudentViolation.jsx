@@ -585,6 +585,18 @@ const StudentViolation = () => {
     setShowSignatureModal(false); // close right away for quick feedback
 
     try {
+      // Optimistic update: immediately update records and editTarget for instant feedback
+      mergeRecord({ id: signatureTarget.id, signature_image: signatureImage });
+      setEditTarget((prev) =>
+        prev ? { ...prev, signature_image: signatureImage } : prev,
+      );
+
+      // Show success modal immediately for instant feedback (don't wait for API)
+      setSignatureTarget(null);
+      setSignatureSuccessModal(true);
+      setIsSignatureSaving(false);
+
+      // Confirm with server in background
       const response = await fetch(
         `/api/student-violations/${signatureTarget.id}/signature`,
         {
@@ -600,18 +612,16 @@ const StudentViolation = () => {
       if (!response.ok) {
         throw new Error(result?.message || "Unable to save signature.");
       }
-      mergeRecord(result.record);
-      // Update editTarget so the edit modal reflects the new signature immediately
-      setEditTarget((prev) =>
-        prev ? { ...prev, signature_image: signatureImage } : prev,
-      );
-      setSignatureTarget(null);
-      setSignatureSuccessModal(true);
+      
+      // Use the full record from API response to ensure data consistency
+      if (result.record) {
+        mergeRecord(result.record);
+      }
     } catch (error) {
       setSignatureTarget(null);
       setErrorModalMessage(error.message || "Unable to save signature.");
       setShowErrorModal(true);
-    } finally {
+      setSignatureSuccessModal(false); // close success modal if there's an error
       setIsSignatureSaving(false);
     }
   };

@@ -7,9 +7,10 @@ import AlertModal from '../../components/ui/AlertModal';
 import AnimatedContent from '../../components/ui/AnimatedContent';
 import SearchBar from '../../components/ui/SearchBar';
 import Button from '../../components/ui/Button';
-import { Bell, Download, Filter, ChevronDown } from 'lucide-react';
+import { Bell, Download, Filter, ChevronDown, PenTool, CheckCircle } from 'lucide-react';
 import { getAuditHeaders } from '@/lib/auditHeaders';
 import { cachedFetchJSON } from '@/lib/fetchHelper';
+import SignaturePadModal from '../../components/modals/SignaturePadModal';
 
 const EXPORT_HEADER_IMAGE_PATH = '/plpasig_header.png';
 
@@ -128,6 +129,18 @@ const StudentViolations = () => {
 	const [downloadAllFormat, setDownloadAllFormat] = useState('pdf');
 	const [showDownloadAlertModal, setShowDownloadAlertModal] = useState(false);
 	const [downloadAlertMessage, setDownloadAlertMessage] = useState("");
+	const [showSignatureModal, setShowSignatureModal] = useState(false);
+	const [signatureTarget, setSignatureTarget] = useState(null);
+	const [signatureSuccessModal, setSignatureSuccessModal] = useState(false);
+	const [isSignatureSaving, setIsSignatureSaving] = useState(false);
+	const [showErrorModal, setShowErrorModal] = useState(false);
+	const [errorModalMessage, setErrorModalMessage] = useState("");
+
+	// Helper to merge updated record into state
+	const mergeRecord = useCallback((updated) => {
+		if (!updated) return;
+		setRecords((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+	}, []);
 
 	// Get student info from localStorage
 	const getStudentInfo = useCallback(() => {
@@ -1582,6 +1595,57 @@ sheet.mergeCells('A1:H3');
 		setDownloadAllModalOpen(false);
 	}, [createDownloadAll, downloadAllFormat]);
 
+	const handleAttachSignatureFromTable = useCallback((row) => {
+		if (!row?.id && !row?.raw?.id) return;
+		setSignatureTarget(row.raw || row);
+		setShowSignatureModal(true);
+	}, []);
+
+	const handleSignatureSave = useCallback(async (signatureImage) => {
+		if (!signatureTarget?.id) return;
+
+		setIsSignatureSaving(true);
+		setShowSignatureModal(false); // close right away for quick feedback
+
+		try {
+			// Optimistic update: immediately update records with signature for instant feedback
+			mergeRecord({ id: signatureTarget.id, signature_image: signatureImage });
+			
+			// Show success modal immediately for instant feedback (don't wait for API)
+			setSignatureTarget(null);
+			setSignatureSuccessModal(true);
+			setIsSignatureSaving(false);
+			
+			// Confirm with server in background
+			const response = await fetch(
+				`/api/student-violations/${signatureTarget.id}/signature`,
+				{
+					method: "PUT",
+					headers: {
+						"Content-Type": "application/json",
+						...getAuditHeaders(),
+					},
+					body: JSON.stringify({ signatureImage }),
+				},
+			);
+			const result = await response.json().catch(() => ({}));
+			if (!response.ok) {
+				throw new Error(result?.message || "Unable to save signature.");
+			}
+			
+			// Use the full record from API response to ensure data consistency
+			if (result.record) {
+				mergeRecord(result.record);
+			}
+		} catch (error) {
+			setSignatureTarget(null);
+			setErrorModalMessage(error.message || "Unable to save signature.");
+			setShowErrorModal(true);
+			setSignatureSuccessModal(false); // close success modal if there's an error
+			setIsSignatureSaving(false);
+		}
+	}, [signatureTarget, mergeRecord]);
+
 	const columns = useMemo(
 		() => [
 			{ key: 'no', label: 'No.', width: 'w-12' },
@@ -1593,17 +1657,43 @@ sheet.mergeCells('A1:H3');
 			{
 				key: 'signature',
 				label: 'Signature',
-				width: 'w-32',
-				render: (_value) => (
-					<div className="text-xs text-gray-400">
+				width: 'w-48',
+				render: (_value, row) => (
+					<div className="flex items-center gap-2">
 						{_value ? (
-							<img
-								src={_value}
-								alt="Signature"
-								className="h-8 w-24 object-contain bg-white rounded border border-gray-200"
-							/>
+							<>
+								<img
+									src={_value}
+									alt="Signature"
+									className="h-8 w-24 object-contain bg-white rounded border border-gray-200"
+								/>
+								<Button
+									size="sm"
+									variant="secondary"
+									className="px-2 py-1 h-7 text-xs gap-1"
+									onClick={(e) => {
+										e.stopPropagation();
+										handleAttachSignatureFromTable(row);
+									}}
+									title="Update signature"
+								>
+									<PenTool className="w-3 h-3" />
+								</Button>
+							</>
 						) : (
-							'-'
+							<Button
+								size="sm"
+								variant="secondary"
+								className="px-3 py-1 h-7 text-xs gap-1"
+								onClick={(e) => {
+									e.stopPropagation();
+									handleAttachSignatureFromTable(row);
+								}}
+								title="Add signature"
+							>
+								<PenTool className="w-3 h-3" />
+								Attach signature
+							</Button>
 						)}
 					</div>
 				),
@@ -1661,7 +1751,7 @@ sheet.mergeCells('A1:H3');
 				),
 			},
 		],
-		[triggerDownloadModal, triggerDownloadAllModal],
+		[triggerDownloadModal, triggerDownloadAllModal, handleAttachSignatureFromTable],
 	);
 
 	const tableData = useMemo(() => {
@@ -1876,6 +1966,47 @@ sheet.mergeCells('A1:H3');
 							onClose={() => setShowDownloadAlertModal(false)}
 							title="Export unavailable"
 							message={downloadAlertMessage}
+							confirmLabel="Okay"
+						/>
+
+						<SignaturePadModal
+							isOpen={showSignatureModal}
+							onClose={() => setShowSignatureModal(false)}
+							onSave={handleSignatureSave}
+							isLoading={isSignatureSaving}
+						/>
+
+						<Modal
+							isOpen={signatureSuccessModal}
+							onClose={() => setSignatureSuccessModal(false)}
+							title={<span className="font-black font-inter flex items-center gap-2">
+								<CheckCircle className="w-5 h-5 text-green-400" />
+								Signature Saved
+							</span>}
+							size="sm"
+							showCloseButton
+						>
+							<div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3 mb-4">
+								<p className="text-sm font-medium text-green-300">
+									The digital signature has been successfully saved. Administrators can now see your signed document.
+								</p>
+							</div>
+							<ModalFooter>
+								<Button
+									variant="primary"
+									onClick={() => setSignatureSuccessModal(false)}
+									className="px-6"
+								>
+									OK
+								</Button>
+							</ModalFooter>
+						</Modal>
+
+						<AlertModal
+							isOpen={showErrorModal}
+							onClose={() => setShowErrorModal(false)}
+							title="Error"
+							message={errorModalMessage}
 							confirmLabel="Okay"
 						/>
 
