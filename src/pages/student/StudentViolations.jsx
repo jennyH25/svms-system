@@ -447,7 +447,7 @@ const createDownload = useCallback(async (record, format) => {
 		}
 
 		sheet.mergeCells('B7:H7');
-		sheet.getCell('B7').value = 'Student Violation Report';
+		sheet.getCell('B7').value = 'STUDENT VIOLATION REPORT';
 		sheet.getCell('B7').font = { name: 'Calibri', size: 15, bold: true, color: { argb: 'FF111827' } };
 		sheet.getCell('B7').alignment = { horizontal: 'center', vertical: 'middle' };
 
@@ -642,9 +642,9 @@ if (format === 'pdf') {
 		}
 
 		doc.setFont('helvetica', 'bold');
-		doc.setFontSize(14);
-		doc.text('Student Violation Report', pageWidth / 2, cursorY + 2, { align: 'center' });
-		cursorY += 8;
+		doc.setFontSize(16);
+		doc.text('STUDENT VIOLATION REPORT', pageWidth / 2, cursorY + 2, { align: 'center' });
+		cursorY += 7;
 
 		const violationText = record.violation || record.violation_label || record.violation_name || '-';
 		const rawRemarks = record.remarks || '-';
@@ -669,101 +669,102 @@ if (format === 'pdf') {
 
 		// Student info box.
 		const infoY = cursorY;
-		const infoH = 32;
+		const infoH = 24;
 		const midX = margin + contentWidth / 2;
 		doc.setDrawColor(203, 213, 225);
 		doc.setLineWidth(0.3);
 		doc.rect(margin, infoY, contentWidth, infoH);
 		doc.line(midX, infoY + 4, midX, infoY + infoH - 4);
-		doc.line(margin + 4, infoY + 11, midX - 4, infoY + 11);
-		doc.line(margin + 4, infoY + 21, midX - 4, infoY + 21);
-		doc.line(midX + 4, infoY + 11, margin + contentWidth - 4, infoY + 11);
-		doc.line(midX + 4, infoY + 21, margin + contentWidth - 4, infoY + 21);
+		doc.line(margin + 4, infoY + 8, midX - 4, infoY + 8);
+		doc.line(margin + 4, infoY + 16, midX - 4, infoY + 16);
+		doc.line(midX + 4, infoY + 8, margin + contentWidth - 4, infoY + 8);
+		doc.line(midX + 4, infoY + 16, margin + contentWidth - 4, infoY + 16);
 
-		drawLabelValue(margin + 6, infoY + 7.5, 'Date:', formatDisplayDate(record.createdAtRaw || record.date), 54);
-		drawLabelValue(midX + 6, infoY + 7.5, 'Student No:', studentNo || '-', 54);
-		drawLabelValue(margin + 6, infoY + 17.5, 'Name:', studentName, 54);
-		drawLabelValue(midX + 6, infoY + 17.5, 'Program/Section:', programYearSection, 54);
-		drawLabelValue(margin + 6, infoY + 27.5, 'Year Level:', yearLevelText, 54);
-		drawLabelValue(midX + 6, infoY + 27.5, 'Semester/S.Y.:', academicTermText, 54);
+		drawLabelValue(margin + 6, infoY + 5, 'Date:', formatDisplayDate(record.createdAtRaw || record.date), 54);
+		drawLabelValue(midX + 6, infoY + 5, 'Student No:', studentNo || '-', 54);
+		drawLabelValue(margin + 6, infoY + 12, 'Name:', studentName, 54);
+		drawLabelValue(midX + 6, infoY + 12, 'Program/Section:', programYearSection, 54);
+		drawLabelValue(margin + 6, infoY + 19, 'Year Level:', yearLevelText, 54);
+		drawLabelValue(midX + 6, infoY + 19, 'Semester/S.Y.:', academicTermText, 54);
 		cursorY = infoY + infoH + 8;
 
 		// VIOLATION section.
-		const sectionHeaderH = 8;
+		const sectionHeaderH = 7;
 		doc.setFillColor(229, 231, 235);
 		doc.rect(margin, cursorY, contentWidth, sectionHeaderH, 'F');
 		doc.rect(margin, cursorY, contentWidth, sectionHeaderH);
 		doc.setFont('helvetica', 'bold');
-		doc.setFontSize(11);
-		doc.text('VIOLATION', margin + 6, cursorY + 5.5);
+		doc.setFontSize(10);
+		doc.text('VIOLATION', margin + 6, cursorY + 4.5);
 
 		doc.setFont('helvetica', 'normal');
-		doc.setFontSize(10);
-		const violationLines = doc.splitTextToSize(String(violationText), contentWidth - 12).slice(0, 7);
-		const violationBodyH = 22;
+		doc.setFontSize(9);
+		const violationLines = doc.splitTextToSize(String(violationText), contentWidth - 12).slice(0, 5);
+		const violationBodyH = 14;
 		doc.rect(margin, cursorY + sectionHeaderH, contentWidth, violationBodyH);
-		doc.text(violationLines, margin + 6, cursorY + sectionHeaderH + 7);
-		cursorY += sectionHeaderH + violationBodyH + 6;
+		doc.text(violationLines, margin + 6, cursorY + sectionHeaderH + 5);
+		cursorY += sectionHeaderH + violationBodyH + 3;
 
 		// REMARKS section.
 		doc.setFillColor(229, 231, 235);
 		doc.rect(margin, cursorY, contentWidth, sectionHeaderH, 'F');
 		doc.rect(margin, cursorY, contentWidth, sectionHeaderH);
 		doc.setFont('helvetica', 'bold');
-		doc.setFontSize(11);
-		doc.text('REMARKS', margin + 6, cursorY + 5.5);
+		doc.setFontSize(10);
+		doc.text('REMARKS', margin + 6, cursorY + 4.5);
 
 		doc.setFont('helvetica', 'normal');
-		doc.setFontSize(10);
-		const remarksLines = doc.splitTextToSize(String(remarksText), contentWidth - 12).slice(0, 9);
-		const remarksBodyH = 30;
+		doc.setFontSize(9);
+		const remarksLines = doc.splitTextToSize(String(remarksText), contentWidth - 12).slice(0, 6);
+		const remarksBodyH = 18;
 		doc.rect(margin, cursorY + sectionHeaderH, contentWidth, remarksBodyH);
-		doc.text(remarksLines, margin + 6, cursorY + sectionHeaderH + 7);
-		cursorY += sectionHeaderH + remarksBodyH + 8;
+		doc.text(remarksLines, margin + 6, cursorY + sectionHeaderH + 5);
+		cursorY += sectionHeaderH + remarksBodyH + 3;
 
 		doc.setFillColor(248, 250, 252);
-		doc.rect(margin, cursorY, contentWidth, 10, 'F');
-		doc.rect(margin, cursorY, contentWidth, 10);
+		doc.rect(margin, cursorY, contentWidth, 8, 'F');
+		doc.rect(margin, cursorY, contentWidth, 8);
 		doc.setFont('helvetica', 'bold');
-		doc.setFontSize(11);
-		doc.text('STATUS:', margin + 6, cursorY + 6.5);
+		doc.setFontSize(10);
+		doc.text('STATUS:', margin + 6, cursorY + 5);
 		doc.setFont('helvetica', 'normal');
-		doc.text(`${statusText}   |   Reported By: ${reportedBy || '-'}`, margin + 30, cursorY + 6.5, { maxWidth: contentWidth - 36 });
-		cursorY += 16;
+		doc.setFontSize(9);
+		doc.text(`${statusText}   |   Reported By: ${reportedBy || '-'}`, margin + 30, cursorY + 5, { maxWidth: contentWidth - 36 });
+		cursorY += 10;
 
 		doc.setDrawColor(203, 213, 225);
 		doc.line(margin, cursorY, margin + contentWidth, cursorY);
-		cursorY += 7;
+		cursorY += 2;
 
 		doc.setFont('helvetica', 'bold');
-		doc.setFontSize(11);
+		doc.setFontSize(10);
 		doc.setTextColor(75, 85, 99);
 		doc.text('STUDENT COPY', pageWidth / 2, cursorY, { align: 'center' });
 		doc.setTextColor(0, 0, 0);
-		cursorY += 8;
+		cursorY += 3;
 
 		const leftColX = margin + 6;
 		const rightColX = margin + contentWidth / 2 + 6;
-		const signLineY = cursorY + 16;
+		const farRightX = margin + contentWidth - 50; // Very far right corner
+		const signLineY = cursorY + 12;
 
-		doc.setFont('helvetica', 'normal');
-		doc.setFontSize(11);
-		doc.text('Student Signature', leftColX, cursorY + 3);
-		doc.text('Reported By', rightColX, cursorY + 3);
+		// Draw signature area with single line on the FAR RIGHT corner
+		doc.setDrawColor(0, 0, 0);
+		doc.setLineWidth(0.3);
 
 		if (signatureImageData) {
-			doc.addImage(signatureImageData, 'PNG', leftColX, cursorY + 5, 46, 12);
+			// Center signature image in the line (35mm line, 20mm image)
+			doc.addImage(signatureImageData, 'PNG', farRightX + 7.5, cursorY, 20, 8);
 		}
 
-		doc.line(leftColX, signLineY, leftColX + 68, signLineY);
-		doc.line(rightColX, signLineY, rightColX + 68, signLineY);
+		// Draw single line for signature (35mm - same as JPEG ratio)
+		doc.line(farRightX, signLineY, farRightX + 35, signLineY);
 
+		// Center SIGNATURE text BELOW the line
 		doc.setFont('helvetica', 'bold');
-		doc.setFontSize(12);
-		doc.text(reportedBy || '-', rightColX, signLineY - 2, { maxWidth: 68 });
-		doc.setFont('helvetica', 'normal');
-		doc.setFontSize(10);
-		doc.text('Printed Name', rightColX, signLineY + 6);
+		doc.setFontSize(9);
+		const signatureLineX = farRightX + 17.5; // Center of the line
+		doc.text('STUDENT SIGNATURE', signatureLineX, signLineY + 4, { align: 'center' });
 
 		doc.save(filename);
 	} catch (error) {
@@ -773,14 +774,18 @@ if (format === 'pdf') {
 }
 if (format === 'jpeg') {
 	try {
-		const headerImage = await resolveHeaderImage();
+		const signatureSrc = record.signature || record.signature_image || record.signatureImage || '';
+		const [signatureImageData, headerImage] = await Promise.all([
+			getSignatureImageData(signatureSrc),
+			resolveHeaderImage(),
+		]);
 
 		const canvas = document.createElement('canvas');
 		canvas.width = 2000;
 		const violationText = record.violation || record.violation_label || record.violation_name || '-';
 		const rawRemarks = record.remarks || '-';
 		const remarksText = String(rawRemarks).trim() === '-' ? '' : rawRemarks;
-		canvas.height = 1500;
+		canvas.height = 1800;
 		const ctx = canvas.getContext('2d');
 		if (!ctx) throw new Error('Unable to initialize image canvas.');
 
@@ -839,15 +844,79 @@ if (format === 'jpeg') {
 		ctx.moveTo(1000, y);
 		ctx.lineTo(1000, y + 220);
 		ctx.stroke();
+		
+		// Draw horizontal separator lines
+		ctx.beginPath();
+		ctx.moveTo(100, y + 65);
+		ctx.lineTo(1900, y + 65);
+		ctx.stroke();
+		
+		ctx.beginPath();
+		ctx.moveTo(100, y + 135);
+		ctx.lineTo(1900, y + 135);
+		ctx.stroke();
+		
+		ctx.beginPath();
+		ctx.moveTo(100, y + 205);
+		ctx.lineTo(1900, y + 205);
+		ctx.stroke();
 
+		// Draw bold labels and regular values with measured spacing (like PDF)
 		ctx.fillStyle = '#111827';
+		const measureTextWidth = (text, font) => {
+			ctx.font = font;
+			return ctx.measureText(text).width;
+		};
+		const spacingAfterLabel = 15; // Consistent spacing between label and value
+		
 		ctx.font = 'bold 28px Arial';
-		ctx.fillText(`Date: ${formatDisplayDate(record.createdAtRaw || record.date)}`, 130, y + 55);
-		ctx.fillText(`Student No: ${studentNo || '-'}`, 1030, y + 55);
-		ctx.fillText(`Name: ${studentName}`, 130, y + 125);
-		ctx.fillText(`Program/Section: ${programYearSection}`, 1030, y + 125);
-		ctx.fillText(`Year Level: ${yearLevelText}`, 130, y + 195);
-		ctx.fillText(`Semester/S.Y.: ${academicTermText}`, 1030, y + 195);
+		let labelWidth, textX = 130;
+		
+		// Date row
+		labelWidth = measureTextWidth('Date:', 'bold 28px Arial');
+		ctx.fillText('Date:', textX, y + 55);
+		ctx.font = '28px Arial';
+		ctx.fillText(formatDisplayDate(record.createdAtRaw || record.date), textX + labelWidth + spacingAfterLabel, y + 55);
+		
+		// Student No row
+		ctx.font = 'bold 28px Arial';
+		textX = 1030;
+		labelWidth = measureTextWidth('Student No:', 'bold 28px Arial');
+		ctx.fillText('Student No:', textX, y + 55);
+		ctx.font = '28px Arial';
+		ctx.fillText(studentNo || '-', textX + labelWidth + spacingAfterLabel, y + 55);
+		
+		// Name row
+		ctx.font = 'bold 28px Arial';
+		textX = 130;
+		labelWidth = measureTextWidth('Name:', 'bold 28px Arial');
+		ctx.fillText('Name:', textX, y + 125);
+		ctx.font = '28px Arial';
+		ctx.fillText(studentName, textX + labelWidth + spacingAfterLabel, y + 125);
+		
+		// Program/Section row
+		ctx.font = 'bold 28px Arial';
+		textX = 1030;
+		labelWidth = measureTextWidth('Program/Section:', 'bold 28px Arial');
+		ctx.fillText('Program/Section:', textX, y + 125);
+		ctx.font = '28px Arial';
+		ctx.fillText(programYearSection, textX + labelWidth + spacingAfterLabel, y + 125);
+		
+		// Year Level row
+		ctx.font = 'bold 28px Arial';
+		textX = 130;
+		labelWidth = measureTextWidth('Year Level:', 'bold 28px Arial');
+		ctx.fillText('Year Level:', textX, y + 195);
+		ctx.font = '28px Arial';
+		ctx.fillText(yearLevelText, textX + labelWidth + spacingAfterLabel, y + 195);
+		
+		// Semester/S.Y. row
+		ctx.font = 'bold 28px Arial';
+		textX = 1030;
+		labelWidth = measureTextWidth('Semester/S.Y.:', 'bold 28px Arial');
+		ctx.fillText('Semester/S.Y.:', textX, y + 195);
+		ctx.font = '28px Arial';
+		ctx.fillText(academicTermText, textX + labelWidth + spacingAfterLabel, y + 195);
 
 		y += 255;
 		ctx.fillStyle = '#e5e7eb';
@@ -886,6 +955,47 @@ if (format === 'jpeg') {
 		ctx.fillText('STATUS:', 130, y + 36);
 		ctx.font = '24px Arial';
 		ctx.fillText(`${statusText}  |  Reported By: ${reportedBy || '-'}`, 330, y + 36);
+
+		// STUDENT COPY section with signature on the FAR RIGHT corner
+		y += 80;
+		ctx.fillStyle = '#0f172a';
+		ctx.font = 'bold 24px Arial';
+		ctx.textAlign = 'center';
+		ctx.fillText('STUDENT COPY', 1000, y);
+
+		y += 50;
+		ctx.textAlign = 'right';
+
+		// Draw signature image if available on the FAR RIGHT corner
+		const signatureLineLength = 250; // 250px line
+		const signatureImageWidth = 150; // Image size
+		const signatureStartX = 1900 - signatureLineLength - 20; // Far right with margin
+		
+		if (signatureImageData) {
+			try {
+				const signatureImg = await loadImageFromDataUrl(signatureImageData);
+				// Center image within the signature area
+				const imageX = signatureStartX + (signatureLineLength - signatureImageWidth) / 2;
+				ctx.drawImage(signatureImg, imageX, y, signatureImageWidth, 50);
+			} catch (err) {
+				console.error('Failed to load signature image in JPEG:', err);
+			}
+		}
+
+		y += 70;
+		ctx.strokeStyle = '#111827';
+		ctx.lineWidth = 2;
+		// Draw single line for signature on the FAR RIGHT (250px - same ratio as PDF)
+		ctx.beginPath();
+		ctx.moveTo(signatureStartX, y);
+		ctx.lineTo(signatureStartX + signatureLineLength, y);
+		ctx.stroke();
+
+		// Center SIGNATURE text BELOW the line
+		ctx.fillStyle = '#111827';
+		ctx.font = 'bold 18px Arial';
+		ctx.textAlign = 'center';
+		ctx.fillText('STUDENT SIGNATURE', signatureStartX + signatureLineLength / 2, y + 20);
 
 		downloadCanvasAsJpeg(canvas, filename);
 	} catch (error) {
