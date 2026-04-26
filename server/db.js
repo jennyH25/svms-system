@@ -1540,6 +1540,7 @@ export async function syncStudentViolationLogsDatabase() {
       violation_label TEXT NOT NULL,
       reported_by VARCHAR(255),
       remarks TEXT,
+      source_import_key TEXT,
       signature_image TEXT,
       signature_updated_at TIMESTAMPTZ,
       semester VARCHAR(20) NOT NULL,
@@ -1559,6 +1560,11 @@ export async function syncStudentViolationLogsDatabase() {
   await dbPool.query(`
     ALTER TABLE student_violation_archives
     ADD COLUMN IF NOT EXISTS is_unresolved BOOLEAN NOT NULL DEFAULT TRUE
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE student_violation_archives
+    ADD COLUMN IF NOT EXISTS source_import_key TEXT
   `);
 
   // Create indexes for archive table
