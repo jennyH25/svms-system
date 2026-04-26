@@ -22,6 +22,7 @@ const DataTable = ({
   actions = [],
   onRowClick,
   className = "",
+  rowClassName = "",
 }) => {
   const hasActions = actions.length > 0;
 
@@ -59,7 +60,7 @@ const DataTable = ({
           {data.map((row, rowIndex) => (
             <tr
               key={row.id || rowIndex}
-              className={`border-b border-gray-100 hover:bg-gray-100 transition-colors text-[#1a1a1a] ${onRowClick ? "cursor-pointer" : ""}`}
+              className={`border-b border-gray-100 hover:bg-gray-100 transition-colors text-[#1a1a1a] ${onRowClick ? "cursor-pointer" : ""} ${typeof rowClassName === "function" ? rowClassName(row, rowIndex) : rowClassName}`}
               onClick={() => onRowClick?.(row)}
             >
               {columns.map((column) => (
