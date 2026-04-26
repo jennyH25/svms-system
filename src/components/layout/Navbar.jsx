@@ -222,7 +222,7 @@ const Navbar = ({ onRequestLogout }) => {
         <div>
           <h1 className="text-lg text-white">
             <span className="font-bold">Welcome,</span>{' '}
-            <span className="font-normal">{welcomeRole}</span>
+            <span className="font-normal">{welcomeRole}</span>!
           </h1>
         </div>
 
