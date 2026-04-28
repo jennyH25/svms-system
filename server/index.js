@@ -302,20 +302,15 @@ function calculateForecastCount(termSeries, nextSemester) {
     y: entry.totalViolations,
   }));
 
-  const regressionPrediction = Math.max(
-    0,
-    calculateLinearRegressionNextY(regressionPoints),
-  );
+  const regressionPrediction = Math.max(0, calculateLinearRegressionNextY(regressionPoints));
 
   const recentSlice = values.slice(-3);
   const recentWeights = [0.2, 0.3, 0.5].slice(3 - recentSlice.length);
-  const recentWeightTotal =
-    recentWeights.reduce((sum, weight) => sum + weight, 0) || 1;
-  const recentPrediction =
-    recentSlice.reduce(
-      (sum, value, index) => sum + value * recentWeights[index],
-      0,
-    ) / recentWeightTotal;
+  const recentWeightTotal = recentWeights.reduce((sum, weight) => sum + weight, 0) || 1;
+  const recentPrediction = recentSlice.reduce(
+    (sum, value, index) => sum + value * recentWeights[index],
+    0,
+  ) / recentWeightTotal;
 
   const sameSemesterCounts = termSeries
     .filter((entry) => parseTermKey(entry.termKey).semester === nextSemester)
@@ -323,8 +318,7 @@ function calculateForecastCount(termSeries, nextSemester) {
 
   const seasonalSlice = sameSemesterCounts.slice(-3);
   const seasonalWeights = [0.1, 0.3, 0.6].slice(3 - seasonalSlice.length);
-  const seasonalWeightTotal =
-    seasonalWeights.reduce((sum, weight) => sum + weight, 0) || 1;
+  const seasonalWeightTotal = seasonalWeights.reduce((sum, weight) => sum + weight, 0) || 1;
   const sameSemesterBaseline = seasonalSlice.length
     ? seasonalSlice.reduce(
         (sum, value, index) => sum + value * seasonalWeights[index],
@@ -342,10 +336,8 @@ function calculateForecastCount(termSeries, nextSemester) {
   const baseline =
     sameSemesterBaseline != null ? sameSemesterBaseline : allTermBaseline;
 
-  let regressionWeight =
-    termSeries.length >= 6 ? 0.5 : termSeries.length >= 3 ? 0.35 : 0.2;
-  let recentWeight =
-    termSeries.length >= 6 ? 0.35 : termSeries.length >= 3 ? 0.5 : 0.7;
+  let regressionWeight = termSeries.length >= 6 ? 0.5 : termSeries.length >= 3 ? 0.35 : 0.2;
+  let recentWeight = termSeries.length >= 6 ? 0.35 : termSeries.length >= 3 ? 0.5 : 0.7;
   let seasonalWeight = sameSemesterBaseline != null ? 0.15 : 0;
 
   const totalWeight = regressionWeight + recentWeight + seasonalWeight || 1;
@@ -583,19 +575,6 @@ function formatWorkbookComparisonDate(value) {
 function buildWorkbookImportKey(record) {
   return [
     normalizeWorkbookPersonKey(record.studentName || record.student_name),
-    normalizeWorkbookComparisonText(
-      record.violationLabel || record.violation_label,
-    ),
-    normalizeSemester(record.semester),
-    normalizeSchoolYear(record.schoolYear || record.school_year),
-    formatWorkbookComparisonDate(
-      record.date || record.original_created_at || record.archived_at,
-    ),
-  ].join("|");
-}
-
-function buildWorkbookArchiveMatchKey(record) {
-  return [
     normalizeWorkbookComparisonText(
       record.violationLabel || record.violation_label,
     ),
@@ -1034,37 +1013,33 @@ async function loadHistoricalViolationRecordsFromWorkbook() {
 async function getImportedWorkbookRecordKeys(pool, schoolYear, semester) {
   const result = await pool.query(
     `SELECT
-       sva.source_import_key
+       sva.violation_label,
+       sva.reported_by,
+       sva.semester,
+       sva.school_year,
+       sva.original_created_at,
+       sva.archived_at,
+       s.full_name AS student_name
      FROM student_violation_archives sva
+     LEFT JOIN "Students" s ON sva.student_id = s.id
      WHERE sva.remarks = 'IMPORTED'
        AND sva.school_year = $1
        AND sva.semester = $2`,
     [normalizeSchoolYear(schoolYear), normalizeSemester(semester)],
   );
 
-  return new Set(
-    (result.rows || [])
-      .map((row) => String(row.source_import_key || "").trim())
-      .filter(Boolean),
-  );
+  return new Set((result.rows || []).map((row) => buildWorkbookImportKey(row)));
 }
 
 async function reconcileImportedWorkbookArchiveDates(pool) {
   const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
   if (!Array.isArray(workbookRecords) || workbookRecords.length === 0) {
-    return {
-      correctedCount: 0,
-      scannedCount: 0,
-      unmatchedCount: 0,
-      sourceKeyBackfilledCount: 0,
-    };
+    return { correctedCount: 0, scannedCount: 0, unmatchedCount: 0 };
   }
 
   const workbookDatesByKey = new Map();
-  const workbookSourceKeysByArchiveKey = new Map();
   workbookRecords.forEach((record) => {
     const key = buildWorkbookImportKey(record);
-    const archiveKey = buildWorkbookArchiveMatchKey(record);
     const timestamp = toArchiveTimestamp(record.date);
     if (!key || !timestamp) return;
 
@@ -1072,13 +1047,6 @@ async function reconcileImportedWorkbookArchiveDates(pool) {
       workbookDatesByKey.set(key, []);
     }
     workbookDatesByKey.get(key).push(timestamp);
-
-    if (archiveKey) {
-      if (!workbookSourceKeysByArchiveKey.has(archiveKey)) {
-        workbookSourceKeysByArchiveKey.set(archiveKey, []);
-      }
-      workbookSourceKeysByArchiveKey.get(archiveKey).push(key);
-    }
   });
 
   workbookDatesByKey.forEach((values) => {
@@ -1095,7 +1063,6 @@ async function reconcileImportedWorkbookArchiveDates(pool) {
        sva.reported_by,
        sva.semester,
        sva.school_year,
-       sva.source_import_key,
        s.full_name AS student_name
      FROM student_violation_archives sva
      LEFT JOIN "Students" s ON sva.student_id = s.id
@@ -1106,32 +1073,13 @@ async function reconcileImportedWorkbookArchiveDates(pool) {
   const importedRows = importedResult.rows || [];
   let correctedCount = 0;
   let unmatchedCount = 0;
-  let sourceKeyBackfilledCount = 0;
 
   for (const row of importedRows) {
     const key = buildWorkbookImportKey(row);
-    const archiveKey = buildWorkbookArchiveMatchKey(row);
     const candidates = workbookDatesByKey.get(key);
-    const sourceCandidates = workbookSourceKeysByArchiveKey.get(archiveKey);
-    const resolvedSourceKey =
-      String(row.source_import_key || "").trim() ||
-      (Array.isArray(sourceCandidates) && sourceCandidates.length > 0
-        ? sourceCandidates.shift()
-        : "");
 
     if (!Array.isArray(candidates) || candidates.length === 0) {
-      if (resolvedSourceKey && !String(row.source_import_key || "").trim()) {
-        await pool.query(
-          `UPDATE student_violation_archives
-           SET source_import_key = $1,
-               updated_at = NOW()
-           WHERE id = $2`,
-          [resolvedSourceKey, row.id],
-        );
-        sourceKeyBackfilledCount += 1;
-      } else {
-        unmatchedCount += 1;
-      }
+      unmatchedCount += 1;
       continue;
     }
 
@@ -1148,17 +1096,12 @@ async function reconcileImportedWorkbookArchiveDates(pool) {
        SET archived_at = $1,
            original_created_at = $1,
            original_updated_at = $1,
-           source_import_key = COALESCE(NULLIF($3, ''), source_import_key),
            reported_by = '',
            updated_at = NOW()
        WHERE id = $2`,
-      [expectedTimestamp, row.id, resolvedSourceKey || null],
+      [expectedTimestamp, row.id],
     );
     correctedCount += 1;
-
-    if (resolvedSourceKey && !String(row.source_import_key || "").trim()) {
-      sourceKeyBackfilledCount += 1;
-    }
   }
 
   await pool.query(
@@ -1172,32 +1115,7 @@ async function reconcileImportedWorkbookArchiveDates(pool) {
     correctedCount,
     scannedCount: importedRows.length,
     unmatchedCount,
-    sourceKeyBackfilledCount,
   };
-}
-
-async function cleanupDuplicateImportedArchiveSources(pool) {
-  const result = await pool.query(
-    `WITH ranked AS (
-       SELECT
-         id,
-         ROW_NUMBER() OVER (
-           PARTITION BY source_import_key
-           ORDER BY id ASC
-         ) AS rn
-       FROM student_violation_archives
-       WHERE remarks = 'IMPORTED'
-         AND source_import_key IS NOT NULL
-         AND TRIM(source_import_key) <> ''
-     )
-     DELETE FROM student_violation_archives sva
-     USING ranked
-     WHERE sva.id = ranked.id
-       AND ranked.rn > 1
-     RETURNING sva.id`,
-  );
-
-  return Number(result.rowCount || 0);
 }
 
 const ARCHIVE_MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
@@ -1292,14 +1210,9 @@ async function maybeRunArchiveMaintenance(pool) {
   }
 
   archiveMaintenanceInFlight = (async () => {
-    const [
-      reconcileResult,
-      duplicateRemovedCount,
-      importedDuplicateRemovedCount,
-    ] = await Promise.all([
+    const [reconcileResult, duplicateRemovedCount] = await Promise.all([
       reconcileImportedWorkbookArchiveDates(pool),
       cleanupDuplicateArchivedViolations(pool),
-      cleanupDuplicateImportedArchiveSources(pool),
     ]);
 
     lastArchiveMaintenanceAt = Date.now();
@@ -1308,7 +1221,6 @@ async function maybeRunArchiveMaintenance(pool) {
       skipped: false,
       correctedCount: Number(reconcileResult?.correctedCount || 0),
       duplicateRemovedCount,
-      importedDuplicateRemovedCount,
     };
   })().finally(() => {
     archiveMaintenanceInFlight = null;
@@ -1931,7 +1843,7 @@ function isPersistedLogoPath(value) {
  * - Special character (! @ # $ % ^ & *)
  */
 function validatePasswordStrength(password) {
-  const pwd = String(password || "");
+  const pwd = String(password || '');
 
   return {
     minLength: pwd.length >= 12,
@@ -1944,37 +1856,37 @@ function validatePasswordStrength(password) {
 
 function isPasswordStrong(password) {
   const validation = validatePasswordStrength(password);
-  return Object.values(validation).every((v) => v === true);
+  return Object.values(validation).every(v => v === true);
 }
 
 function getPasswordValidationError(password) {
-  const pwd = String(password || "");
+  const pwd = String(password || '');
 
   if (pwd.length === 0) {
-    return "Password is required";
+    return 'Password is required';
   }
 
   const validation = validatePasswordStrength(pwd);
   const failedRequirements = [];
 
   if (!validation.minLength) {
-    failedRequirements.push("at least 12 characters");
+    failedRequirements.push('at least 12 characters');
   }
   if (!validation.hasUppercase) {
-    failedRequirements.push("uppercase letter (A–Z)");
+    failedRequirements.push('uppercase letter (A–Z)');
   }
   if (!validation.hasLowercase) {
-    failedRequirements.push("lowercase letter (a–z)");
+    failedRequirements.push('lowercase letter (a–z)');
   }
   if (!validation.hasNumber) {
-    failedRequirements.push("number (0–9)");
+    failedRequirements.push('number (0–9)');
   }
   if (!validation.hasSpecial) {
-    failedRequirements.push("special character (! @ # $ % ^ & *)");
+    failedRequirements.push('special character (! @ # $ % ^ & *)');
   }
 
   if (failedRequirements.length > 0) {
-    return `Password must contain: ${failedRequirements.join(", ")}`;
+    return `Password must contain: ${failedRequirements.join(', ')}`;
   }
 
   return null;
@@ -3049,6 +2961,93 @@ app.get("/api/students/profile/:userId", async (req, res) => {
   }
 });
 
+// Verify current password endpoint
+app.post("/api/verify-password", async (req, res) => {
+  const { password } = req.body ?? {};
+
+  if (!password) {
+    return res.status(400).json({
+      status: "error",
+      isValid: false,
+      message: "Password is required.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      isValid: false,
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    // Get current user from request headers or session
+    // For now, we'll get the user ID from the request - in production you'd get this from session/JWT
+    const userId = req.headers['x-user-id'];
+    
+    if (!userId) {
+      return res.status(401).json({
+        status: "error",
+        isValid: false,
+        message: "User not authenticated.",
+      });
+    }
+
+    // Get the user's password hash
+    const userResult = await pool.query(
+      `
+      SELECT id, password_hash
+      FROM users
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [userId],
+    );
+
+    const user = userResult.rows?.[0] || null;
+
+    if (!user) {
+      return res.status(404).json({
+        status: "error",
+        isValid: false,
+        message: "User not found.",
+      });
+    }
+
+    // Compare passwords using bcrypt
+    const isValid = await bcrypt.compare(
+      String(password),
+      user.password_hash,
+    );
+
+    if (isValid) {
+      return res.status(200).json({
+        status: "ok",
+        isValid: true,
+        message: "Password is correct.",
+      });
+    } else {
+      return res.status(401).json({
+        status: "error",
+        isValid: false,
+        message: "Password is incorrect.",
+      });
+    }
+  } catch (error) {
+    console.error("Error verifying password:", error);
+    return res.status(503).json({
+      status: "error",
+      isValid: false,
+      message: `Unable to verify password (${error.message}).`,
+    });
+  }
+});
+
 app.put("/api/profile/admin", async (req, res) => {
   const { id, username, email, firstName, lastName } = req.body ?? {};
 
@@ -3211,16 +3210,30 @@ app.put("/api/profile/student", async (req, res) => {
       });
     }
 
-    const wantsPasswordChange = Boolean(
-      currentPassword || newPassword || confirmPassword,
-    );
+    const wantsPasswordChange = Boolean(newPassword || confirmPassword);
 
     if (wantsPasswordChange) {
-      if (!currentPassword || !newPassword || !confirmPassword) {
+      if (!currentPassword) {
         return res.status(400).json({
           status: "error",
           message:
-            "Current password, new password, and confirm password are required to change password.",
+            "Current password is required to change password.",
+        });
+      }
+
+      if (!newPassword) {
+        return res.status(400).json({
+          status: "error",
+          message:
+            "New password is required.",
+        });
+      }
+
+      if (!confirmPassword) {
+        return res.status(400).json({
+          status: "error",
+          message:
+            "Confirm password is required.",
         });
       }
 
@@ -7149,7 +7162,12 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
-    await maybeRunArchiveMaintenance(pool);
+    void maybeRunArchiveMaintenance(pool).catch((error) => {
+      console.warn(
+        "Archive maintenance skipped/failed:",
+        error?.message || error,
+      );
+    });
 
     const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
     const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
@@ -7167,7 +7185,6 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
         sva.violation_label,
         sva.reported_by,
         sva.remarks,
-        sva.source_import_key,
         sva.signature_image,
         sva.signature_updated_at,
         sva.semester,
@@ -7548,7 +7565,12 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
-    await maybeRunArchiveMaintenance(pool);
+    void maybeRunArchiveMaintenance(pool).catch((error) => {
+      console.warn(
+        "Archive maintenance skipped/failed:",
+        error?.message || error,
+      );
+    });
 
     const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
     const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
@@ -7567,7 +7589,6 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
         sva.violation_label,
         sva.reported_by,
         sva.remarks,
-        sva.source_import_key,
         sva.signature_image,
         sva.signature_updated_at,
         sva.semester,
@@ -8195,14 +8216,25 @@ app.post("/api/archive/violations/:id/import", async (req, res) => {
     const { category, degree, label } = parseWorkbookTypeLabel(
       recordToImport.typeLabel,
     );
-    const sourceImportKey = buildWorkbookImportKey(recordToImport);
 
-    // Check for duplicates using the original workbook identity so edits to the archived row do not reintroduce it.
+    // Check for duplicates based on student name, violation label, school year, semester, and date.
     const duplicateCheck = await pool.query(
       `SELECT id FROM student_violation_archives 
-       WHERE source_import_key = $1
+       WHERE student_id = $1 
+       AND violation_label = $2
+       AND school_year = $3
+       AND semester = $4
+       AND archived_at::date = $5::date
+       AND remarks = 'IMPORTED'
+       AND is_unresolved = FALSE
        LIMIT 1`,
-      [sourceImportKey],
+      [
+        studentId,
+        recordToImport.violationLabel || "",
+        normalizeSchoolYear(recordToImport.schoolYear),
+        normalizeSemester(recordToImport.semester),
+        formatWorkbookComparisonDate(recordToImport.date),
+      ],
     );
 
     if (duplicateCheck.rows.length > 0) {
@@ -8217,9 +8249,9 @@ app.post("/api/archive/violations/:id/import", async (req, res) => {
     const insertResult = await pool.query(
       `INSERT INTO student_violation_archives 
        (student_id, violation_catalog_id, violation_label, reported_by, remarks, 
-        source_import_key, signature_image, signature_updated_at, semester, school_year, is_unresolved,
+        signature_image, signature_updated_at, semester, school_year, is_unresolved,
         archived_by_user_id, archived_by_name, original_created_at, original_updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING id`,
       [
         studentId,
@@ -8227,7 +8259,6 @@ app.post("/api/archive/violations/:id/import", async (req, res) => {
         recordToImport.violationLabel || "",
         "",
         "IMPORTED", // remarks - mark as imported
-        sourceImportKey,
         "", // signature_image - no signature for workbook records
         null, // signature_updated_at
         normalizeSemester(recordToImport.semester),
@@ -8354,9 +8385,9 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
       const insertResult = await pool.query(
         `INSERT INTO student_violation_archives 
          (student_id, violation_catalog_id, violation_label, reported_by, remarks, 
-          source_import_key, signature_image, signature_updated_at, semester, school_year, is_unresolved,
+          signature_image, signature_updated_at, semester, school_year, is_unresolved,
           archived_by_user_id, archived_by_name, original_created_at, original_updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING id`,
         [
           studentId,
@@ -8364,7 +8395,6 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
           record.violationLabel || "",
           "",
           "IMPORTED",
-          buildWorkbookImportKey(record),
           "",
           null,
           normalizedSemester,

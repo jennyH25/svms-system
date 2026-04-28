@@ -1,5 +1,5 @@
 import { UserPen } from 'lucide-react'
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import EditProfileModal from '../modals/EditProfileModal'
 import {
@@ -14,6 +14,7 @@ const Navbar = ({ onRequestLogout }) => {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [showProfileSaveSuccessModal, setShowProfileSaveSuccessModal] = useState(false)
+  const [profileErrorMessage, setProfileErrorMessage] = useState('')
   const [notifCount, setNotifCount] = useState(0)
   const [allNotifications, setAllNotifications] = useState([])
   const [dropdownNotifications, setDropdownNotifications] = useState([])
@@ -21,6 +22,16 @@ const Navbar = ({ onRequestLogout }) => {
   const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}')
   const welcomeRole = currentUser?.role === 'student' ? 'Student' : 'Admin'
   const navigate = useNavigate()
+
+  // Create stable initialData reference to prevent unnecessary form resets
+  const profileInitialData = useMemo(() => ({
+    role: currentUser?.role || '',
+    username: currentUser?.username || '',
+    schoolId: currentUser?.schoolId || '',
+    firstName: currentUser?.firstName || '',
+    lastName: currentUser?.lastName || '',
+    email: currentUser?.email || ''
+  }), [currentUser?.role, currentUser?.username, currentUser?.schoolId, currentUser?.firstName, currentUser?.lastName, currentUser?.email])
 
   const computeDropdownNotifications = (notifications) => {
     if (!notifications || notifications.length === 0) return []
@@ -157,13 +168,13 @@ const Navbar = ({ onRequestLogout }) => {
           const result = await response.json().catch(() => ({}))
 
           if (!response.ok) {
-            alert(result?.message || 'Failed to save admin profile.')
+            setProfileErrorMessage(result?.message || 'Failed to save admin profile.')
             return false
           }
 
           localStorage.setItem('svms_user', JSON.stringify(result.user))
         } catch (_error) {
-          alert('Unable to save admin profile right now.')
+          setProfileErrorMessage('Unable to save admin profile right now.')
           return false
         }
       } else {
@@ -187,13 +198,13 @@ const Navbar = ({ onRequestLogout }) => {
           const result = await response.json().catch(() => ({}))
 
           if (!response.ok) {
-            alert(result?.message || 'Failed to save student profile.')
+            setProfileErrorMessage(result?.message || 'Failed to save student profile.')
             return false
           }
 
           localStorage.setItem('svms_user', JSON.stringify(result.user || nextUser))
         } catch (_error) {
-          alert('Unable to save student profile right now.')
+          setProfileErrorMessage('Unable to save student profile right now.')
           return false
         }
       }
@@ -391,16 +402,14 @@ const Navbar = ({ onRequestLogout }) => {
         onClose={() => setIsEditProfileOpen(false)}
         isSaving={isSavingProfile}
         showSuccessModal={showProfileSaveSuccessModal}
-        onCloseSuccessModal={() => setShowProfileSaveSuccessModal(false)}
-        initialData={{
-          role: currentUser?.role || '',
-          username: currentUser?.username || '',
-          schoolId: currentUser?.schoolId || '',
-          firstName: currentUser?.firstName || '',
-          lastName: currentUser?.lastName || '',
-          email: currentUser?.email || ''
+        onCloseSuccessModal={() => {
+          setShowProfileSaveSuccessModal(false)
+          setIsEditProfileOpen(false)
         }}
+        initialData={profileInitialData}
         onSave={handleSaveProfile}
+        serverError={profileErrorMessage}
+        onClearError={() => setProfileErrorMessage('')}
       />
     </>
   )
