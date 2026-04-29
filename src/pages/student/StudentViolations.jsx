@@ -681,12 +681,12 @@ if (format === 'pdf') {
 		doc.line(midX + 4, infoY + 8, margin + contentWidth - 4, infoY + 8);
 		doc.line(midX + 4, infoY + 16, margin + contentWidth - 4, infoY + 16);
 
-		drawLabelValue(margin + 6, infoY + 5, 'Date:', formatDisplayDate(record.createdAtRaw || record.date), 54);
-		drawLabelValue(midX + 6, infoY + 5, 'Student No:', studentNo || '-', 54);
-		drawLabelValue(margin + 6, infoY + 12, 'Name:', studentName, 54);
-		drawLabelValue(midX + 6, infoY + 12, 'Program/Section:', programYearSection, 54);
-		drawLabelValue(margin + 6, infoY + 19, 'Year Level:', yearLevelText, 54);
-		drawLabelValue(midX + 6, infoY + 19, 'Semester/S.Y.:', academicTermText, 54);
+		drawLabelValue(margin + 6, infoY + 7, 'Date:', formatDisplayDate(record.createdAtRaw || record.date), 54);
+		drawLabelValue(midX + 6, infoY + 7, 'Student No:', studentNo || '-', 54);
+		drawLabelValue(margin + 6, infoY + 14, 'Name:', studentName, 54);
+		drawLabelValue(midX + 6, infoY + 14, 'Program/Section:', programYearSection, 54);
+		drawLabelValue(margin + 6, infoY + 23, 'Year Level:', yearLevelText, 54);
+		drawLabelValue(midX + 6, infoY + 23, 'Semester/S.Y.:', academicTermText, 54);
 		cursorY = infoY + infoH + 8;
 
 		// VIOLATION section.
@@ -735,14 +735,13 @@ if (format === 'pdf') {
 
 		doc.setDrawColor(203, 213, 225);
 		doc.line(margin, cursorY, margin + contentWidth, cursorY);
-		cursorY += 2;
+		cursorY += 5;
 
 		doc.setFont('helvetica', 'bold');
 		doc.setFontSize(10);
-		doc.setTextColor(75, 85, 99);
+		doc.setTextColor(107, 114, 128);
 		doc.text('STUDENT COPY', pageWidth / 2, cursorY, { align: 'center' });
-		doc.setTextColor(0, 0, 0);
-		cursorY += 3;
+		cursorY += 5;
 
 		const leftColX = margin + 6;
 		const rightColX = margin + contentWidth / 2 + 6;
@@ -764,6 +763,7 @@ if (format === 'pdf') {
 		// Center SIGNATURE text BELOW the line
 		doc.setFont('helvetica', 'bold');
 		doc.setFontSize(9);
+		doc.setTextColor(0, 0, 0);
 		const signatureLineX = farRightX + 17.5; // Center of the line
 		doc.text('STUDENT SIGNATURE', signatureLineX, signLineY + 4, { align: 'center' });
 
@@ -856,11 +856,6 @@ if (format === 'jpeg') {
 		ctx.moveTo(100, y + 135);
 		ctx.lineTo(1900, y + 135);
 		ctx.stroke();
-		
-		ctx.beginPath();
-		ctx.moveTo(100, y + 205);
-		ctx.lineTo(1900, y + 205);
-		ctx.stroke();
 
 		// Draw bold labels and regular values with measured spacing (like PDF)
 		ctx.fillStyle = '#111827';
@@ -907,19 +902,19 @@ if (format === 'jpeg') {
 		ctx.font = 'bold 28px Arial';
 		textX = 130;
 		labelWidth = measureTextWidth('Year Level:', 'bold 28px Arial');
-		ctx.fillText('Year Level:', textX, y + 195);
+		ctx.fillText('Year Level:', textX, y + 205);
 		ctx.font = '28px Arial';
-		ctx.fillText(yearLevelText, textX + labelWidth + spacingAfterLabel, y + 195);
+		ctx.fillText(yearLevelText, textX + labelWidth + spacingAfterLabel, y + 205);
 		
 		// Semester/S.Y. row
 		ctx.font = 'bold 28px Arial';
 		textX = 1030;
 		labelWidth = measureTextWidth('Semester/S.Y.:', 'bold 28px Arial');
-		ctx.fillText('Semester/S.Y.:', textX, y + 195);
+		ctx.fillText('Semester/S.Y.:', textX, y + 205);
 		ctx.font = '28px Arial';
-		ctx.fillText(academicTermText, textX + labelWidth + spacingAfterLabel, y + 195);
+		ctx.fillText(academicTermText, textX + labelWidth + spacingAfterLabel, y + 205);
 
-		y += 255;
+		y += 265;
 		ctx.fillStyle = '#e5e7eb';
 		ctx.fillRect(100, y, 1800, 54);
 		ctx.strokeRect(100, y, 1800, 54);
@@ -957,9 +952,18 @@ if (format === 'jpeg') {
 		ctx.font = '24px Arial';
 		ctx.fillText(`${statusText}  |  Reported By: ${reportedBy || '-'}`, 330, y + 36);
 
+		// Draw separator line before STUDENT COPY
+		y += 70;
+		ctx.strokeStyle = '#cbd5e1';
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(100, y);
+		ctx.lineTo(1900, y);
+		ctx.stroke();
+		
 		// STUDENT COPY section with signature on the FAR RIGHT corner
-		y += 80;
-		ctx.fillStyle = '#0f172a';
+		y += 30;
+		ctx.fillStyle = '#6b7280';
 		ctx.font = 'bold 24px Arial';
 		ctx.textAlign = 'center';
 		ctx.fillText('STUDENT COPY', 1000, y);
