@@ -9,7 +9,7 @@ import SearchBar from '../../components/ui/SearchBar';
 import Button from '../../components/ui/Button';
 import { Bell, Download, Filter, ChevronDown, PenTool, CheckCircle } from 'lucide-react';
 import { getAuditHeaders } from '@/lib/auditHeaders';
-import { cachedFetchJSON } from '@/lib/fetchHelper';
+import { cachedFetchJSON, invalidateFetchCache } from '@/lib/fetchHelper';
 import SignaturePadModal from '../../components/modals/SignaturePadModal';
 
 const EXPORT_HEADER_IMAGE_PATH = '/plpasig_header.png';
@@ -133,6 +133,7 @@ const StudentViolations = () => {
 	const [signatureTarget, setSignatureTarget] = useState(null);
 	const [signatureSuccessModal, setSignatureSuccessModal] = useState(false);
 	const [isSignatureSaving, setIsSignatureSaving] = useState(false);
+	const [savingSignatureId, setSavingSignatureId] = useState(null);
 	const [showErrorModal, setShowErrorModal] = useState(false);
 	const [errorModalMessage, setErrorModalMessage] = useState("");
 
@@ -1714,21 +1715,18 @@ sheet.mergeCells('A1:H3');
 	const handleSignatureSave = useCallback(async (signatureImage) => {
 		if (!signatureTarget?.id) return;
 
+		const id = signatureTarget.id;
+		setSavingSignatureId(id);
 		setIsSignatureSaving(true);
 		setShowSignatureModal(false); // close right away for quick feedback
 
 		try {
 			// Optimistic update: immediately update records with signature for instant feedback
-			mergeRecord({ id: signatureTarget.id, signature_image: signatureImage });
+			mergeRecord({ id: id, signature_image: signatureImage });
 			
-			// Show success modal immediately for instant feedback (don't wait for API)
-			setSignatureTarget(null);
-			setSignatureSuccessModal(true);
-			setIsSignatureSaving(false);
-			
-			// Confirm with server in background
+			// Confirm with server
 			const response = await fetch(
-				`/api/student-violations/${signatureTarget.id}/signature`,
+				`/api/student-violations/${id}/signature`,
 				{
 					method: "PUT",
 					headers: {
@@ -1746,13 +1744,21 @@ sheet.mergeCells('A1:H3');
 			// Use the full record from API response to ensure data consistency
 			if (result.record) {
 				mergeRecord(result.record);
+				// Ensure cached GET /api/student-violations/me is invalidated so lists show fresh data
+				try {
+					invalidateFetchCache('/api/student-violations/me');
+				} catch (_e) {}
 			}
+			setSignatureTarget(null);
+			setSignatureSuccessModal(true);
 		} catch (error) {
 			setSignatureTarget(null);
 			setErrorModalMessage(error.message || "Unable to save signature.");
 			setShowErrorModal(true);
 			setSignatureSuccessModal(false); // close success modal if there's an error
+		} finally {
 			setIsSignatureSaving(false);
+			setSavingSignatureId(null);
 		}
 	}, [signatureTarget, mergeRecord]);
 
@@ -1786,24 +1792,26 @@ sheet.mergeCells('A1:H3');
 										handleAttachSignatureFromTable(row);
 									}}
 									title="Update signature"
+									disabled={isSignatureSaving && savingSignatureId === row.id}
 								>
 									<PenTool className="w-3 h-3" />
 								</Button>
 							</>
 						) : (
-							<Button
-								size="sm"
-								variant="secondary"
-								className="px-3 py-1 h-7 text-xs gap-1"
-								onClick={(e) => {
-									e.stopPropagation();
-									handleAttachSignatureFromTable(row);
-								}}
-								title="Add signature"
-							>
-								<PenTool className="w-3 h-3" />
-								Attach signature
-							</Button>
+								<Button
+									size="sm"
+									variant="secondary"
+									className="px-3 py-1 h-7 text-xs gap-1"
+									onClick={(e) => {
+										e.stopPropagation();
+										handleAttachSignatureFromTable(row);
+									}}
+									title="Add signature"
+									disabled={isSignatureSaving && savingSignatureId === row.id}
+								>
+									<PenTool className="w-3 h-3" />
+									{isSignatureSaving && savingSignatureId === row.id ? 'Saving...' : 'Attach signature'}
+								</Button>
 						)}
 					</div>
 				),

@@ -1,6 +1,6 @@
-import { UserPen } from 'lucide-react'
+import { Bell, UserPen } from 'lucide-react'
 import React, { useState, useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import EditProfileModal from '../modals/EditProfileModal'
 import {
   DropdownMenu,
@@ -19,9 +19,11 @@ const Navbar = ({ onRequestLogout }) => {
   const [allNotifications, setAllNotifications] = useState([])
   const [dropdownNotifications, setDropdownNotifications] = useState([])
   const [showActions, setShowActions] = useState(false)
+  const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState(false)
   const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}')
   const welcomeRole = currentUser?.role === 'student' ? 'Student' : 'Admin'
   const navigate = useNavigate()
+  const location = useLocation()
 
   // Create stable initialData reference to prevent unnecessary form resets
   const profileInitialData = useMemo(() => ({
@@ -29,9 +31,10 @@ const Navbar = ({ onRequestLogout }) => {
     username: currentUser?.username || '',
     schoolId: currentUser?.schoolId || '',
     firstName: currentUser?.firstName || '',
+    middleInitial: currentUser?.middleInitial || '',
     lastName: currentUser?.lastName || '',
     email: currentUser?.email || ''
-  }), [currentUser?.role, currentUser?.username, currentUser?.schoolId, currentUser?.firstName, currentUser?.lastName, currentUser?.email])
+  }), [currentUser?.role, currentUser?.username, currentUser?.schoolId, currentUser?.firstName, currentUser?.middleInitial, currentUser?.lastName, currentUser?.email])
 
   const computeDropdownNotifications = (notifications) => {
     if (!notifications || notifications.length === 0) return []
@@ -115,6 +118,11 @@ const Navbar = ({ onRequestLogout }) => {
     }
   }, [currentUser])
 
+  useEffect(() => {
+    setIsNotificationMenuOpen(false)
+    setShowActions(false)
+  }, [location.pathname, location.search])
+
   const handleMarkAllRead = async () => {
     try {
       await fetch('/api/notifications/mark-read-all', {
@@ -144,8 +152,9 @@ const Navbar = ({ onRequestLogout }) => {
         schoolId: formData.schoolId,
         email: formData.email,
         firstName: formData.firstName,
+        middleInitial: formData.middleInitial,
         lastName: formData.lastName,
-        fullName: [formData.firstName, formData.lastName].filter(Boolean).join(' '),
+        fullName: [formData.firstName, formData.middleInitial ? `${formData.middleInitial}.` : '', formData.lastName].filter(Boolean).join(' '),
       }
 
       if (currentUser?.role === 'admin') {
@@ -161,6 +170,7 @@ const Navbar = ({ onRequestLogout }) => {
               username: formData.username,
               email: formData.email,
               firstName: formData.firstName,
+              middleInitial: formData.middleInitial,
               lastName: formData.lastName,
             }),
           })
@@ -188,6 +198,7 @@ const Navbar = ({ onRequestLogout }) => {
               schoolId: formData.schoolId,
               email: formData.email,
               firstName: formData.firstName,
+              middleInitial: formData.middleInitial,
               lastName: formData.lastName,
               currentPassword: formData.currentPassword,
               newPassword: formData.newPassword,
@@ -241,24 +252,12 @@ const Navbar = ({ onRequestLogout }) => {
         <div className="flex items-center gap-5">
           {/* Notification Bell */}
           {currentUser?.role === 'student' && (
-            <DropdownMenu>
+            <DropdownMenu open={isNotificationMenuOpen} onOpenChange={setIsNotificationMenuOpen}>
               <DropdownMenuTrigger asChild>
-                <button className="text-gray-400 hover:text-white transition-colors relative">
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-                    />
-                  </svg>
+                <button className="relative flex h-11 w-11 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-white/5 hover:text-white">
+                  <Bell className="h-6 w-6" strokeWidth={2.1} />
                   {notifCount > 0 && (
-                    <span className="absolute top-0 right-0 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    <span className="absolute -right-1 -top-1 min-w-[1.25rem] rounded-full bg-red-500 px-1.5 py-[2px] text-center text-[10px] font-bold leading-none text-white shadow-md">
                       {notifCount > 9 ? '9+' : notifCount}
                     </span>
                   )}
@@ -337,6 +336,7 @@ const Navbar = ({ onRequestLogout }) => {
                           } else {
                             navigate(`/student/notifications?highlight=${note.id}`)
                           }
+                          setIsNotificationMenuOpen(false)
                           setShowActions(false)
                         }}
                       >
@@ -354,6 +354,7 @@ const Navbar = ({ onRequestLogout }) => {
                   <button
                     className="w-full text-center text-blue-400 hover:text-blue-300 text-sm font-medium"
                     onClick={() => {
+                      setIsNotificationMenuOpen(false)
                       setShowActions(false)
                       navigate('/student/notifications')
                     }}

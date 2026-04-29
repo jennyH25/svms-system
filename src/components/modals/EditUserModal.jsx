@@ -8,6 +8,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
   const [formData, setFormData] = useState({
     username: "",
     firstName: "",
+    middleInitial: "",
     lastName: "",
     schoolId: "",
     program: "",
@@ -22,6 +23,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
       setFormData({
         username: user.username || "",
         firstName: user.firstName || "",
+        middleInitial: user.middleInitial || "",
         lastName: user.lastName || "",
         schoolId: user.schoolId || "",
         program: user.program || "",
@@ -53,7 +55,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
     >
       <form onSubmit={handleSubmit}>
         <p className="text-sm text-gray-400 mb-4">Edit the user details.</p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           <GlassInput
             label={
               <span className="text-sm font-medium text-white mb-2">
@@ -64,6 +66,18 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
             value={formData.firstName}
             onChange={handleChange}
             placeholder="First Name"
+          />
+          <GlassInput
+            label={
+              <span className="text-sm font-medium text-white mb-2">
+                Middle Initial
+              </span>
+            }
+            name="middleInitial"
+            value={formData.middleInitial}
+            onChange={handleChange}
+            placeholder="M"
+            maxLength={3}
           />
           <GlassInput
             label={

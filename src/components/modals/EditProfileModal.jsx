@@ -31,6 +31,7 @@ const EditProfileModal = ({
     username: initialData.username || '',
     schoolId: initialData.schoolId || '',
     firstName: initialData.firstName || '',
+     middleInitial: initialData.middleInitial || '',
     lastName: initialData.lastName || '',
     email: initialData.email || '',
     currentPassword: '',
@@ -289,13 +290,22 @@ const EditProfileModal = ({
         {/* Full Name */}
         <div className="mb-4">
           <p className="text-sm font-semibold text-white mb-2">Full Name</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-white mb-2">First Name</label>
               <GlassInput
                 value={formData.firstName}
                 onChange={handleChange('firstName')}
                 placeholder="Enter first name"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-white mb-2">Middle Initial</label>
+              <GlassInput
+                value={formData.middleInitial}
+                onChange={handleChange('middleInitial')}
+                placeholder="Enter middle initial"
+                maxLength={5}
               />
             </div>
             <div>

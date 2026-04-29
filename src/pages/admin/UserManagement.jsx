@@ -69,6 +69,16 @@ const getDisplaySemester = (semester, schoolYear) => {
   return normalizedSemester || semester || "";
 };
 
+const formatStudentDisplayName = ({ firstName, middleInitial, lastName, fullName }) => {
+  const first = String(firstName || "").trim();
+  const last = String(lastName || "").trim();
+  const middleRaw = String(middleInitial || "").trim().replace(/\./g, "");
+  const middle = middleRaw ? `${middleRaw.charAt(0).toUpperCase()}.` : "";
+
+  const formatted = [first, middle, last].filter(Boolean).join(" ").trim();
+  return formatted || String(fullName || "").trim();
+};
+
 const UserManagement = () => {
   const [activeTab, setActiveTab] = useState("regular");
   const [selectedProgram, setSelectedProgram] = useState("");
@@ -189,8 +199,14 @@ const UserManagement = () => {
             username: student.username || "",
             email: student.email || "",
             schoolId: student.school_id,
-            studentName: student.full_name,
+            studentName: formatStudentDisplayName({
+              firstName: student.first_name,
+              middleInitial: student.middle_initial,
+              lastName: student.last_name,
+              fullName: student.full_name,
+            }),
             firstName: student.first_name,
+            middleInitial: student.middle_initial || "",
             lastName: student.last_name,
             program: student.program,
             yearSection: student.year_section,
@@ -243,8 +259,14 @@ const UserManagement = () => {
     username: student.username || "",
     email: student.email || "",
     schoolId: student.school_id,
-    studentName: student.full_name,
+    studentName: formatStudentDisplayName({
+      firstName: student.first_name,
+      middleInitial: student.middle_initial,
+      lastName: student.last_name,
+      fullName: student.full_name,
+    }),
     firstName: student.first_name,
+    middleInitial: student.middle_initial || "",
     lastName: student.last_name,
     program: student.program,
     yearSection: student.year_section,
@@ -286,6 +308,7 @@ const UserManagement = () => {
           schoolId: String(updatedData.schoolId || "").trim(),
           email: String(updatedData.email || "").trim(),
           firstName: String(updatedData.firstName || "").trim(),
+          middleInitial: String(updatedData.middleInitial || "").trim(),
           lastName: String(updatedData.lastName || "").trim(),
           program: String(updatedData.program || "").trim(),
           yearSection: String(updatedData.yearSection || "").trim(),

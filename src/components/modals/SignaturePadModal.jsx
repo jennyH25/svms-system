@@ -132,8 +132,32 @@ function SignaturePadModal({ isOpen, onClose, onSave }) {
     const canvas = canvasRef.current;
     if (!canvas || !hasSignature) return;
 
-    const image = canvas.toDataURL("image/png");
-    onSave?.(image);
+    // Export a compressed JPEG data URL (smaller payload than PNG)
+    try {
+      const MAX_WIDTH = 900;
+      const MAX_HEIGHT = 300;
+      let exportCanvas = canvas;
+
+      const logicalW = canvas.width || CANVAS_WIDTH;
+      const logicalH = canvas.height || CANVAS_HEIGHT;
+      const scale = Math.min(1, MAX_WIDTH / logicalW, MAX_HEIGHT / logicalH);
+
+      if (scale < 1) {
+        const off = document.createElement('canvas');
+        off.width = Math.floor(logicalW * scale);
+        off.height = Math.floor(logicalH * scale);
+        const offCtx = off.getContext('2d');
+        offCtx.drawImage(canvas, 0, 0, off.width, off.height);
+        exportCanvas = off;
+      }
+
+      const image = exportCanvas.toDataURL('image/jpeg', 0.8);
+      onSave?.(image);
+    } catch (_err) {
+      const image = canvas.toDataURL('image/png');
+      onSave?.(image);
+    }
+
     onClose?.();
   };
 

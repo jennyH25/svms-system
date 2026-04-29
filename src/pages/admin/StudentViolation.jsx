@@ -84,6 +84,17 @@ const normalizeRemarksText = (value) => {
   if (!text || text === "-") return "";
   return text;
 };
+
+const formatStudentDisplayName = (record) => {
+  const first = String(record?.first_name || "").trim();
+  const last = String(record?.last_name || "").trim();
+  const middleRaw = String(record?.middle_initial || "").trim().replace(/\./g, "");
+  const middle = middleRaw ? `${middleRaw.charAt(0).toUpperCase()}.` : "";
+
+  const formatted = [first, middle, last].filter(Boolean).join(" ").trim();
+  return formatted || String(record?.full_name || "").trim();
+};
+
 const getDisplaySemester = (semester, schoolYear) => {
   const normalizedSemester = String(semester || "").trim().toUpperCase();
   const normalizedSchoolYear = String(schoolYear || "").trim();
@@ -668,8 +679,8 @@ const StudentViolation = () => {
     return true;
   };
 
-  const getLastNameText = (fullName) => {
-    const parts = String(fullName || "")
+  const getLastNameText = (record) => {
+    const parts = String(formatStudentDisplayName(record) || "")
       .trim()
       .split(/\s+/)
       .filter(Boolean);
@@ -745,8 +756,10 @@ const StudentViolation = () => {
 
     return records
       .filter((row) => {
+        const displayName = formatStudentDisplayName(row).toLowerCase();
         const matchesSearch =
           !query ||
+          displayName.includes(query) ||
           String(row.full_name || "").toLowerCase().includes(query) ||
           String(row.school_id || "").toLowerCase().includes(query) ||
           String(row.program || "").toLowerCase().includes(query) ||
@@ -775,10 +788,10 @@ const StudentViolation = () => {
           return recordedTimeDiff;
         }
 
-        const lastNameA = getLastNameText(a.full_name);
-        const lastNameB = getLastNameText(b.full_name);
-        const fullNameA = String(a.full_name || "").trim().toLowerCase();
-        const fullNameB = String(b.full_name || "").trim().toLowerCase();
+        const lastNameA = getLastNameText(a);
+        const lastNameB = getLastNameText(b);
+        const fullNameA = formatStudentDisplayName(a).toLowerCase();
+        const fullNameB = formatStudentDisplayName(b).toLowerCase();
 
         if (lastNameA === lastNameB) {
           if (fullNameA === fullNameB) {
@@ -1009,7 +1022,7 @@ const StudentViolation = () => {
       id: row.id,
       no: index + 1,
       date: created.toLocaleDateString(),
-      studentNameText: row.full_name || "",
+      studentNameText: formatStudentDisplayName(row),
       studentIdText: row.school_id || "",
       yearSection: formatProgramYearSection(row.program, row.year_section),
       program: row.program || "",

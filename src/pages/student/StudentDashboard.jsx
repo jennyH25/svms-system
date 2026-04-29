@@ -8,9 +8,14 @@ import { getAuditHeaders } from '@/lib/auditHeaders';
 import { cachedFetchJSON } from '@/lib/fetchHelper';
 import { ShieldCheck, AlertTriangle, ListChecks, Eye } from 'lucide-react';
 
-function formatStudentName(lastName, firstName, fallbackFullName) {
-  if (lastName && firstName) {
-    return `${lastName}, ${firstName}`;
+function formatStudentName(lastName, firstName, middleInitial, fallbackFullName) {
+  const cleanLast = String(lastName || '').trim();
+  const cleanFirst = String(firstName || '').trim();
+  const cleanMiddle = String(middleInitial || '').trim();
+
+  if (cleanLast && cleanFirst) {
+    const middleSegment = cleanMiddle ? ` ${cleanMiddle}.` : '';
+    return `${cleanFirst}${middleSegment} ${cleanLast}`;
   }
 
   return fallbackFullName || 'Student';
@@ -99,6 +104,7 @@ const StudentDashboard = () => {
           program: result.data.student.program || studentUser.program || '',
           yearSection: result.data.student.year_section || studentUser.yearSection || '',
           firstName: result.data.student.first_name || studentUser.firstName || '',
+          middleInitial: result.data.student.middle_initial || studentUser.middleInitial || '',
           lastName: result.data.student.last_name || studentUser.lastName || '',
           fullName: result.data.student.full_name || studentUser.fullName || '',
         };
@@ -145,6 +151,7 @@ const StudentDashboard = () => {
 
   const dashboardInfo = useMemo(() => {
     const firstName = studentProfile?.first_name || studentUser?.firstName || '';
+    const middleInitial = studentProfile?.middle_initial || studentUser?.middleInitial || '';
     const lastName = studentProfile?.last_name || studentUser?.lastName || '';
     const fullName = studentProfile?.full_name || studentUser?.fullName || '';
     const schoolId = studentProfile?.school_id || studentUser?.schoolId || 'N/A';
@@ -193,7 +200,7 @@ const StudentDashboard = () => {
       );
 
     return {
-      name: formatStudentName(lastName, firstName, fullName),
+      name: formatStudentName(lastName, firstName, middleInitial, fullName),
       schoolId,
       program: formatProgram(rawProgram),
       section: parsed.section || 'N/A',

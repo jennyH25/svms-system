@@ -2364,7 +2364,8 @@ const upload = multer({
 });
 
 app.use(cors());
-app.use(express.json());
+// Increase JSON body size limit to allow base64 signature uploads
+app.use(express.json({ limit: '6mb' }));
 
 // Lightweight response caching for GET /api requests to speed up tab switches.
 app.use((req, res, next) => {
@@ -2929,6 +2930,7 @@ app.get("/api/students/profile/:userId", async (req, res) => {
         user_id,
         school_id,
         first_name,
+        middle_initial,
         last_name,
         full_name,
         program,
@@ -3049,7 +3051,7 @@ app.post("/api/verify-password", async (req, res) => {
 });
 
 app.put("/api/profile/admin", async (req, res) => {
-  const { id, username, email, firstName, lastName } = req.body ?? {};
+  const { id, username, email, firstName, middleInitial, lastName } = req.body ?? {};
 
   if (!id) {
     return res.status(400).json({
@@ -3101,8 +3103,9 @@ app.put("/api/profile/admin", async (req, res) => {
     }
 
     const adminFirst = firstName?.trim() || "Admin";
+    const adminMiddle = middleInitial?.trim() ? `${middleInitial.trim()}.` : "";
     const adminLast = lastName?.trim() || "User";
-    const fullName = `${adminFirst} ${adminLast}`.trim();
+    const fullName = [adminFirst, adminMiddle, adminLast].filter(Boolean).join(" ").trim();
 
     const adminUpdate = await pool.query(
       `
@@ -3147,6 +3150,7 @@ app.put("/api/profile/admin", async (req, res) => {
         username: updatedUser.username,
         role: updatedUser.role,
         firstName: updatedAdmin.first_name || "",
+        middleInitial: updatedUser.middle_initial || "",
         lastName: updatedAdmin.last_name || "",
         fullName: updatedAdmin.full_name || "",
       },
@@ -3166,6 +3170,7 @@ app.put("/api/profile/student", async (req, res) => {
     schoolId,
     email,
     firstName,
+    middleInitial,
     lastName,
     currentPassword,
     newPassword,
@@ -3265,8 +3270,12 @@ app.put("/api/profile/student", async (req, res) => {
     }
 
     const cleanedFirst = String(firstName || "").trim();
+    const cleanedMiddle = String(middleInitial || "").trim();
     const cleanedLast = String(lastName || "").trim();
-    const fullName = `${cleanedFirst} ${cleanedLast}`.trim();
+    const fullName = [cleanedFirst, cleanedMiddle ? `${cleanedMiddle}.` : "", cleanedLast]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
     const normalizedEmail = String(email || "")
       .trim()
       .toLowerCase();
@@ -3310,15 +3319,17 @@ app.put("/api/profile/student", async (req, res) => {
         school_id = COALESCE(NULLIF($1, ''), school_id),
         email = COALESCE(NULLIF($2, ''), email),
         first_name = COALESCE(NULLIF($3, ''), first_name),
-        last_name = COALESCE(NULLIF($4, ''), last_name),
-        full_name = COALESCE(NULLIF($5, ''), full_name)
-      WHERE user_id = $6
-      RETURNING id, user_id, school_id, email, first_name, last_name, full_name, program, year_section, violation_count
+        middle_initial = NULLIF($4, ''),
+        last_name = COALESCE(NULLIF($5, ''), last_name),
+        full_name = COALESCE(NULLIF($6, ''), full_name)
+      WHERE user_id = $7
+      RETURNING id, user_id, school_id, email, first_name, middle_initial, last_name, full_name, program, year_section, violation_count
       `,
       [
         schoolId || null,
         normalizedEmail || null,
         cleanedFirst || null,
+        cleanedMiddle || null,
         cleanedLast || null,
         fullName || null,
         id,
@@ -3342,6 +3353,7 @@ app.put("/api/profile/student", async (req, res) => {
         role: updatedUser.role,
         email: updatedStudent.email || "",
         firstName: updatedStudent.first_name || "",
+        middleInitial: updatedStudent.middle_initial || "",
         lastName: updatedStudent.last_name || "",
         fullName: updatedStudent.full_name || "",
         schoolId: updatedStudent.school_id || "",
@@ -3629,6 +3641,7 @@ app.put("/api/students/:id", async (req, res) => {
     schoolId,
     email,
     firstName,
+    middleInitial,
     lastName,
     program,
     yearSection,
@@ -3652,6 +3665,11 @@ app.put("/api/students/:id", async (req, res) => {
     const pool = getDbPool();
 
     const cleanedFirst = String(firstName || "").trim();
+    const cleanedMiddleInitial = String(middleInitial || "")
+      .trim()
+      .replace(/\./g, "")
+      .slice(0, 1)
+      .toUpperCase();
     const cleanedLast = String(lastName || "").trim();
     const normalizedUsername = String(username || "").trim();
     const normalizedSchoolId = String(schoolId || "").trim();
@@ -3662,7 +3680,14 @@ app.put("/api/students/:id", async (req, res) => {
     const normalizedYearSection = String(yearSection || "").trim();
     let normalizedStatus = String(status || "").trim();
     let normalizedYearLevel = null;
-    const fullName = `${cleanedFirst} ${cleanedLast}`.trim();
+    const fullName = [
+      cleanedFirst,
+      cleanedMiddleInitial ? `${cleanedMiddleInitial}.` : "",
+      cleanedLast,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
 
     const studentData = await pool.query(
       `SELECT year_level, year_section, status FROM "Students" WHERE id = $1 LIMIT 1`,
@@ -3762,24 +3787,26 @@ app.put("/api/students/:id", async (req, res) => {
         email = COALESCE(NULLIF($1, ''), email),
         school_id = COALESCE(NULLIF($2, ''), school_id),
         first_name = COALESCE(NULLIF($3, ''), first_name),
-        last_name = COALESCE(NULLIF($4, ''), last_name),
-        full_name = COALESCE(NULLIF($5, ''), full_name),
-        program = COALESCE(NULLIF($6, ''), program),
-        year_section = COALESCE(NULLIF($7, ''), year_section),
-        year_level = COALESCE($10::int, year_level),
-        status = COALESCE(NULLIF($8, ''), status),
-        violation_count = COALESCE(GREATEST($9::int, 0), violation_count),
-        is_archived = CASE WHEN $12::boolean IS NOT NULL THEN $12::boolean ELSE is_archived END,
-        archived_at = CASE WHEN $12::boolean IS NOT NULL AND $12::boolean THEN COALESCE(archived_at, NOW()) ELSE archived_at END,
-        archived_reason = CASE WHEN $12::boolean IS NOT NULL AND $12::boolean THEN COALESCE(NULLIF($13, ''), archived_reason) ELSE archived_reason END,
-        original_status = CASE WHEN $12::boolean IS NOT NULL AND $12::boolean THEN COALESCE(NULLIF($14, ''), original_status) ELSE original_status END
-      WHERE id = $11
-      RETURNING id, user_id, email, school_id, full_name, first_name, last_name, program, year_section, year_level, status, violation_count, is_archived, archived_at, archived_reason, original_status
+        middle_initial = CASE WHEN $4::text IS NULL THEN middle_initial ELSE NULLIF($4, '') END,
+        last_name = COALESCE(NULLIF($5, ''), last_name),
+        full_name = COALESCE(NULLIF($6, ''), full_name),
+        program = COALESCE(NULLIF($7, ''), program),
+        year_section = COALESCE(NULLIF($8, ''), year_section),
+        year_level = COALESCE($11::int, year_level),
+        status = COALESCE(NULLIF($9, ''), status),
+        violation_count = COALESCE(GREATEST($10::int, 0), violation_count),
+        is_archived = CASE WHEN $13::boolean IS NOT NULL THEN $13::boolean ELSE is_archived END,
+        archived_at = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(archived_at, NOW()) ELSE archived_at END,
+        archived_reason = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(NULLIF($14, ''), archived_reason) ELSE archived_reason END,
+        original_status = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(NULLIF($15, ''), original_status) ELSE original_status END
+      WHERE id = $12
+      RETURNING id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, program, year_section, year_level, status, violation_count, is_archived, archived_at, archived_reason, original_status
       `,
       [
         normalizedEmail || null,
         normalizedSchoolId || null,
         cleanedFirst || null,
+        cleanedMiddleInitial || "",
         cleanedLast || null,
         fullName || null,
         normalizedProgram || null,
@@ -4140,6 +4167,9 @@ async function getFullViolationRecord(pool, id) {
       svl.updated_at,
       s.school_id,
       s.full_name,
+      s.first_name,
+      s.middle_initial,
+      s.last_name,
       s.program,
       s.year_section,
       v.category AS violation_category,
@@ -4456,6 +4486,9 @@ app.get("/api/student-violations", async (_req, res) => {
         svl.updated_at,
         s.school_id,
         s.full_name,
+        s.first_name,
+        s.middle_initial,
+        s.last_name,
         s.program,
         s.year_section,
         v.category AS violation_category,
@@ -4520,6 +4553,9 @@ app.get("/api/student-violations/me", async (req, res) => {
         svl.school_year,
         s.school_id,
         s.full_name,
+        s.first_name,
+        s.middle_initial,
+        s.last_name,
         s.year_section,
         v.category AS violation_category,
         v.degree AS violation_degree,
@@ -4804,6 +4840,17 @@ app.put("/api/student-violations/:id/signature", async (req, res) => {
       status: "error",
       message: "signatureImage is required.",
     });
+  }
+
+  // Protect against very large payloads (extra safety beyond express.json limit)
+  try {
+    const sizeBytes = Buffer.byteLength(String(signatureImage), 'utf8');
+    const MAX_BYTES = 6 * 1024 * 1024; // 6MB
+    if (sizeBytes > MAX_BYTES) {
+      return res.status(413).json({ status: 'error', message: 'Signature image too large.' });
+    }
+  } catch (_err) {
+    // ignore size check failures and continue
   }
 
   if (!hasDbConfig()) {
