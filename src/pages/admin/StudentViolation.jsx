@@ -36,7 +36,7 @@ import ArchiveViolationModal from "@/components/modals/ArchiveViolationModal";
 import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
-import { cachedFetchJSON } from "@/lib/fetchHelper";
+import { cachedFetchJSON, invalidateFetchCache } from "@/lib/fetchHelper";
 
 const EXPORT_HEADER_IMAGE_PATH = "/plpasig_header.png";
 
@@ -150,7 +150,7 @@ const StudentViolation = () => {
 
   const statusTabs = [
     { key: "pending", label: "Pending" },
-    { key: "cleared", label: "Cleared" },
+    { key: "cleared", label: "Clear" },
   ];
 
   useEffect(() => {
@@ -236,7 +236,7 @@ const StudentViolation = () => {
     }
   };
 
-  const fetchStudentViolations = async ({ silent = false } = {}) => {
+  const fetchStudentViolations = async ({ silent = false, forceRefresh = false } = {}) => {
     if (!silent) setIsLoading(true);
     try {
       const result = await cachedFetchJSON("/api/student-violations", {
@@ -244,6 +244,7 @@ const StudentViolation = () => {
       }, {
         ttlMs: 12000,
         staleWhileRevalidate: true,
+        forceRefresh,
       });
       const data = result.data || {};
       if (result.status !== "ok") {
@@ -676,6 +677,14 @@ const StudentViolation = () => {
     return parts[parts.length - 1].toLowerCase();
   };
 
+  const getRecordedTimestamp = (row) => {
+    const recordedAt = new Date(row.created_at);
+    if (Number.isNaN(recordedAt.getTime())) {
+      return 0;
+    }
+    return recordedAt.getTime();
+  };
+
   const hasActiveFilters =
     Boolean(searchTerm.trim()) ||
     sortOrder !== "A-Z" ||
@@ -760,6 +769,12 @@ const StudentViolation = () => {
         );
       })
       .sort((a, b) => {
+        const recordedTimeDiff =
+          getRecordedTimestamp(a) - getRecordedTimestamp(b);
+        if (recordedTimeDiff !== 0) {
+          return recordedTimeDiff;
+        }
+
         const lastNameA = getLastNameText(a.full_name);
         const lastNameB = getLastNameText(b.full_name);
         const fullNameA = String(a.full_name || "").trim().toLowerCase();
@@ -767,7 +782,7 @@ const StudentViolation = () => {
 
         if (lastNameA === lastNameB) {
           if (fullNameA === fullNameB) {
-            return Number(b.id) - Number(a.id);
+            return Number(a.id) - Number(b.id);
           }
           return sortOrder === "A-Z"
             ? fullNameA.localeCompare(fullNameB)
@@ -980,7 +995,7 @@ const StudentViolation = () => {
             className="bg-[#A3AED0] text-white px-3 py-1 gap-2"
             onClick={() => openConfirmModal("clear", row)}
           >
-            <Check className="w-4 h-4" /> Cleared
+            <Check className="w-4 h-4" /> Clear
           </Button>
         ),
     },
@@ -1776,12 +1791,14 @@ const StudentViolation = () => {
       <LogNewViolationModal
         isOpen={showLogModal}
         onClose={() => setShowLogModal(false)}
-        onSaved={(record) => {
+        onSaved={async (record) => {
           if (record) {
             setRecords((prev) => [record, ...prev]);
-          } else {
-            fetchStudentViolations();
           }
+
+          // Ensure UI state exactly matches persisted DB state after logging.
+          invalidateFetchCache("/api/student-violations");
+          await fetchStudentViolations({ silent: true, forceRefresh: true });
         }}
       />
 

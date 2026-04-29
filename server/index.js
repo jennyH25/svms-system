@@ -4568,6 +4568,13 @@ app.post("/api/student-violations", async (req, res) => {
     });
   }
 
+  if (!Number.isFinite(parsedCatalogId)) {
+    return res.status(400).json({
+      status: "error",
+      message: "violationCatalogId is required.",
+    });
+  }
+
   if (!violationLabel || !String(violationLabel).trim()) {
     return res.status(400).json({
       status: "error",
@@ -4629,7 +4636,7 @@ app.post("/api/student-violations", async (req, res) => {
       `,
       [
         parsedStudentId,
-        Number.isFinite(parsedCatalogId) ? parsedCatalogId : null,
+        parsedCatalogId,
         String(violationLabel).trim(),
         String(reportedBy || "").trim() || null,
         String(remarks || "").trim() || null,

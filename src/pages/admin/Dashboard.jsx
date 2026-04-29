@@ -1870,7 +1870,7 @@ const Dashboard = () => {
         <p className="text-sm text-gray-400 mb-5">
           This chart visualizes violation trends for the selected semester.
         </p>
-        {/* Semester Dropdown & Actions */}
+        {/* Semester Dropdown & School Year Dropdown & Actions */}
         <div className="flex items-center gap-3 mb-6">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1886,6 +1886,24 @@ const Dashboard = () => {
                   onClick={() => setSelectedSemester(semester)}
                 >
                   {semester}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-2 bg-white/8 backdrop-blur-sm text-white text-sm px-4 py-2.5 rounded-lg border border-white/12 h-10">
+                {selectedSchoolYear || "Select Year"}
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {availableSchoolYears.map((year) => (
+                <DropdownMenuItem
+                  key={year}
+                  onClick={() => setSelectedSchoolYear(year)}
+                >
+                  {year}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

@@ -169,7 +169,7 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
         throw new Error(result?.message || "Unable to log violation.");
       }
 
-      onSaved?.(result.record);
+      await onSaved?.(result.record);
       onClose?.();
       setSuccessModalOpen(true);
     } catch (submitError) {
