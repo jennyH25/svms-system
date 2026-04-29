@@ -927,7 +927,7 @@ export async function syncSystemSettingsDatabase() {
   return { synced: true };
 }
 
-export async function syncViolationsDatabase() {
+export async function syncViolationsDatabase(skipSeeding = false) {
   if (!hasDbConfig()) {
     throw new Error(
       `Missing required environment variables: ${getMissingDbVars().join(", ")}`,
@@ -969,6 +969,19 @@ export async function syncViolationsDatabase() {
     FOR EACH ROW
     EXECUTE FUNCTION set_violations_updated_at()
   `);
+
+  // Skip seeding if already populated or explicitly skipped (dev optimization)
+  if (skipSeeding) {
+    return { synced: true };
+  }
+
+  const countResult = await dbPool.query(
+    `SELECT COUNT(*) as count FROM violations`
+  );
+  const violationCount = parseInt(countResult.rows?.[0]?.count || "0", 10);
+  if (violationCount > 0) {
+    return { synced: true, skipped: true };
+  }
 
   // Seed violations data
   const violationsData = [

@@ -8529,13 +8529,14 @@ let notificationCleanupTimer = null;
 async function ensureAuthDatabaseReady() {
   if (!authSyncPromise) {
     const seedAccounts = getSeedAccountsFromEnv();
+    const isDev = process.env.NODE_ENV === "development";
 
     const runFullSynchronization = async () => {
       // Run base table syncs sequentially for predictable migration ordering.
       await syncAuthDatabase({ seedAccounts });
       await syncStudentsDatabase();
       await syncSystemSettingsDatabase();
-      await syncViolationsDatabase();
+      await syncViolationsDatabase(false);
       await syncAuditLogsDatabase();
       await syncStudentsFromUsers();
       await syncNotificationsDatabase();
@@ -8549,17 +8550,21 @@ async function ensureAuthDatabaseReady() {
 
       if (schemaIsCurrent) {
         try {
-          // Fast path for known/current schema.
+          // Fast path for known/current schema - skip heavy operations in dev.
           await syncAuthDatabase({ seedAccounts, skipSchemaCheck: true });
           await syncStudentsDatabase();
           await syncSystemSettingsDatabase();
-          await syncViolationsDatabase();
+          // In dev, skip re-seeding violations and app state sync - they're heavy operations
+          await syncViolationsDatabase(isDev);
           await syncAuditLogsDatabase();
           await syncStudentsFromUsers();
           await syncNotificationsDatabase();
           await syncPasswordResetDatabase();
           await syncStudentViolationLogsDatabase();
-          await syncAppStateDatabase();
+          // Defer app state sync in dev mode - it creates triggers on all tables
+          if (!isDev) {
+            await syncAppStateDatabase();
+          }
           return;
         } catch (fastPathError) {
           console.warn(
@@ -8589,6 +8594,8 @@ async function startServer() {
 
   if (hasDbConfig()) {
     const seedAccounts = getSeedAccountsFromEnv();
+    const isDev = process.env.NODE_ENV === "development";
+
     ensureAuthDatabaseReady()
       .then(() => {
         console.log("Auth database synchronized.");
@@ -8605,6 +8612,18 @@ async function startServer() {
 
         if (seedAccounts.length === 0) {
           console.log("No account seed variables detected during startup.");
+        }
+
+        // Lazy-load app state sync in background after critical operations
+        if (isDev) {
+          // In dev, defer app state sync to background to speed up startup
+          setImmediate(async () => {
+            try {
+              await syncAppStateDatabase();
+            } catch (err) {
+              console.warn(`App state sync deferred to later: ${err.message}`);
+            }
+          });
         }
       })
       .catch((error) => {
