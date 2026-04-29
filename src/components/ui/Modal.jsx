@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
+import AnimatedContent from './AnimatedContent'
 
 /**
  * Modal - Reusable modal component with dark glassmorphism styling
@@ -68,30 +69,41 @@ const Modal = ({
         onClick={onClose}
       />
       {/* Modal Content */}
-      <div
-        className={`modal-scrollbar relative my-auto w-full ${sizes[size]} bg-gradient-to-br from-[#2a2d35]/80 to-[#1a1c20]/80 backdrop-blur-2xl border border-white/20 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.4)] ring-1 ring-inset ring-white/10 ${className} transform transition-transform duration-300 ${isOpen ? 'scale-100 translate-y-0' : 'scale-95 translate-y-4'} max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-h-[calc(100vh-3rem)]`}
+      <AnimatedContent
+        className="flex w-full justify-center"
+        distance={16}
+        duration={0.35}
+        threshold={0}
+        delay={0.02}
+        scale={0.98}
       >
-        {/* Header */}
-        {(title || showCloseButton) && (
-          <div className="flex items-center justify-between px-6 pt-6 pb-4">
-            {title && (
-              <h2 className="text-lg font-semibold text-white">{title}</h2>
+        <div
+          className={`modal-scrollbar relative my-auto ${sizes[size]} w-full bg-gradient-to-br from-[#2a2d35]/80 to-[#1a1c20]/80 backdrop-blur-2xl border border-white/20 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.4)] ring-1 ring-inset ring-white/10 ${className} transform transition-transform duration-300 ${isOpen ? 'scale-100 translate-y-0' : 'scale-95 translate-y-4'} max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-h-[calc(100vh-3rem)]`}
+        >
+          {/* Header */}
+          <div className="w-full">
+            {(title || showCloseButton) && (
+              <div className="flex items-center justify-between px-6 pt-6 pb-4">
+                {title && (
+                  <h2 className="text-lg font-semibold text-white">{title}</h2>
+                )}
+                {showCloseButton && (
+                  <button 
+                    onClick={onClose}
+                    className="p-1 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors ml-auto"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
             )}
-            {showCloseButton && (
-              <button 
-                onClick={onClose}
-                className="p-1 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors ml-auto"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            )}
+            {/* Body */}
+            <div className="px-6 pb-6">
+              {children}
+            </div>
           </div>
-        )}
-        {/* Body */}
-        <div className="px-6 pb-6">
-          {children}
         </div>
-      </div>
+      </AnimatedContent>
     </div>
   )
 

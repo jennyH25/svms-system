@@ -6,7 +6,7 @@ import StudentStatCard from '../../components/ui/StudentStatCard';
 import AnimatedContent from '../../components/ui/AnimatedContent';
 import { getAuditHeaders } from '@/lib/auditHeaders';
 import { cachedFetchJSON } from '@/lib/fetchHelper';
-import { ShieldCheck, AlertTriangle, ListChecks, Eye } from 'lucide-react';
+import { BookOpen, CalendarDays, Hash, ShieldCheck, AlertTriangle, ListChecks, Eye } from 'lucide-react';
 
 function formatStudentName(lastName, firstName, middleInitial, fallbackFullName) {
   const cleanLast = String(lastName || '').trim();
@@ -226,16 +226,62 @@ const StudentDashboard = () => {
       <AnimatedContent delay={0.3}>
         <div className="flex flex-col md:flex-row gap-6">
           {/* Student Info */}
-          <Card variant="glass" padding="lg" className="flex-1 min-w-[320px] min-h-[320px]">
-            <div>
-              <span className="text-3xl md:text-4xl font-extrabold text-white leading-tight">{dashboardInfo.name}</span>
-              <span className="text-lg text-white font-normal ml-1"> </span>
-              <div className="text-gray-400 font-medium text-sm md:text-base mt-1">SCHOOL ID: {dashboardInfo.schoolId}</div>
-            </div>
-            <div className="mt-4 text-white text-sm space-y-1">
-              <div><span className="font-bold">PROGRAM:</span> {dashboardInfo.program}</div>
-              <div><span className="font-bold">SECTION:</span> {dashboardInfo.section}</div>
-              <div><span className="font-bold">YEAR:</span> {dashboardInfo.year}</div>
+          <Card
+            variant="glass"
+            padding="lg"
+            className="relative flex-1 min-w-[320px] min-h-[320px] overflow-hidden border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.03]"
+          >
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
+            <div className="absolute -right-20 -top-20 h-48 w-48 rounded-full bg-cyan-500/10 blur-3xl" />
+            <div className="absolute -bottom-24 -left-16 h-56 w-56 rounded-full bg-sky-500/10 blur-3xl" />
+
+            <div className="relative z-10 flex h-full flex-col justify-between gap-6">
+              <div>
+                <div className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-gray-300">
+                  Student Profile
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <h3 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white leading-tight">
+                    {dashboardInfo.name}
+                  </h3>
+                  <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-medium tracking-wide text-gray-300">
+                    SCHOOL ID: {dashboardInfo.schoolId}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/15 text-sky-300">
+                    <BookOpen className="h-5 w-5" />
+                  </div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">Program</div>
+                  <div className="mt-1 text-sm font-semibold text-white leading-snug">
+                    {dashboardInfo.program}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/15 text-cyan-300">
+                    <Hash className="h-5 w-5" />
+                  </div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">Section</div>
+                  <div className="mt-1 text-sm font-semibold text-white leading-snug">
+                    {dashboardInfo.section}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
+                    <CalendarDays className="h-5 w-5" />
+                  </div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">Year</div>
+                  <div className="mt-1 text-sm font-semibold text-white leading-snug">
+                    {dashboardInfo.year}
+                  </div>
+                </div>
+              </div>
             </div>
           </Card>
 
@@ -268,35 +314,45 @@ const StudentDashboard = () => {
             <h3 className="text-xl md:text-2xl font-semibold text-white">Disciplinary Standing</h3>
           </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-start gap-4 mb-4">
-            <div className="flex-shrink-0">
-              {React.cloneElement(dashboardInfo.disciplinaryIcon, {
-                className: `${dashboardInfo.disciplinaryIcon.props.className || ""} w-8 h-8`.trim(),
-              })}
+          <AnimatedContent delay={0.08} distance={18}>
+            <div className="mb-5 rounded-2xl border border-white/10 bg-white/[0.04] p-4 md:p-5">
+              <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                <div className="flex-shrink-0 rounded-2xl bg-white/5 p-3 ring-1 ring-white/10">
+                  {React.cloneElement(dashboardInfo.disciplinaryIcon, {
+                    className: `${dashboardInfo.disciplinaryIcon.props.className || ""} w-8 h-8`.trim(),
+                  })}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-300">
+                    Status: {dashboardInfo.disciplinaryStanding}
+                  </div>
+                  <div className="mt-3 text-gray-200 text-sm md:text-base leading-relaxed">
+                    {dashboardInfo.disciplinaryMessage}
+                  </div>
+                </div>
+              </div>
             </div>
-            <div>
-              <div className="text-white text-xl md:text-2xl font-semibold">Status: {dashboardInfo.disciplinaryStanding}</div>
-              <div className="mt-1 text-gray-200 text-sm md:text-base">{dashboardInfo.disciplinaryMessage}</div>
+          </AnimatedContent>
+
+          <AnimatedContent delay={0.16} distance={18}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                onClick={() => window.location.href = '/student/violations'}
+                className="flex items-center justify-center gap-2 rounded-xl bg-[rgb(36,38,41)] px-4 py-3 text-sm md:text-base font-semibold text-white hover:bg-gray-700 transition-colors"
+              >
+                <Eye className="w-5 h-5 text-white" />
+                View My Violations
+              </button>
+
+              <button
+                onClick={() => window.location.href = '/student/offenses'}
+                className="flex items-center justify-center gap-2 rounded-xl border border-gray-500/30 bg-transparent px-4 py-3 text-sm font-semibold text-white hover:bg-white/10 transition-colors"
+              >
+                <ListChecks className="w-4 h-4" />
+                View List of Offenses
+              </button>
             </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button
-              onClick={() => window.location.href = '/student/violations'}
-              className="flex items-center justify-center gap-2 rounded-lg bg-[rgb(36,38,41)] px-4 py-3 text-sm md:text-base font-semibold text-white hover:bg-gray-700 transition-colors"
-            >
-              <Eye className="w-5 h-5 text-white" />
-              View My Violations
-            </button>
-
-            <button
-              onClick={() => window.location.href = '/student/offenses'}
-              className="flex items-center justify-center gap-2 rounded-lg border border-gray-500/30 bg-transparent px-4 py-3 text-sm font-semibold text-white hover:bg-white/10 transition-colors"
-            >
-              <ListChecks className="w-4 h-4" />
-              View List of Offenses
-            </button>
-          </div>
+          </AnimatedContent>
         </Card>
       </AnimatedContent>
     </div>

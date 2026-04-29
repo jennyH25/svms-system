@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import Modal, { ModalFooter, ModalDivider } from "@/components/ui/Modal";
 import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
+import SelectField from "@/components/ui/SelectField";
 
 const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
   const [formData, setFormData] = useState({
@@ -129,21 +130,17 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
             onChange={handleChange}
             placeholder="Year/Section"
           />
-          <div>
-            <label className="block text-sm font-medium text-white mb-2">
-              Program
-            </label>
-            <select
-              name="program"
-              value={formData.program}
-              onChange={handleChange}
-              className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] placeholder-gray-500 focus:outline-none focus:border-white/20 transition-all appearance-none"
-            >
+          <SelectField
+            label="Program"
+            name="program"
+            value={formData.program}
+            onChange={handleChange}
+            className="bg-[rgba(45,47,52,0.8)] border-white/5 focus:border-white/20 focus:ring-white/10"
+          >
               <option value="">Select...</option>
               <option value="BSIT">BSIT</option>
               <option value="BSCS">BSCS</option>
-            </select>
-          </div>
+          </SelectField>
         </div>
 
         <div className="mb-4">
@@ -162,19 +159,17 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
         <ModalDivider />
 
         <div className="mb-4">
-          <label className="block text-sm font-medium text-white mb-2">
-            Status
-          </label>
-          <select
+          <SelectField
+            label="Status"
             name="status"
             value={formData.status}
             onChange={handleChange}
-            className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] placeholder-gray-500 focus:outline-none focus:border-white/20 transition-all appearance-none"
+            className="bg-[rgba(45,47,52,0.8)] border-white/5 focus:border-white/20 focus:ring-white/10"
           >
             <option value="">Select...</option>
             <option value="Regular">Regular</option>
             <option value="Irregular">Irregular</option>
-          </select>
+          </SelectField>
         </div>
         <div className="mb-4">
           <GlassInput

@@ -3,6 +3,7 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
 import { AlertCircle, Check } from "lucide-react";
+import SelectField from "@/components/ui/SelectField";
 
 const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchoolYear, onSave }) => {
   const [formData, setFormData] = useState({
@@ -89,20 +90,18 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
         )}
 
         <div className="space-y-4 mb-4">
-          <div>
-            <label className="block text-sm font-medium text-white mb-2">Semester</label>
-            <select
-              name="semester"
-              value={formData.semester}
-              onChange={handleChange}
-              disabled={isLoading}
-              className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] focus:outline-none focus:border-white/20 transition-all disabled:opacity-50"
-            >
+          <SelectField
+            label="Semester"
+            name="semester"
+            value={formData.semester}
+            onChange={handleChange}
+            disabled={isLoading}
+            className="bg-[rgba(45,47,52,0.8)] border-white/5 focus:border-white/20 focus:ring-white/10"
+          >
               <option value="1ST SEM">1ST SEM</option>
               <option value="2ND SEM">2ND SEM</option>
               <option value="SUMMER">SUMMER</option>
-            </select>
-          </div>
+          </SelectField>
 
           <GlassInput
             label={<span className="text-sm font-medium text-white mb-2">School Year</span>}

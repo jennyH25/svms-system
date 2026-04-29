@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import Modal, { ModalFooter, ModalDivider } from "@/components/ui/Modal";
 import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
-import { ChevronDown } from "lucide-react";
+import SelectField from "@/components/ui/SelectField";
 
 const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
   const [formData, setFormData] = useState({
@@ -95,21 +95,10 @@ const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
             onChange={handleChange}
             required
           />
-          <div className="relative">
-            <label className="block text-sm font-medium text-white mb-2">
-              Program
-            </label>
-            <select
-              name="program"
-              value={formData.program}
-              onChange={handleChange}
-              className="w-full appearance-none cursor-pointer rounded-xl border border-white/10 bg-gradient-to-b from-[rgba(56,62,72,0.95)] to-[rgba(37,41,48,0.95)] px-4 py-3 pr-11 text-[15px] text-white shadow-inner shadow-black/20 focus:outline-none focus:border-cyan-400/40 focus:ring-2 focus:ring-cyan-400/20 transition-all"
-            >
+          <SelectField label="Program" name="program" value={formData.program} onChange={handleChange}>
               <option value="BSIT">BSIT</option>
               <option value="BSCS">BSCS</option>
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-4 top-[46px] w-4 h-4 text-gray-300" />
-          </div>
+          </SelectField>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -142,18 +131,16 @@ const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
         <ModalDivider />
 
         <div className="mb-4">
-          <label className="block text-sm font-medium text-white mb-2">
-            Status
-          </label>
-          <select
+          <SelectField
+            label="Status"
             name="status"
             value={formData.status}
             onChange={handleChange}
-            className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] placeholder-gray-500 focus:outline-none focus:border-white/20 transition-all appearance-none"
+            className="bg-[rgba(45,47,52,0.8)] border-white/5 focus:border-white/20 focus:ring-white/10"
           >
             <option value="Regular">Regular</option>
             <option value="Irregular">Irregular</option>
-          </select>
+          </SelectField>
         </div>
         <ModalFooter>
           <Button

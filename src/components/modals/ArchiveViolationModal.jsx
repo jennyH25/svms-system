@@ -3,6 +3,7 @@ import Modal, { ModalFooter } from '../ui/Modal';
 import Button from '../ui/Button';
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { getAuditHeaders } from '@/lib/auditHeaders';
+import SelectField from '../ui/SelectField';
 
 const getDisplaySemester = (semester, schoolYear) => {
   const normalizedSemester = String(semester || "").trim().toUpperCase();
@@ -254,139 +255,131 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
     <>
       <Modal isOpen={isOpen} onClose={handleClose} title="Archive Student Violations">
         <div className="space-y-4 max-w-md">
-          {/* Current Semester Display */}
           <div className="bg-slate-800/50 p-3 rounded-lg">
-          <p className="text-xs text-slate-400 mb-1">Current Semester</p>
-          <p className="text-lg font-semibold text-blue-400">
-            {currentSemester} S.Y. {currentSchoolYear}
-          </p>
-        </div>
+            <p className="text-xs text-slate-400 mb-1">Current Semester</p>
+            <p className="text-lg font-semibold text-blue-400">
+              {currentSemester} S.Y. {currentSchoolYear}
+            </p>
+          </div>
 
-        {/* Archive Options */}
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              Archive Which Semester?
-            </label>
-            <select
+          <div className="space-y-3">
+            <SelectField
+              label="Archive Which Semester?"
               value={selectedSemester}
               onChange={(e) => setSelectedSemester(e.target.value)}
               disabled={isLoading || isArchiving}
-              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="bg-slate-700 border-slate-600 rounded-lg text-slate-100 px-3 py-2 focus:border-blue-500 focus:ring-blue-500/20"
             >
               <option value="">Select Semester...</option>
               <option value="1ST SEM">1ST SEM</option>
               <option value="2ND SEM">2ND SEM</option>
               <option value="SUMMER">SUMMER</option>
-            </select>
-          </div>
+            </SelectField>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
-              School Year
-            </label>
-            <input
-              type="text"
-              value={selectedSchoolYear}
-              onChange={(e) => setSelectedSchoolYear(e.target.value)}
-              placeholder="e.g., 2025-2026"
-              disabled={isLoading || isArchiving}
-              className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-slate-400 mt-1">
-              {(selectedSemester === '2ND SEM' || selectedSemester === 'SUMMER') && selectedSchoolYear
-                ? `Next School Year will be: ${Number(selectedSchoolYear.split('-')[1]) + 1}`
-                : 'Enter the school year (e.g., 2025-2026)'}
-            </p>
-          </div>
-        </div>
-
-        {/* Archive Exists Warning */}
-        {archiveExists && (
-          <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
-            <div className="flex gap-2">
-              <AlertCircle className="w-4 h-4 text-orange-400 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-orange-300">
-                This school year ({selectedSchoolYear}) and semester ({selectedSemester}) already exist in the archive.
-                Please choose a different semester/year combination.
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                School Year
+              </label>
+              <input
+                type="text"
+                value={selectedSchoolYear}
+                onChange={(e) => setSelectedSchoolYear(e.target.value)}
+                placeholder="e.g., 2025-2026"
+                disabled={isLoading || isArchiving}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                {(selectedSemester === '2ND SEM' || selectedSemester === 'SUMMER') && selectedSchoolYear
+                  ? `Next School Year will be: ${Number(selectedSchoolYear.split('-')[1]) + 1}`
+                  : 'Enter the school year (e.g., 2025-2026)'}
+              </p>
             </div>
           </div>
-        )}
 
-        {/* Signature Check */}
-        {signatureCheck.checked && signatureCheck.totalViolations > 0 && (
-          <div className={`border rounded-lg p-3 ${signatureCheck.hasAllSignatures ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
-            <div className="flex gap-2">
-              {signatureCheck.hasAllSignatures ? (
-                <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-              ) : (
-                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-              )}
-              <div className={`text-sm ${signatureCheck.hasAllSignatures ? 'text-green-300' : 'text-red-300'}`}>
+          {archiveExists && (
+            <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+              <div className="flex gap-2">
+                <AlertCircle className="w-4 h-4 text-orange-400 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-orange-300">
+                  This school year ({selectedSchoolYear}) and semester ({selectedSemester}) already exist in the archive.
+                  Please choose a different semester/year combination.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {signatureCheck.checked && signatureCheck.totalViolations > 0 && (
+            <div className={`border rounded-lg p-3 ${signatureCheck.hasAllSignatures ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+              <div className="flex gap-2">
                 {signatureCheck.hasAllSignatures ? (
-                  'All violations have signatures attached.'
+                  <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
                 ) : (
-                  `${signatureCheck.violationsWithoutSignature} violation(s) are missing signatures. Please attach signatures before archiving.`
+                  <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
                 )}
+                <div className={`text-sm ${signatureCheck.hasAllSignatures ? 'text-green-300' : 'text-red-300'}`}>
+                  {signatureCheck.hasAllSignatures ? (
+                    'All violations have signatures attached.'
+                  ) : (
+                    `${signatureCheck.violationsWithoutSignature} violation(s) are missing signatures. Please attach signatures before archiving.`
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Error Display */}
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-sm text-red-300">
-            {error}
-          </div>
-        )}
-      </div>
-
-      <ModalFooter>
-        <Button
-          onClick={handleClose}
-          variant="secondary"
-          disabled={isLoading || isArchiving}
-        >
-          Cancel
-        </Button>
-        <Button
-          onClick={handleArchive}
-          variant="primary"
-          disabled={
-            isLoading ||
-            isArchiving ||
-            !selectedSemester ||
-            !selectedSchoolYear ||
-            archiveExists
-          }
-        >
-          {isArchiving ? 'Archiving...' : 'Archive'}
-        </Button>
-      </ModalFooter>
-    </Modal>
-
-    {showSignatureWarningModal && (
-      <Modal
-        isOpen={true}
-        onClose={() => setShowSignatureWarningModal(false)}
-        title="Missing Signatures"
-      >
-        <div className="p-4 text-sm text-red-200">
-          {signatureCheck.violationsWithoutSignature} violation(s) are missing signatures.
-          Please attach signatures before archiving.
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-sm text-red-300">
+              {error}
+            </div>
+          )}
         </div>
+
         <ModalFooter>
           <Button
-            onClick={() => setShowSignatureWarningModal(false)}
-            variant="primary"
+            onClick={handleClose}
+            variant="secondary"
+            disabled={isLoading || isArchiving}
           >
-            OK
+            Cancel
+          </Button>
+          <Button
+            onClick={handleArchive}
+            variant="primary"
+            disabled={
+              isLoading ||
+              isArchiving ||
+              !selectedSemester ||
+              !selectedSchoolYear ||
+              archiveExists
+            }
+          >
+            {isArchiving ? 'Archiving...' : 'Archive'}
           </Button>
         </ModalFooter>
       </Modal>
-    )}
-  </>);
+
+      {showSignatureWarningModal && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowSignatureWarningModal(false)}
+          title="Missing Signatures"
+        >
+          <div className="p-4 text-sm text-red-200">
+            {signatureCheck.violationsWithoutSignature} violation(s) are missing signatures.
+            Please attach signatures before archiving.
+          </div>
+          <ModalFooter>
+            <Button
+              onClick={() => setShowSignatureWarningModal(false)}
+              variant="primary"
+            >
+              OK
+            </Button>
+          </ModalFooter>
+        </Modal>
+      )}
+    </>
+  );
 
 };
 

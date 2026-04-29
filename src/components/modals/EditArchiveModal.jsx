@@ -3,6 +3,7 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
 import { AlertCircle } from "lucide-react";
+import SelectField from "@/components/ui/SelectField";
 
 function extractNameFromFullName(fullName) {
   const normalized = String(fullName || "").trim();
@@ -48,16 +49,10 @@ function splitMiddleInitialFromFirstName(firstName, middleInitial) {
       middleInitial: explicitMiddle ? explicitMiddle.charAt(0).toUpperCase() : "",
     };
   }
-
   const tokens = cleanedFirst.split(" ").filter(Boolean);
   const hasTrailingInitial =
     tokens.length >= 2 &&
     /^[a-z]$/i.test(String(tokens[tokens.length - 1] || "").replace(/\./g, ""));
-  const derivedMiddle = hasTrailingInitial
-    ? String(tokens[tokens.length - 1] || "")
-        .replace(/\./g, "")
-        .toUpperCase()
-    : "";
   const normalizedFirst = hasTrailingInitial
     ? tokens.slice(0, -1).join(" ")
     : cleanedFirst;
@@ -74,7 +69,7 @@ function splitMiddleInitialFromFirstName(firstName, middleInitial) {
     if (/^[a-z]$/i.test(tail)) {
       return {
         firstName: normalizedFirst,
-        middleInitial: derivedMiddle || tail.toUpperCase(),
+        middleInitial: tail.toUpperCase(),
       };
     }
   }
@@ -358,20 +353,18 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-white mb-2">Semester</label>
-                <select
-                  name="semester"
-                  value={formData.semester}
-                  onChange={handleChange}
-                  className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] focus:outline-none focus:border-white/20 transition-all"
-                >
+              <SelectField
+                label="Semester"
+                name="semester"
+                value={formData.semester}
+                onChange={handleChange}
+                className="bg-[rgba(45,47,52,0.8)] border-white/5 focus:border-white/20 focus:ring-white/10"
+              >
                   <option value="">Select semester</option>
                   <option value="1ST SEM">1ST SEM</option>
                   <option value="2ND SEM">2ND SEM</option>
                   <option value="SUMMER">SUMMER</option>
-                </select>
-              </div>
+              </SelectField>
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">School Year</span>}
                 name="schoolYear"

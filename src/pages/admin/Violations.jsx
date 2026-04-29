@@ -604,11 +604,8 @@ const Violations = () => {
             <label className="block text-sm font-medium text-white mb-2">Category</label>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="secondary" size="sm" className="w-full justify-between bg-[#3a3a3a] hover:bg-[#4a4a4a] h-10">
+                <Button variant="secondary" size="sm" className="w-full bg-[#3a3a3a] hover:bg-[#4a4a4a] h-10">
                   {formData.category ? formData.category : 'Select Category'}
-                  <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent
@@ -647,11 +644,8 @@ const Violations = () => {
             <label className="block text-sm font-medium text-white mb-2">Degree</label>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="secondary" size="sm" className="w-full justify-between bg-[#3a3a3a] hover:bg-[#4a4a4a] h-10">
+                <Button variant="secondary" size="sm" className="w-full bg-[#3a3a3a] hover:bg-[#4a4a4a] h-10">
                   {formData.degree ? formData.degree : 'Select Degree'}
-                  <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent
