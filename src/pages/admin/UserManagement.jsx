@@ -1397,14 +1397,6 @@ const UserManagement = () => {
             <Button
               variant="secondary"
               size="sm"
-              className="gap-2 bg-[#4A5568] hover:bg-[#3d4654] border-0"
-            >
-              <Plus className="w-4 h-4" />
-              Import
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
               onClick={() => setIsAddOpen(true)}
               className="gap-2 bg-[#4A5568] hover:bg-[#3d4654] border-0"
             >
