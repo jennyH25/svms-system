@@ -7,6 +7,7 @@ import AlertModal from '../../components/ui/AlertModal';
 import AnimatedContent from '../../components/ui/AnimatedContent';
 import SearchBar from '../../components/ui/SearchBar';
 import Button from '../../components/ui/Button';
+import SignaturePreviewModal from '../../components/modals/SignaturePreviewModal';
 import { Bell, Download, Filter, ChevronDown, PenTool, CheckCircle } from 'lucide-react';
 import { getAuditHeaders } from '@/lib/auditHeaders';
 import { cachedFetchJSON, invalidateFetchCache } from '@/lib/fetchHelper';
@@ -131,11 +132,21 @@ const StudentViolations = () => {
 	const [downloadAlertMessage, setDownloadAlertMessage] = useState("");
 	const [showSignatureModal, setShowSignatureModal] = useState(false);
 	const [signatureTarget, setSignatureTarget] = useState(null);
+	const [previewSignatureImage, setPreviewSignatureImage] = useState('');
 	const [signatureSuccessModal, setSignatureSuccessModal] = useState(false);
 	const [isSignatureSaving, setIsSignatureSaving] = useState(false);
 	const [savingSignatureId, setSavingSignatureId] = useState(null);
 	const [showErrorModal, setShowErrorModal] = useState(false);
 	const [errorModalMessage, setErrorModalMessage] = useState("");
+
+	const openSignaturePreview = useCallback((imageSrc) => {
+		if (!imageSrc) return;
+		setPreviewSignatureImage(imageSrc);
+	}, []);
+
+	const closeSignaturePreview = useCallback(() => {
+		setPreviewSignatureImage('');
+	}, []);
 
 	// Helper to merge updated record into state
 	const mergeRecord = useCallback((updated) => {
@@ -1783,7 +1794,11 @@ sheet.mergeCells('A1:H3');
 								<img
 									src={_value}
 									alt="Signature"
-									className="h-8 w-24 object-contain bg-white rounded border border-gray-200"
+									className="h-8 w-24 cursor-zoom-in object-contain rounded border border-gray-200 bg-white transition hover:opacity-90"
+									onClick={(e) => {
+										e.stopPropagation();
+										openSignaturePreview(_value);
+									}}
 								/>
 								<Button
 									size="sm"
@@ -2094,6 +2109,13 @@ sheet.mergeCells('A1:H3');
 							onClose={() => setShowSignatureModal(false)}
 							onSave={handleSignatureSave}
 							isLoading={isSignatureSaving}
+						/>
+
+						<SignaturePreviewModal
+							isOpen={Boolean(previewSignatureImage)}
+							onClose={closeSignaturePreview}
+							imageSrc={previewSignatureImage}
+							alt="Student signature preview"
 						/>
 
 						<Modal

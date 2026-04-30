@@ -30,6 +30,7 @@ import {
 import SearchBar from "@/components/ui/SearchBar";
 import LogNewViolationModal from "@/components/modals/LogNewViolationModal";
 import SignaturePadModal from "@/components/modals/SignaturePadModal";
+import SignaturePreviewModal from "@/components/modals/SignaturePreviewModal";
 import EditViolationModal from "@/components/modals/EditViolationModal";
 import EditSemesterYearModal from "@/components/modals/EditSemesterYearModal";
 import ArchiveViolationModal from "@/components/modals/ArchiveViolationModal";
@@ -109,6 +110,7 @@ const StudentViolation = () => {
   const [showLogModal, setShowLogModal] = useState(false);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [signatureTarget, setSignatureTarget] = useState(null);
+  const [previewSignatureImage, setPreviewSignatureImage] = useState("");
   const [showEditModal, setShowEditModal] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [isEditUnclearing, setIsEditUnclearing] = useState(false);
@@ -158,6 +160,15 @@ const StudentViolation = () => {
   const [selectedRiskLevel, setSelectedRiskLevel] = useState("");
   const [selectedViolationIds, setSelectedViolationIds] = useState(new Set());
   const [showSelectionCheckboxes, setShowSelectionCheckboxes] = useState(false);
+
+  const openSignaturePreview = useCallback((imageSrc) => {
+    if (!imageSrc) return;
+    setPreviewSignatureImage(imageSrc);
+  }, []);
+
+  const closeSignaturePreview = useCallback(() => {
+    setPreviewSignatureImage("");
+  }, []);
 
   const statusTabs = [
     { key: "pending", label: "Pending" },
@@ -975,7 +986,8 @@ const StudentViolation = () => {
             <img
               src={row.signatureImage}
               alt="Signature"
-              className="h-8 w-24 object-contain bg-white rounded border border-gray-200"
+              className="h-8 w-24 cursor-zoom-in object-contain rounded border border-gray-200 bg-white transition hover:opacity-90"
+              onClick={() => openSignaturePreview(row.signatureImage)}
             />
           </div>
         ) : (
@@ -2071,6 +2083,13 @@ const StudentViolation = () => {
           </Button>
         </ModalFooter>
       </Modal>
+
+      <SignaturePreviewModal
+        isOpen={Boolean(previewSignatureImage)}
+        onClose={closeSignaturePreview}
+        imageSrc={previewSignatureImage}
+        alt="Student signature preview"
+      />
 
       {showSignatureModal ? (
         <SignaturePadModal
