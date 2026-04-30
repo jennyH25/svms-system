@@ -15,6 +15,11 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import EditArchiveModal from "@/components/modals/EditArchiveModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
+import {
+  addCenteredExcelHeaderImage,
+  applyExcelPrintLayout,
+  getExcelColumnLetter,
+} from "@/lib/excelExportLayout";
 
 const EXPORT_HEADER_IMAGE_PATH = '/plpasig_header.png';
 
@@ -2285,15 +2290,10 @@ const Archives = () => {
 
         const workbook = new Workbook();
         const sheet = workbook.addWorksheet('Archive Report', {
-          views: [{ state: 'frozen', ySplit: activeFolder === 'users' ? 12 : 14 }],
-          pageSetup: {
-            orientation: activeFolder === 'users' ? 'portrait' : 'landscape',
-            fitToPage: true,
-            fitToWidth: 1,
-            fitToHeight: 0,
-            paperSize: 'Letter',
-            horizontalCentered: true,
-          },
+          views: [{ state: 'frozen', ySplit: activeFolder === 'users' ? 11 : 13 }],
+        });
+        applyExcelPrintLayout(sheet, {
+          orientation: activeFolder === 'users' ? 'portrait' : 'landscape',
         });
 
         // Set column widths
@@ -2306,124 +2306,56 @@ const Archives = () => {
           width: columnWidths[index] || 20,
         }));
 
-        const headerCellEnd = String.fromCharCode(65 + headers.length - 1);
-        sheet.mergeCells(`A1:${headerCellEnd}9`);
+        const headerCellEnd = getExcelColumnLetter(headers.length);
+        sheet.mergeCells(`A1:${headerCellEnd}8`);
 
         if (activeFolder === 'users') {
-          // Users folder: title row 10 and generated row 11
+          sheet.mergeCells(`A9:${headerCellEnd}9`);
           sheet.mergeCells(`A10:${headerCellEnd}10`);
-          sheet.mergeCells(`A11:${headerCellEnd}11`);
         } else {
-          // Violations: full layout with year and semester - rows 10-13
+          sheet.mergeCells(`A9:${headerCellEnd}9`);
           sheet.mergeCells(`A10:${headerCellEnd}10`);
           sheet.mergeCells(`A11:${headerCellEnd}11`);
           sheet.mergeCells(`A12:${headerCellEnd}12`);
-          sheet.mergeCells(`A13:${headerCellEnd}13`);
         }
-        
-        sheet.pageSetup = {
-          orientation: activeFolder === 'users' ? 'portrait' : 'landscape',
-          fitToPage: true,
-          fitToWidth: 1,
-          fitToHeight: 0,
-          paperSize: 'Letter',
-        };
-        sheet.printOptions = {
-          horizontalCentered: true,
-          verticalCentered: false,
-        };
-        
-        for (let i = 1; i <= 9; i += 1) {
-          sheet.getRow(i).height = 32;
+
+        for (let i = 1; i <= 8; i += 1) {
+          sheet.getRow(i).height = i <= 7 ? 26 : 18;
         }
         
         if (activeFolder === 'users') {
-          sheet.getRow(10).height = 28;
-          sheet.getRow(11).height = 20;
-          sheet.getRow(12).height = 24;
+          sheet.getRow(9).height = 28;
+          sheet.getRow(10).height = 18;
+          sheet.getRow(11).height = 24;
         } else {
-          sheet.getRow(10).height = 28;
-          sheet.getRow(11).height = 20;
-          sheet.getRow(12).height = 20;
-          sheet.getRow(13).height = 20;
-          sheet.getRow(14).height = 24;
+          sheet.getRow(9).height = 28;
+          sheet.getRow(10).height = 18;
+          sheet.getRow(11).height = 18;
+          sheet.getRow(12).height = 18;
+          sheet.getRow(13).height = 24;
         }
 
         // Add header image if available
         if (headerImage.dataUrl && headerImage.dimensions) {
-          // Calculate total header region width spanning all columns
-          const headerRegionWidthPx = sheet.columns.reduce(
-            (total, column) => total + (Number(column.width || 10) * 7.5),
-            0,
-          );
-          // Calculate total header region height spanning rows 1-9
-          const headerRegionHeightPx = [1, 2, 3, 4, 5, 6, 7, 8, 9].reduce(
-            (total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
-            0,
-          );
-          
-          // Very aggressive scaling to prevent overflow - ensure image never exceeds column boundaries
-          const maxImageWidthPx = headerRegionWidthPx * 0.75; // Only 75% of header region
-          const maxImageHeightPx = headerRegionHeightPx * 0.75;
-          const imageScale = Math.min(
-            maxImageWidthPx / headerImage.dimensions.width,
-            maxImageHeightPx / headerImage.dimensions.height,
-            0.65, // Maximum 65% of original size
-          );
-          const imageWidthPx = Math.max(8, Math.min(Math.round(headerImage.dimensions.width * imageScale), maxImageWidthPx));
-          const imageHeightPx = Math.max(8, Math.min(Math.round(headerImage.dimensions.height * imageScale), maxImageHeightPx));
-          
-          // Center the image within the header region
-          const leftOffsetPx = Math.max(0, (headerRegionWidthPx - imageWidthPx) / 2);
-          const topOffsetPx = (headerRegionHeightPx - imageHeightPx) / 2;
-
-          // Convert pixel offsets to Excel coordinates
-          const toColCoordinate = (pixelOffset) => {
-            let remaining = pixelOffset;
-            for (let colIndex = 0; colIndex < sheet.columns.length; colIndex += 1) {
-              const colPx = Number(sheet.columns[colIndex]?.width || 10) * 7.5;
-              if (remaining <= colPx) {
-                return colIndex + remaining / colPx;
-              }
-              remaining -= colPx;
-            }
-            return sheet.columns.length - 1;
-          };
-
-          const toRowCoordinate = (pixelOffset) => {
-            let remaining = pixelOffset;
-            for (let rowIndex = 1; rowIndex <= 9; rowIndex += 1) {
-              const rowPx = Number(sheet.getRow(rowIndex).height || 15) * 1.333;
-              if (remaining <= rowPx) {
-                return (rowIndex - 1) + remaining / rowPx;
-              }
-              remaining -= rowPx;
-            }
-            return 8;
-          };
-
-          const imageId = workbook.addImage({ base64: headerImage.dataUrl, extension: 'png' });
-          sheet.addImage(imageId, {
-            tl: {
-              col: toColCoordinate(leftOffsetPx),
-              row: toRowCoordinate(topOffsetPx),
-            },
-            ext: {
-              width: imageWidthPx,
-              height: imageHeightPx,
-            },
+          addCenteredExcelHeaderImage({
+            workbook,
+            sheet,
+            dataUrl: headerImage.dataUrl,
+            extension: 'png',
+            dimensions: headerImage.dimensions,
+            rowStart: 1,
+            rowEnd: 8,
           });
         }
 
         // Title and subtitle
         if (activeFolder === 'users') {
-          // Users folder: title in A10 and generated date in A11
-          const titleCell = sheet.getCell('A10');
+          const titleCell = sheet.getCell('A9');
           titleCell.value = title;
           titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FF000000' } };
           titleCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-          const generatedCell = sheet.getCell('A11');
+          const generatedCell = sheet.getCell('A10');
           const generatedDateRaw = new Date();
           const month = generatedDateRaw.toLocaleString(undefined, { month: 'long' });
           const day = generatedDateRaw.getDate();
@@ -2433,23 +2365,22 @@ const Archives = () => {
           generatedCell.font = { name: 'Calibri', size: 11, color: { argb: 'FF4B5563' } };
           generatedCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         } else {
-          // Violations layout: title in A10, year in A11, semester in A12, generated in A13
-          const titleCell = sheet.getCell('A10');
+          const titleCell = sheet.getCell('A9');
           titleCell.value = title;
           titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: 'FF000000' } };
           titleCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-          const yearCell = sheet.getCell('A11');
+          const yearCell = sheet.getCell('A10');
           yearCell.value = yearLine || '';
           yearCell.font = { name: 'Calibri', size: 12, color: { argb: 'FF1F2937' } };
           yearCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-          const semesterCell = sheet.getCell('A12');
+          const semesterCell = sheet.getCell('A11');
           semesterCell.value = semesterLine || '';
           semesterCell.font = { name: 'Calibri', size: 12, color: { argb: 'FF1F2937' } };
           semesterCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-          const generatedCell = sheet.getCell('A13');
+          const generatedCell = sheet.getCell('A12');
           const generatedDateRaw = new Date();
           const month = generatedDateRaw.toLocaleString(undefined, { month: 'long' });
           const day = generatedDateRaw.getDate();
@@ -2461,7 +2392,7 @@ const Archives = () => {
         }
 
         // Header row
-        const headerRow = sheet.getRow(activeFolder === 'users' ? 12 : 14);
+        const headerRow = sheet.getRow(activeFolder === 'users' ? 11 : 13);
         headerRow.values = headers;
         headerRow.height = 24;
         headerRow.eachCell((cell) => {
@@ -2481,7 +2412,7 @@ const Archives = () => {
         });
 
         // Data rows
-        const dataRowStart = activeFolder === 'users' ? 13 : 15;
+        const dataRowStart = activeFolder === 'users' ? 12 : 14;
         sheetData.forEach((row, index) => {
           const excelRow = sheet.getRow(dataRowStart + index);
           excelRow.values = Object.values(row);

@@ -38,6 +38,11 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
 import { cachedFetchJSON, invalidateFetchCache } from "@/lib/fetchHelper";
+import {
+  addCenteredExcelHeaderImage,
+  applyExcelPrintLayout,
+  getExcelColumnLetter,
+} from "@/lib/excelExportLayout";
 
 const EXPORT_HEADER_IMAGE_PATH = "/plpasig_header.png";
 
@@ -1113,14 +1118,8 @@ const StudentViolation = () => {
     const workbook = new Workbook();
     const sheet = workbook.addWorksheet("Student Violations", {
       views: [{ state: "frozen", ySplit: 11 }],
-      pageSetup: {
-        orientation: "landscape",
-        fitToPage: true,
-        fitToWidth: 1,
-        fitToHeight: 0,
-        horizontalCentered: true,
-      },
     });
+    applyExcelPrintLayout(sheet, { orientation: "landscape" });
 
     sheet.columns = [
       { key: "no", width: 6 },
@@ -1135,12 +1134,12 @@ const StudentViolation = () => {
       { key: "status", width: 14 },
     ];
 
-    // Header image space spanning full width across 8 rows for proper printing.
-    sheet.mergeCells("A1:J8");
-    sheet.mergeCells("A9:J9");
-    sheet.mergeCells("A10:J10");
+    const headerCellEnd = getExcelColumnLetter(sheet.columns.length);
+    sheet.mergeCells(`A1:${headerCellEnd}8`);
+    sheet.mergeCells(`A9:${headerCellEnd}9`);
+    sheet.mergeCells(`A10:${headerCellEnd}10`);
     for (let i = 1; i <= 8; i += 1) {
-      sheet.getRow(i).height = 35;
+      sheet.getRow(i).height = i <= 7 ? 26 : 18;
     }
     sheet.getRow(9).height = 28;
     sheet.getRow(10).height = 18;
@@ -1155,63 +1154,15 @@ const StudentViolation = () => {
     subtitleCell.font = { name: "Calibri", size: 11, color: { argb: "FF4B5563" } };
     subtitleCell.alignment = { horizontal: "center", vertical: "middle" };
 
-    // Deterministic centered header image placement spanning full width across 8 rows.
-    const headerRegionWidthPx = sheet.columns.reduce(
-      (total, column) => total + (Number(column.width || 10) * 7.5),
-      0,
-    );
-    const headerRegionHeightPx = [1, 2, 3, 4, 5, 6, 7, 8].reduce(
-      (total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
-      0,
-    );
     const dimensions = await getDataUrlDimensions(dataUrl);
-    // Very aggressive scaling to prevent overflow - ensure image never exceeds column boundaries
-    const maxImageWidthPx = headerRegionWidthPx * 0.75; // Only 75% of header region
-    const maxImageHeightPx = headerRegionHeightPx * 0.75;
-    const imageScale = Math.min(
-      maxImageWidthPx / dimensions.width,
-      maxImageHeightPx / dimensions.height,
-      0.65, // Maximum 65% of original size
-    );
-    const imageWidthPx = Math.max(8, Math.min(Math.round(dimensions.width * imageScale), maxImageWidthPx));
-    const imageHeightPx = Math.max(8, Math.min(Math.round(dimensions.height * imageScale), maxImageHeightPx));
-    const leftOffsetPx = Math.max(0, (headerRegionWidthPx - imageWidthPx) / 2);
-    const topOffsetPx = Math.max(0, (headerRegionHeightPx - imageHeightPx) / 2);
-    
-    const toColCoordinate = (pixelOffset) => {
-      let remaining = pixelOffset;
-      for (let colIndex = 0; colIndex < sheet.columns.length; colIndex += 1) {
-        const colPx = Number(sheet.columns[colIndex]?.width || 10) * 7.5;
-        if (remaining <= colPx) {
-          return colIndex + remaining / colPx;
-        }
-        remaining -= colPx;
-      }
-      return sheet.columns.length - 1;
-    };
-
-    const toRowCoordinate = (pixelOffset) => {
-      let remaining = pixelOffset;
-      for (let rowIndex = 1; rowIndex <= 8; rowIndex += 1) {
-        const rowPx = Number(sheet.getRow(rowIndex).height || 15) * 1.333;
-        if (remaining <= rowPx) {
-          return (rowIndex - 1) + remaining / rowPx;
-        }
-        remaining -= rowPx;
-      }
-      return 7;
-    };
-
-    const imageId = workbook.addImage({ base64: dataUrl, extension: "png" });
-    sheet.addImage(imageId, {
-      tl: {
-        col: toColCoordinate(leftOffsetPx),
-        row: toRowCoordinate(topOffsetPx),
-      },
-      ext: {
-        width: imageWidthPx,
-        height: imageHeightPx,
-      },
+    addCenteredExcelHeaderImage({
+      workbook,
+      sheet,
+      dataUrl,
+      extension: "png",
+      dimensions,
+      rowStart: 1,
+      rowEnd: 8,
     });
 
     // Table header.
