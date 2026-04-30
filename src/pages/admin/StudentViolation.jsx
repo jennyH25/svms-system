@@ -1153,15 +1153,19 @@ const StudentViolation = () => {
       0,
     );
     const dimensions = await getDataUrlDimensions(dataUrl);
+    // Very aggressive scaling to prevent overflow - ensure image never exceeds column boundaries
+    const maxImageWidthPx = headerRegionWidthPx * 0.75; // Only 75% of header region
+    const maxImageHeightPx = headerRegionHeightPx * 0.75;
     const imageScale = Math.min(
-      (headerRegionWidthPx - 24) / dimensions.width,
-      (headerRegionHeightPx - 6) / dimensions.height,
-      1.25,
+      maxImageWidthPx / dimensions.width,
+      maxImageHeightPx / dimensions.height,
+      0.65, // Maximum 65% of original size
     );
-    const imageWidthPx = Math.max(8, Math.round(dimensions.width * imageScale));
-    const imageHeightPx = Math.max(8, Math.round(dimensions.height * imageScale));
-    const leftOffsetPx = Math.max((headerRegionWidthPx - imageWidthPx) / 2, 0);
-    const topOffsetPx = Math.max((headerRegionHeightPx - imageHeightPx) / 2, 0);
+    const imageWidthPx = Math.max(8, Math.min(Math.round(dimensions.width * imageScale), maxImageWidthPx));
+    const imageHeightPx = Math.max(8, Math.min(Math.round(dimensions.height * imageScale), maxImageHeightPx));
+    const leftOffsetPx = Math.max(0, (headerRegionWidthPx - imageWidthPx) / 2);
+    const topOffsetPx = Math.max(0, (headerRegionHeightPx - imageHeightPx) / 2);
+    
     const toColCoordinate = (pixelOffset) => {
       let remaining = pixelOffset;
       for (let colIndex = 0; colIndex < sheet.columns.length; colIndex += 1) {

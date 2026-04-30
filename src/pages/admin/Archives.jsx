@@ -2351,56 +2351,53 @@ const Archives = () => {
 
         // Add header image if available
         if (headerImage.dataUrl && headerImage.dimensions) {
-          const headerRegionStartCol = 1;
-          const headerRegionEndCol = headers.length;
-          const headerRegionWidthPx = Array.from(
-            { length: headerRegionEndCol - headerRegionStartCol + 1 },
-            (_, index) => {
-              const width = sheet.getColumn(headerRegionStartCol + index).width || 10;
-              return Number(width) * 7.5;
-            },
-          ).reduce((total, width) => total + width, 0);
-          const headerRegionStartPx = Array.from({ length: headerRegionStartCol - 1 }, (_, index) => {
-            const width = sheet.getColumn(index + 1).width || 10;
-            return Number(width) * 7.5;
-          }).reduce((total, width) => total + width, 0);
+          // Calculate total header region width spanning all columns
+          const headerRegionWidthPx = sheet.columns.reduce(
+            (total, column) => total + (Number(column.width || 10) * 7.5),
+            0,
+          );
+          // Calculate total header region height spanning rows 1-9
           const headerRegionHeightPx = [1, 2, 3, 4, 5, 6, 7, 8, 9].reduce(
             (total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
             0,
           );
+          
+          // Very aggressive scaling to prevent overflow - ensure image never exceeds column boundaries
+          const maxImageWidthPx = headerRegionWidthPx * 0.75; // Only 75% of header region
+          const maxImageHeightPx = headerRegionHeightPx * 0.75;
           const imageScale = Math.min(
-            (headerRegionWidthPx - 24) / headerImage.dimensions.width,
-            (headerRegionHeightPx - 12) / headerImage.dimensions.height,
-            1.5,
+            maxImageWidthPx / headerImage.dimensions.width,
+            maxImageHeightPx / headerImage.dimensions.height,
+            0.65, // Maximum 65% of original size
           );
-          const imageWidthPx = Math.max(8, Math.round(headerImage.dimensions.width * imageScale));
-          const imageHeightPx = Math.max(8, Math.round(headerImage.dimensions.height * imageScale));
-          const leftOffsetPx = headerRegionStartPx + Math.max(0, (headerRegionWidthPx - imageWidthPx) / 2) + (activeFolder === 'users' ? 62 : 0);
+          const imageWidthPx = Math.max(8, Math.min(Math.round(headerImage.dimensions.width * imageScale), maxImageWidthPx));
+          const imageHeightPx = Math.max(8, Math.min(Math.round(headerImage.dimensions.height * imageScale), maxImageHeightPx));
+          
+          // Center the image within the header region
+          const leftOffsetPx = Math.max(0, (headerRegionWidthPx - imageWidthPx) / 2);
           const topOffsetPx = (headerRegionHeightPx - imageHeightPx) / 2;
 
+          // Convert pixel offsets to Excel coordinates
           const toColCoordinate = (pixelOffset) => {
-            let accumulatedPx = 0;
-            for (let i = 1; i <= headers.length; i += 1) {
-              const colWidth = sheet.getColumn(i).width || 15;
-              const colPx = colWidth * 7.5;
-              if (accumulatedPx + colPx >= pixelOffset) {
-                const offsetInCol = pixelOffset - accumulatedPx;
-                return (i - 1) + offsetInCol / colPx;
+            let remaining = pixelOffset;
+            for (let colIndex = 0; colIndex < sheet.columns.length; colIndex += 1) {
+              const colPx = Number(sheet.columns[colIndex]?.width || 10) * 7.5;
+              if (remaining <= colPx) {
+                return colIndex + remaining / colPx;
               }
-              accumulatedPx += colPx;
+              remaining -= colPx;
             }
-            return headers.length - 1;
+            return sheet.columns.length - 1;
           };
 
           const toRowCoordinate = (pixelOffset) => {
-            let accumulatedPx = 0;
-            for (let i = 1; i <= 9; i += 1) {
-              const rowPx = Number(sheet.getRow(i).height || 15) * 1.333;
-              if (accumulatedPx + rowPx >= pixelOffset) {
-                const offsetInRow = pixelOffset - accumulatedPx;
-                return (i - 1) + offsetInRow / rowPx;
+            let remaining = pixelOffset;
+            for (let rowIndex = 1; rowIndex <= 9; rowIndex += 1) {
+              const rowPx = Number(sheet.getRow(rowIndex).height || 15) * 1.333;
+              if (remaining <= rowPx) {
+                return (rowIndex - 1) + remaining / rowPx;
               }
-              accumulatedPx += rowPx;
+              remaining -= rowPx;
             }
             return 8;
           };
