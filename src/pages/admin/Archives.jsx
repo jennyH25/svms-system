@@ -2285,7 +2285,7 @@ const Archives = () => {
 
         const workbook = new Workbook();
         const sheet = workbook.addWorksheet('Archive Report', {
-          views: [{ state: 'frozen', ySplit: 11 }],
+          views: [{ state: 'frozen', ySplit: activeFolder === 'users' ? 12 : 14 }],
           pageSetup: {
             orientation: activeFolder === 'users' ? 'portrait' : 'landscape',
             fitToPage: true,

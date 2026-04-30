@@ -1100,7 +1100,7 @@ const StudentViolation = () => {
 
     const workbook = new Workbook();
     const sheet = workbook.addWorksheet("Student Violations", {
-      views: [{ state: "frozen", ySplit: 6 }],
+      views: [{ state: "frozen", ySplit: 11 }],
       pageSetup: {
         orientation: "landscape",
         fitToPage: true,

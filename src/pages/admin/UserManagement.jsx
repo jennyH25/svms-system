@@ -970,7 +970,7 @@ const UserManagement = () => {
 
     const workbook = new Workbook();
     const sheet = workbook.addWorksheet("User Management", {
-      views: [{ state: "frozen", ySplit: 9 }],
+      views: [{ state: "frozen", ySplit: 10 }],
       pageSetup: {
         orientation: "landscape",
         fitToPage: true,

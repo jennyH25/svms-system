@@ -1060,7 +1060,7 @@ if (format === 'jpeg') {
 				]);
 				const workbook = new Workbook();
 				const sheet = workbook.addWorksheet('All Violations', {
-					views: [{ state: 'frozen', ySplit: 8 }],
+					views: [{ state: 'frozen', ySplit: 12 }],
 				});
 
 					sheet.columns = [
@@ -1303,10 +1303,8 @@ sheet.mergeCells('A1:H3');
 				subtitleCell.font = { name: 'Calibri', size: 12, color: { argb: 'FF4B5563' } };
 				subtitleCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
 
-				sheet.addRow([]);
 				sheet.addRow([`Name: ${studentInfo.lastName.toUpperCase()}, ${studentInfo.firstName.toUpperCase()}`]);
 				sheet.addRow([`Current Year/Section: ${studentInfo.yearSection || '-'}`]);
-				sheet.addRow([]);
 				const headerRow = sheet.addRow(Object.keys(sheetData[0]));
 				headerRow.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
 				headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
