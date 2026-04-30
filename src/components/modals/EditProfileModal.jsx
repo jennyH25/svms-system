@@ -1,14 +1,17 @@
-import React, { useEffect, useState } from 'react'
-import { Eye, EyeOff, Loader2, CheckCircle } from 'lucide-react'
-import Modal, { ModalFooter, ModalDivider } from '../ui/Modal'
-import GlassInput from '../ui/GlassInput'
-import Button from '../ui/Button'
-import PasswordRequirements from '../ui/PasswordRequirements'
-import { isPasswordValid, getPasswordErrorMessage } from '../../lib/passwordValidator'
+import React, { useEffect, useState } from "react";
+import { Eye, EyeOff, Loader2, CheckCircle } from "lucide-react";
+import Modal, { ModalFooter, ModalDivider } from "../ui/Modal";
+import GlassInput from "../ui/GlassInput";
+import Button from "../ui/Button";
+import PasswordRequirements from "../ui/PasswordRequirements";
+import {
+  isPasswordValid,
+  getPasswordErrorMessage,
+} from "../../lib/passwordValidator";
 
 /**
  * EditProfileModal - Modal for editing user profile
- * 
+ *
  * @param {boolean} isOpen - Whether the modal is open
  * @param {Function} onClose - Callback when modal is closed
  * @param {Object} initialData - Initial user data { username, schoolId, firstName, lastName, email }
@@ -16,303 +19,324 @@ import { isPasswordValid, getPasswordErrorMessage } from '../../lib/passwordVali
  * @param {string} serverError - Error message from server
  * @param {Function} onClearError - Callback to clear server error
  */
-const EditProfileModal = ({ 
-  isOpen, 
-  onClose, 
+const EditProfileModal = ({
+  isOpen,
+  onClose,
   initialData = {},
   onSave,
   isSaving = false,
   showSuccessModal = false,
   onCloseSuccessModal,
-  serverError = '',
+  serverError = "",
   onClearError,
 }) => {
   const buildInitialFormData = () => ({
-    username: initialData.username || '',
-    schoolId: initialData.schoolId || '',
-    firstName: initialData.firstName || '',
-     middleInitial: initialData.middleInitial || '',
-    lastName: initialData.lastName || '',
-    email: initialData.email || '',
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: '',
-  })
+    username: initialData.username || "",
+    schoolId: initialData.schoolId || "",
+    firstName: initialData.firstName || "",
+    middleInitial: String(initialData.middleInitial || "")
+      .trim()
+      .toUpperCase(),
+    lastName: initialData.lastName || "",
+    email: initialData.email || "",
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
 
   const [formData, setFormData] = useState({
     ...buildInitialFormData(),
-  })
+  });
 
   useEffect(() => {
     if (isOpen) {
-      setFormData(buildInitialFormData())
-      setValidationErrors({})
-      setCurrentPasswordError('')
-      setCurrentPasswordValid(false)
-      setShowPasswordRequirements(false)
+      setFormData(buildInitialFormData());
+      setValidationErrors({});
+      setCurrentPasswordError("");
+      setCurrentPasswordValid(false);
+      setShowPasswordRequirements(false);
       setShowPassword({
         currentPassword: false,
         newPassword: false,
         confirmPassword: false,
-      })
-      onClearError?.()
+      });
+      onClearError?.();
     }
-  }, [isOpen])
+  }, [isOpen]);
 
   // Handle server error for incorrect current password
   useEffect(() => {
-    if (serverError && serverError.toLowerCase().includes('current password')) {
-      setCurrentPasswordError(serverError)
+    if (serverError && serverError.toLowerCase().includes("current password")) {
+      setCurrentPasswordError(serverError);
     }
-  }, [serverError])
+  }, [serverError]);
 
-  const isStudent = initialData.role === 'student'
+  const isStudent = initialData.role === "student";
 
   const [showPassword, setShowPassword] = useState({
     currentPassword: false,
     newPassword: false,
     confirmPassword: false,
-  })
+  });
 
-  const [showPasswordRequirements, setShowPasswordRequirements] = useState(false)
-  const [passwordError, setPasswordError] = useState('')
-  const [validationErrors, setValidationErrors] = useState({})
-  const [currentPasswordError, setCurrentPasswordError] = useState('')
-  const [currentPasswordValid, setCurrentPasswordValid] = useState(false)
-  const [checkingPassword, setCheckingPassword] = useState(false)
-  const [passwordCheckTimeout, setPasswordCheckTimeout] = useState(null)
-  const [showValidationModal, setShowValidationModal] = useState(false)
+  const [showPasswordRequirements, setShowPasswordRequirements] =
+    useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [validationErrors, setValidationErrors] = useState({});
+  const [currentPasswordError, setCurrentPasswordError] = useState("");
+  const [currentPasswordValid, setCurrentPasswordValid] = useState(false);
+  const [checkingPassword, setCheckingPassword] = useState(false);
+  const [passwordCheckTimeout, setPasswordCheckTimeout] = useState(null);
+  const [showValidationModal, setShowValidationModal] = useState(false);
 
   const togglePasswordVisibility = (field) => {
-    setShowPassword(prev => ({ ...prev, [field]: !prev[field] }))
-  }
+    setShowPassword((prev) => ({ ...prev, [field]: !prev[field] }));
+  };
 
   const handlePasswordInputChange = (e) => {
-    const { name, value } = e.target
-    handleChange(name)(e)
-    
+    const { name, value } = e.target;
+    handleChange(name)(e);
+
     // Clear validation error when user starts typing
     if (validationErrors[name]) {
-      setValidationErrors(prev => {
-        const newErrors = { ...prev }
-        delete newErrors[name]
-        return newErrors
-      })
+      setValidationErrors((prev) => {
+        const newErrors = { ...prev };
+        delete newErrors[name];
+        return newErrors;
+      });
     }
 
     // Handle current password change
-    if (name === 'currentPassword') {
+    if (name === "currentPassword") {
       if (currentPasswordError) {
-        setCurrentPasswordError('')
+        setCurrentPasswordError("");
       }
       if (currentPasswordValid) {
-        setCurrentPasswordValid(false)
+        setCurrentPasswordValid(false);
       }
-      
+
       // Clear previous timeout
       if (passwordCheckTimeout) {
-        clearTimeout(passwordCheckTimeout)
+        clearTimeout(passwordCheckTimeout);
       }
-      
+
       // If password field is empty, don't validate
       if (!value) {
-        setCurrentPasswordValid(false)
-        setCheckingPassword(false)
-        return
+        setCurrentPasswordValid(false);
+        setCheckingPassword(false);
+        return;
       }
-      
+
       // Set timeout to validate after user stops typing
-      setCheckingPassword(true)
+      setCheckingPassword(true);
       const timeout = setTimeout(() => {
-        validateCurrentPasswordWithServer(value)
-      }, 500)
-      
-      setPasswordCheckTimeout(timeout)
+        validateCurrentPasswordWithServer(value);
+      }, 500);
+
+      setPasswordCheckTimeout(timeout);
     }
-  }
+  };
 
   // Validate current password with server
   const validateCurrentPasswordWithServer = async (password) => {
     if (!password) {
-      setCheckingPassword(false)
-      return
+      setCheckingPassword(false);
+      return;
     }
 
     try {
-      const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}')
-      const response = await fetch('/api/verify-password', {
-        method: 'POST',
+      const currentUser = JSON.parse(localStorage.getItem("svms_user") || "{}");
+      const response = await fetch("/api/verify-password", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': currentUser?.id || '',
+          "Content-Type": "application/json",
+          "x-user-id": currentUser?.id || "",
         },
         body: JSON.stringify({
           password: password,
         }),
-      })
+      });
 
-      const result = await response.json()
+      const result = await response.json();
 
       if (response.ok && result.isValid) {
-        setCurrentPasswordValid(true)
-        setCurrentPasswordError('')
+        setCurrentPasswordValid(true);
+        setCurrentPasswordError("");
       } else {
-        setCurrentPasswordValid(false)
-        setCurrentPasswordError('Current password is incorrect.')
+        setCurrentPasswordValid(false);
+        setCurrentPasswordError("Current password is incorrect.");
       }
     } catch (error) {
-      console.error('Error validating password:', error)
-      setCurrentPasswordValid(false)
-      setCurrentPasswordError('Error verifying password. Please try again.')
+      console.error("Error validating password:", error);
+      setCurrentPasswordValid(false);
+      setCurrentPasswordError("Error verifying password. Please try again.");
     } finally {
-      setCheckingPassword(false)
+      setCheckingPassword(false);
     }
-  }
+  };
 
   // Check if user is entering a new password
-  const isEnteringNewPassword = Boolean(formData.newPassword || formData.confirmPassword)
+  const isEnteringNewPassword = Boolean(
+    formData.newPassword || formData.confirmPassword,
+  );
 
   // Determine if Save button should be disabled
   const isSaveDisabled = () => {
     // Always disable if saving
-    if (isSaving) return true
-    
+    if (isSaving) return true;
+
     // If user is trying to change password
     if (isEnteringNewPassword) {
       // Must verify current password first
-      if (!currentPasswordValid) return true
+      if (!currentPasswordValid) return true;
       // Must not be checking password
-      if (checkingPassword) return true
+      if (checkingPassword) return true;
       // Must have all required fields for password change
-      const errors = validatePasswordFields()
-      return Object.keys(errors).length > 0
+      const errors = validatePasswordFields();
+      return Object.keys(errors).length > 0;
     }
-    
-    return false
-  }
+
+    return false;
+  };
 
   const validatePasswordFields = () => {
-    const errors = {}
-    const { currentPassword, newPassword, confirmPassword } = formData
+    const errors = {};
+    const { currentPassword, newPassword, confirmPassword } = formData;
 
     // Only validate if user entered new password
     // If newPassword is empty, password change is optional
-    const wantsPasswordChange = Boolean(newPassword || confirmPassword)
+    const wantsPasswordChange = Boolean(newPassword || confirmPassword);
 
     if (wantsPasswordChange) {
       // Current password must be validated and correct
       if (!currentPassword) {
-        errors.currentPassword = 'Current password is required to change password'
+        errors.currentPassword =
+          "Current password is required to change password";
       } else if (!currentPasswordValid) {
-        errors.currentPassword = 'Please verify your current password first'
+        errors.currentPassword = "Please verify your current password first";
       }
-      
+
       // New password is required if trying to change
       if (!newPassword) {
-        errors.newPassword = 'New password is required'
+        errors.newPassword = "New password is required";
       }
       // Confirm password is required if changing
       if (!confirmPassword) {
-        errors.confirmPassword = 'Confirm password is required'
+        errors.confirmPassword = "Confirm password is required";
       }
 
       // Validate password strength only if new password is entered
       if (newPassword && !isPasswordValid(newPassword)) {
-        errors.newPassword = getPasswordErrorMessage(newPassword)
+        errors.newPassword = getPasswordErrorMessage(newPassword);
       }
 
       // Check if passwords match
       if (newPassword && confirmPassword && newPassword !== confirmPassword) {
-        errors.confirmPassword = 'Passwords do not match'
+        errors.confirmPassword = "Passwords do not match";
       }
     }
 
-    return errors
-  }
+    return errors;
+  };
 
   const handleChange = (field) => (e) => {
-    setFormData(prev => ({ ...prev, [field]: e.target.value }))
-  }
+    setFormData((prev) => ({ ...prev, [field]: e.target.value }));
+  };
 
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    
+    e.preventDefault();
+
     // Validate password fields
-    const errors = validatePasswordFields()
+    const errors = validatePasswordFields();
     if (Object.keys(errors).length > 0) {
-      setValidationErrors(errors)
-      setShowValidationModal(true)
-      return
+      setValidationErrors(errors);
+      setShowValidationModal(true);
+      return;
     }
 
-    setValidationErrors({})
-    await onSave?.(formData)
-  }
+    const normalizedFormData = {
+      ...formData,
+      middleInitial: String(formData.middleInitial || "")
+        .trim()
+        .toUpperCase(),
+    };
+
+    setFormData(normalizedFormData);
+    setValidationErrors({});
+    await onSave?.(normalizedFormData);
+  };
 
   const handleCancel = () => {
     // Clear timeout if pending
     if (passwordCheckTimeout) {
-      clearTimeout(passwordCheckTimeout)
+      clearTimeout(passwordCheckTimeout);
     }
-    
-    setFormData(buildInitialFormData())
-    setValidationErrors({})
-    setCurrentPasswordError('')
-    setCurrentPasswordValid(false)
-    setCheckingPassword(false)
-    setShowValidationModal(false)
-    setShowPasswordRequirements(false)
+
+    setFormData(buildInitialFormData());
+    setValidationErrors({});
+    setCurrentPasswordError("");
+    setCurrentPasswordValid(false);
+    setCheckingPassword(false);
+    setShowValidationModal(false);
+    setShowPasswordRequirements(false);
     setShowPassword({
       currentPassword: false,
       newPassword: false,
       confirmPassword: false,
-    })
-    onClearError?.()
-    onClose?.()
-  }
+    });
+    onClearError?.();
+    onClose?.();
+  };
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose} 
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
       title={<span className="font-black font-inter">Edit User Profile</span>}
       size="md"
       showCloseButton={true}
     >
       <form onSubmit={handleSubmit} autoComplete="off">
         {/* Server Error Message */}
-        {serverError && !serverError.toLowerCase().includes('current password') && (
-          <div className="mb-4 bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg text-sm">
-            {serverError}
-          </div>
-        )}
-        
+        {serverError &&
+          !serverError.toLowerCase().includes("current password") && (
+            <div className="mb-4 bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg text-sm">
+              {serverError}
+            </div>
+          )}
+
         {/* Full Name */}
         <div className="mb-4">
           <p className="text-sm font-semibold text-white mb-2">Full Name</p>
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-white mb-2">First Name</label>
+              <label className="block text-sm font-medium text-white mb-2">
+                First Name
+              </label>
               <GlassInput
                 value={formData.firstName}
-                onChange={handleChange('firstName')}
+                onChange={handleChange("firstName")}
                 placeholder="Enter first name"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-white mb-2">Middle Initial</label>
+              <label className="block text-sm font-medium text-white mb-2">
+                Middle Initial
+              </label>
               <GlassInput
                 value={formData.middleInitial}
-                onChange={handleChange('middleInitial')}
+                onChange={handleChange("middleInitial")}
                 placeholder="Enter middle initial"
                 maxLength={5}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-white mb-2">Last Name</label>
+              <label className="block text-sm font-medium text-white mb-2">
+                Last Name
+              </label>
               <GlassInput
                 value={formData.lastName}
-                onChange={handleChange('lastName')}
+                onChange={handleChange("lastName")}
                 placeholder="Enter last name"
               />
             </div>
@@ -321,22 +345,26 @@ const EditProfileModal = ({
 
         {/* Username and School ID (student only) */}
         <div className="mb-4">
-          <div className={isStudent ? 'grid grid-cols-2 gap-4' : ''}>
+          <div className={isStudent ? "grid grid-cols-2 gap-4" : ""}>
             <div>
-              <label className="block text-sm font-medium text-white mb-2">Username</label>
+              <label className="block text-sm font-medium text-white mb-2">
+                Username
+              </label>
               <GlassInput
                 value={formData.username}
-                onChange={handleChange('username')}
+                onChange={handleChange("username")}
                 placeholder="Enter username"
               />
             </div>
 
             {isStudent && (
               <div>
-                <label className="block text-sm font-medium text-white mb-2">School ID</label>
+                <label className="block text-sm font-medium text-white mb-2">
+                  School ID
+                </label>
                 <GlassInput
                   value={formData.schoolId}
-                  onChange={handleChange('schoolId')}
+                  onChange={handleChange("schoolId")}
                   placeholder="Enter school ID"
                 />
               </div>
@@ -346,11 +374,13 @@ const EditProfileModal = ({
 
         {/* Email */}
         <div className="mb-4">
-          <label className="block text-sm font-medium text-white mb-2">Email</label>
+          <label className="block text-sm font-medium text-white mb-2">
+            Email
+          </label>
           <GlassInput
             type="email"
             value={formData.email}
-            onChange={handleChange('email')}
+            onChange={handleChange("email")}
             placeholder="Enter email address"
           />
         </div>
@@ -368,7 +398,7 @@ const EditProfileModal = ({
             </label>
             <div className="relative">
               <GlassInput
-                type={showPassword.currentPassword ? 'text' : 'password'}
+                type={showPassword.currentPassword ? "text" : "password"}
                 name="currentPassword"
                 value={formData.currentPassword}
                 onChange={handlePasswordInputChange}
@@ -376,32 +406,52 @@ const EditProfileModal = ({
                 autoComplete="off"
                 disabled={isSaving}
                 className={`pr-10 ${
-                  currentPasswordValid ? 'border-green-400/50' : 
-                  (validationErrors.currentPassword || currentPasswordError) ? 'border-red-400/50' : 
-                  checkingPassword ? 'border-yellow-400/50' : ''
+                  currentPasswordValid
+                    ? "border-green-400/50"
+                    : validationErrors.currentPassword || currentPasswordError
+                      ? "border-red-400/50"
+                      : checkingPassword
+                        ? "border-yellow-400/50"
+                        : ""
                 }`}
               />
               <button
                 type="button"
-                onClick={() => togglePasswordVisibility('currentPassword')}
+                onClick={() => togglePasswordVisibility("currentPassword")}
                 disabled={isSaving}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
               >
-                {showPassword.currentPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPassword.currentPassword ? (
+                  <EyeOff className="w-5 h-5" />
+                ) : (
+                  <Eye className="w-5 h-5" />
+                )}
               </button>
             </div>
             {checkingPassword && (
-              <p className="text-yellow-400 text-xs mt-1">Verifying password...</p>
+              <p className="text-yellow-400 text-xs mt-1">
+                Verifying password...
+              </p>
             )}
             {currentPasswordValid && !checkingPassword && (
-              <p className="text-green-400 text-xs mt-1">✓ Current password is correct</p>
+              <p className="text-green-400 text-xs mt-1">
+                ✓ Current password is correct
+              </p>
             )}
-            {validationErrors.currentPassword && !checkingPassword && !currentPasswordValid && (
-              <p className="text-red-400 text-xs mt-1">{validationErrors.currentPassword}</p>
-            )}
-            {currentPasswordError && !checkingPassword && !currentPasswordValid && (
-              <p className="text-red-400 text-xs mt-1">{currentPasswordError}</p>
-            )}
+            {validationErrors.currentPassword &&
+              !checkingPassword &&
+              !currentPasswordValid && (
+                <p className="text-red-400 text-xs mt-1">
+                  {validationErrors.currentPassword}
+                </p>
+              )}
+            {currentPasswordError &&
+              !checkingPassword &&
+              !currentPasswordValid && (
+                <p className="text-red-400 text-xs mt-1">
+                  {currentPasswordError}
+                </p>
+              )}
           </div>
 
           <div>
@@ -411,59 +461,76 @@ const EditProfileModal = ({
             </label>
             <div className="relative">
               <GlassInput
-                type={showPassword.newPassword ? 'text' : 'password'}
+                type={showPassword.newPassword ? "text" : "password"}
                 name="newPassword"
                 value={formData.newPassword}
                 onChange={handlePasswordInputChange}
                 onFocus={() => setShowPasswordRequirements(true)}
-                onBlur={() => formData.newPassword === '' && setShowPasswordRequirements(false)}
+                onBlur={() =>
+                  formData.newPassword === "" &&
+                  setShowPasswordRequirements(false)
+                }
                 placeholder="Enter new password"
                 autoComplete="new-password"
                 disabled={!currentPasswordValid}
-                className={`pr-10 ${validationErrors.newPassword ? 'border-red-400/50' : ''} ${!currentPasswordValid ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className={`pr-10 ${validationErrors.newPassword ? "border-red-400/50" : ""} ${!currentPasswordValid ? "opacity-50 cursor-not-allowed" : ""}`}
               />
               <button
                 type="button"
-                onClick={() => togglePasswordVisibility('newPassword')}
+                onClick={() => togglePasswordVisibility("newPassword")}
                 disabled={!currentPasswordValid}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {showPassword.newPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPassword.newPassword ? (
+                  <EyeOff className="w-5 h-5" />
+                ) : (
+                  <Eye className="w-5 h-5" />
+                )}
               </button>
             </div>
             {validationErrors.newPassword && (
-              <p className="text-red-400 text-xs mt-1">{validationErrors.newPassword}</p>
+              <p className="text-red-400 text-xs mt-1">
+                {validationErrors.newPassword}
+              </p>
             )}
-            <PasswordRequirements 
-              password={formData.newPassword} 
+            <PasswordRequirements
+              password={formData.newPassword}
               showRequirements={showPasswordRequirements}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-white mb-2">Confirm Password</label>
+            <label className="block text-sm font-medium text-white mb-2">
+              Confirm Password
+            </label>
             <div className="relative">
               <GlassInput
-                type={showPassword.confirmPassword ? 'text' : 'password'}
+                type={showPassword.confirmPassword ? "text" : "password"}
                 name="confirmPassword"
                 value={formData.confirmPassword}
                 onChange={handlePasswordInputChange}
                 placeholder="Confirm new password"
                 autoComplete="new-password"
                 disabled={!currentPasswordValid}
-                className={`pr-10 ${validationErrors.confirmPassword ? 'border-red-400/50' : ''} ${!currentPasswordValid ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className={`pr-10 ${validationErrors.confirmPassword ? "border-red-400/50" : ""} ${!currentPasswordValid ? "opacity-50 cursor-not-allowed" : ""}`}
               />
               <button
                 type="button"
-                onClick={() => togglePasswordVisibility('confirmPassword')}
+                onClick={() => togglePasswordVisibility("confirmPassword")}
                 disabled={!currentPasswordValid}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {showPassword.confirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPassword.confirmPassword ? (
+                  <EyeOff className="w-5 h-5" />
+                ) : (
+                  <Eye className="w-5 h-5" />
+                )}
               </button>
             </div>
             {validationErrors.confirmPassword && (
-              <p className="text-red-400 text-xs mt-1">{validationErrors.confirmPassword}</p>
+              <p className="text-red-400 text-xs mt-1">
+                {validationErrors.confirmPassword}
+              </p>
             )}
           </div>
         </div>
@@ -484,7 +551,11 @@ const EditProfileModal = ({
             variant="primary"
             disabled={isSaveDisabled()}
             className="px-6 py-2.5 rounded-lg bg-[#4A5568] text-white hover:bg-[#3d4654] disabled:opacity-50 disabled:cursor-not-allowed"
-            title={isSaveDisabled() && isEnteringNewPassword ? 'Please verify your current password first' : ''}
+            title={
+              isSaveDisabled() && isEnteringNewPassword
+                ? "Please verify your current password first"
+                : ""
+            }
           >
             {isSaving ? (
               <>
@@ -492,7 +563,7 @@ const EditProfileModal = ({
                 Saving...
               </>
             ) : (
-              'Save Changes'
+              "Save Changes"
             )}
           </Button>
         </ModalFooter>
@@ -560,7 +631,7 @@ const EditProfileModal = ({
         </ModalFooter>
       </Modal>
     </Modal>
-  )
-}
+  );
+};
 
-export default EditProfileModal
+export default EditProfileModal;
