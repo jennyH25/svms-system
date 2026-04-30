@@ -268,3 +268,7 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
 input[type="password"]::-ms-reveal {
   display: none;
 }
+
+select::-ms-expand {
+  display: none;
+}

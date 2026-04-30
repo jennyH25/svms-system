@@ -19,7 +19,7 @@ const SelectField = ({
       <div className="relative">
         <select
           {...props}
-          className={`w-full cursor-pointer rounded-xl border border-white/10 bg-gradient-to-b from-[rgba(56,62,72,0.95)] to-[rgba(37,41,48,0.95)] px-4 py-3 text-[15px] text-white shadow-inner shadow-black/20 focus:outline-none focus:border-cyan-400/40 focus:ring-2 focus:ring-cyan-400/20 transition-all disabled:cursor-not-allowed disabled:opacity-50 ${className} ${selectClassName}`.trim()}
+          className={`w-full cursor-pointer appearance-none rounded-xl border border-white/10 bg-gradient-to-b from-[rgba(56,62,72,0.95)] to-[rgba(37,41,48,0.95)] px-4 py-3 pr-11 text-[15px] text-white shadow-inner shadow-black/20 focus:outline-none focus:border-cyan-400/40 focus:ring-2 focus:ring-cyan-400/20 transition-all disabled:cursor-not-allowed disabled:opacity-50 ${className} ${selectClassName}`.trim()}
         >
           {children}
         </select>
