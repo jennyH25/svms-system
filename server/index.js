@@ -2532,6 +2532,7 @@ app.post("/api/auth/login", async (req, res) => {
             u.password_hash,
             u.role,
             a.first_name,
+            a.middle_initial,
             a.last_name,
             u.is_active
           FROM users u
@@ -2577,6 +2578,7 @@ app.post("/api/auth/login", async (req, res) => {
           u.is_active,
           COALESCE(a.email, s.email) as email,
           COALESCE(a.first_name, s.first_name, u.first_name) as first_name,
+          COALESCE(a.middle_initial, s.middle_initial) as middle_initial,
           COALESCE(a.last_name, s.last_name, u.last_name) as last_name,
           s.school_id,
           s.program,
@@ -2617,8 +2619,13 @@ app.post("/api/auth/login", async (req, res) => {
         username: user.username,
         role: user.role,
         firstName: user.first_name || "",
+        middleInitial: user.middle_initial || "",
         lastName: user.last_name || "",
-        fullName: [user.first_name, user.last_name].filter(Boolean).join(" "),
+        fullName: [
+          user.first_name,
+          user.middle_initial ? `${user.middle_initial}.` : "",
+          user.last_name,
+        ].filter(Boolean).join(" "),
         schoolId: user.school_id || "",
         program: user.program || "",
         yearSection: user.year_section || "",
@@ -3109,17 +3116,18 @@ app.put("/api/profile/admin", async (req, res) => {
 
     const adminUpdate = await pool.query(
       `
-      INSERT INTO "Admins" (user_id, email, first_name, last_name, full_name)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO "Admins" (user_id, email, first_name, middle_initial, last_name, full_name)
+      VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)
       ON CONFLICT (user_id) DO UPDATE
       SET
         email = EXCLUDED.email,
         first_name = EXCLUDED.first_name,
+        middle_initial = EXCLUDED.middle_initial,
         last_name = EXCLUDED.last_name,
         full_name = EXCLUDED.full_name
-      RETURNING user_id, email, first_name, last_name, full_name
+      RETURNING user_id, email, first_name, middle_initial, last_name, full_name
       `,
-      [updatedUser.id, email, adminFirst, adminLast, fullName],
+      [updatedUser.id, email, adminFirst, middleInitial?.trim() || "", adminLast, fullName],
     );
 
     const updatedAdmin = adminUpdate.rows?.[0] || null;
@@ -3150,7 +3158,7 @@ app.put("/api/profile/admin", async (req, res) => {
         username: updatedUser.username,
         role: updatedUser.role,
         firstName: updatedAdmin.first_name || "",
-        middleInitial: updatedUser.middle_initial || "",
+        middleInitial: updatedAdmin.middle_initial || "",
         lastName: updatedAdmin.last_name || "",
         fullName: updatedAdmin.full_name || "",
       },
