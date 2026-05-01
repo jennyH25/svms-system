@@ -28,7 +28,7 @@ import EditUserModal from "@/components/modals/EditUserModal";
 import AddUserModal from "@/components/modals/AddUserModal";
 import EditSemesterYearModal from "@/components/modals/EditSemesterYearModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
-import { cachedFetchJSON, fetchMultiple } from "@/lib/fetchHelper";
+import { cachedFetchJSON, fetchMultiple, invalidateFetchCache } from "@/lib/fetchHelper";
 import {
   addCenteredExcelHeaderImage,
   applyExcelPrintLayout,
@@ -234,25 +234,38 @@ const UserManagement = () => {
     fetchStudents();
   }, []);
 
+  const loadCurrentSettings = useCallback(async (forceRefresh = false) => {
+    try {
+      const result = await cachedFetchJSON("/api/archive/current-settings", {}, {
+        ttlMs: 30000,
+        staleWhileRevalidate: !forceRefresh,
+        forceRefresh,
+      });
+      const data = result.data || {};
+      if (result.status === "ok" && data.status === "ok") {
+        setCurrentSemester(getDisplaySemester(data.currentSemester || "1ST SEM", data.currentSchoolYear || "2025-2026"));
+        setCurrentSchoolYear(data.currentSchoolYear || "2025-2026");
+      }
+    } catch (error) {
+      console.warn("Failed to load current semester settings:", error);
+    }
+  }, []);
+
   // Load current semester and school year
   useEffect(() => {
-    const loadCurrentSettings = async () => {
-      try {
-        const result = await cachedFetchJSON("/api/archive/current-settings", {}, {
-          ttlMs: 30000,
-          staleWhileRevalidate: true,
-        });
-        const data = result.data || {};
-        if (result.status === "ok" && data.status === "ok") {
-          setCurrentSemester(getDisplaySemester(data.currentSemester || "1ST SEM", data.currentSchoolYear || "2025-2026"));
-          setCurrentSchoolYear(data.currentSchoolYear || "2025-2026");
-        }
-      } catch (error) {
-        console.warn("Failed to load current semester settings:", error);
-      }
-    };
     loadCurrentSettings();
-  }, []);
+
+    const handleSettingsUpdated = () => {
+      loadCurrentSettings(true);
+    };
+
+    window.addEventListener("semesterYearUpdated", handleSettingsUpdated);
+    window.addEventListener("focus", handleSettingsUpdated);
+    return () => {
+      window.removeEventListener("semesterYearUpdated", handleSettingsUpdated);
+      window.removeEventListener("focus", handleSettingsUpdated);
+    };
+  }, [loadCurrentSettings]);
 
   // Maps a raw student object from the API to the shape used in state.
   // Preserves violation-derived fields from the existing row when available.
@@ -428,8 +441,18 @@ const UserManagement = () => {
         throw new Error(data?.message || "Failed to update semester and school year");
       }
 
+      invalidateFetchCache("/api/archive/current-settings");
       setCurrentSemester(getDisplaySemester(data.currentSemester || semester, data.currentSchoolYear || schoolYear));
       setCurrentSchoolYear(data.currentSchoolYear || schoolYear);
+      window.localStorage.setItem("semesterYearUpdated", Date.now().toString());
+      window.dispatchEvent(
+        new CustomEvent("semesterYearUpdated", {
+          detail: {
+            currentSemester: data.currentSemester || semester,
+            currentSchoolYear: data.currentSchoolYear || schoolYear,
+          },
+        }),
+      );
     } catch (error) {
       alert(error.message || "Unable to save changes");
       throw error;

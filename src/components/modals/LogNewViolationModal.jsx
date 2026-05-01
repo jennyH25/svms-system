@@ -6,16 +6,25 @@ import { getAuditHeaders } from "@/lib/auditHeaders";
 import ViolationPickerModal from "@/components/modals/ViolationPickerModal";
 import { CheckCircle } from "lucide-react";
 
-const initialForm = {
+const getTodayDateInputValue = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const getInitialForm = () => ({
   studentId: "",
   studentName: "",
   studentNo: "",
   yearSection: "",
   violationCatalogId: "",
   violationLabel: "",
+  dateLogged: getTodayDateInputValue(),
   reportedBy: "",
   remarks: "",
-};
+});
 
 const formatProgramYearSection = (program, yearSection) => {
   const programText = String(program || "").trim();
@@ -34,7 +43,7 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
   const [studentQuery, setStudentQuery] = useState("");
   const [showStudentSuggestions, setShowStudentSuggestions] = useState(false);
   const [showViolationPicker, setShowViolationPicker] = useState(false);
-  const [formData, setFormData] = useState(initialForm);
+  const [formData, setFormData] = useState(getInitialForm);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const [successModalOpen, setSuccessModalOpen] = useState(false);
@@ -72,7 +81,7 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
     setShowViolationPicker(false);
     setError("");
     setSuccessModalOpen(false);
-    setFormData(initialForm);
+    setFormData(getInitialForm());
   }, [isOpen]);
 
   const filteredStudents = useMemo(() => {
@@ -143,6 +152,11 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
       return;
     }
 
+    if (!formData.dateLogged) {
+      setError("Select the violation date.");
+      return;
+    }
+
     setIsSaving(true);
     setError("");
 
@@ -159,6 +173,7 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
             ? Number(formData.violationCatalogId)
             : null,
           violationLabel: formData.violationLabel,
+          dateLogged: formData.dateLogged,
           reportedBy: formData.reportedBy,
           remarks: formData.remarks,
         }),
@@ -268,7 +283,20 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
           </div>
         </div>
 
-        <div className="mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="block text-sm font-medium text-white mb-2">Date</label>
+            <input
+              type="date"
+              value={formData.dateLogged}
+              onChange={(event) =>
+                setFormData((prev) => ({ ...prev, dateLogged: event.target.value }))
+              }
+              disabled={isSaving}
+              className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] focus:outline-none focus:border-white/20 transition-all"
+            />
+          </div>
+
           <GlassInput
             label={<span className="text-sm font-medium text-white mb-2">Reported by</span>}
             value={formData.reportedBy}

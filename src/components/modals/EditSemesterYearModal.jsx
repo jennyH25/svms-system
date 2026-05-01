@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import Modal, { ModalFooter } from "@/components/ui/Modal";
 import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
-import { AlertCircle, Check } from "lucide-react";
+import { AlertCircle, Check, Loader2 } from "lucide-react";
 import SelectField from "@/components/ui/SelectField";
 
 const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchoolYear, onSave }) => {
@@ -30,7 +30,7 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
@@ -48,7 +48,7 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
     }
 
     try {
-      onSave(formData.semester.trim(), formData.schoolYear.trim());
+      await onSave(formData.semester.trim(), formData.schoolYear.trim());
       setShowSuccess(true);
       setTimeout(() => {
         onClose();
@@ -63,17 +63,27 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={isLoading ? () => {} : onClose}
       title={
         <span className="font-black font-inter">Edit Semester & School Year</span>
       }
       size="md"
-      showCloseButton={true}
+      showCloseButton={!isLoading}
     >
       <form onSubmit={handleSubmit}>
         <p className="text-sm text-gray-400 mb-4">
           Update the current semester and school year. This will be updated across all pages.
         </p>
+
+        {isLoading && (
+          <div className="mb-4 rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 flex gap-3">
+            <Loader2 className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5 animate-spin" />
+            <div>
+              <p className="text-blue-300 text-sm font-medium">Saving changes...</p>
+              <p className="text-blue-200/80 text-xs">Updating the semester and school year across the system.</p>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 bg-red-500/10 border border-red-500/40 rounded-lg p-3 flex gap-2">
@@ -85,7 +95,10 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
         {showSuccess && (
           <div className="mb-4 bg-green-500/10 border border-green-500/40 rounded-lg p-3 flex gap-2">
             <Check className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-            <p className="text-green-300 text-sm">Changes saved successfully!</p>
+            <div>
+              <p className="text-green-300 text-sm font-medium">Changes saved successfully!</p>
+              <p className="text-green-200/80 text-xs">The new semester and school year are now active.</p>
+            </div>
           </div>
         )}
 
@@ -129,7 +142,14 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
             disabled={isLoading}
             className="px-8 py-2 bg-[#556987] text-white hover:bg-[#3d4654]"
           >
-            {isLoading ? "Saving..." : "Save Changes"}
+            {isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Saving...</span>
+              </>
+            ) : (
+              "Save Changes"
+            )}
           </Button>
         </ModalFooter>
       </form>

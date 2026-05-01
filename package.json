@@ -21,7 +21,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "db:test": "node scripts/test-postgres.js",
-    "db:setup-auth": "node scripts/setup-auth-db.js"
+    "db:setup-auth": "node scripts/setup-auth-db.js",
+    "test:archive-import": "node scripts/test-archive-import.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dropdown-menu": "^2.1.16",

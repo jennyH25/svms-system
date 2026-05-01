@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Modal, { ModalFooter } from '../ui/Modal';
 import Button from '../ui/Button';
-import { AlertCircle, CheckCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { getAuditHeaders } from '@/lib/auditHeaders';
 import SelectField from '../ui/SelectField';
 
@@ -245,6 +245,20 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
     <>
       <Modal isOpen={isOpen} onClose={handleClose} title="Archive Student Violations">
         <div className="space-y-4 max-w-md">
+          {isArchiving && (
+            <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+                <div>
+                  <p className="font-medium text-blue-300">Archiving records...</p>
+                  <p className="text-sm text-blue-200/80">
+                    Moving records, updating counts, and preserving archive history safely.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="bg-slate-800/50 p-3 rounded-lg">
             <p className="text-xs text-slate-400 mb-1">Current Semester</p>
             <p className="text-lg font-semibold text-blue-400">
@@ -343,7 +357,14 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
               archiveExists
             }
           >
-            {isArchiving ? 'Archiving...' : 'Archive'}
+            {isArchiving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Archiving...</span>
+              </>
+            ) : (
+              'Archive'
+            )}
           </Button>
         </ModalFooter>
       </Modal>

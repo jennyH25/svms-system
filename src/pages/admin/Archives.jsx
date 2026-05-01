@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import AnimatedContent from "../../components/ui/AnimatedContent";
 import SearchBar from "../../components/ui/SearchBar";
 import Button from "../../components/ui/Button";
 import DataTable from "../../components/ui/DataTable";
 import TableTabs from "../../components/ui/TableTabs";
-import { Folder, Download, X, AlertCircle, MoreVertical, Edit, RotateCcw, Trash2, Check, Tag, CalendarDays, SortAsc, Upload, UserRound, ShieldAlert, Mail, GraduationCap, CalendarClock, FileText, Database, Archive, ArrowUpRight, IdCard } from "lucide-react";
+import { Folder, Download, X, AlertCircle, MoreVertical, Edit, RotateCcw, Trash2, Check, Tag, CalendarDays, SortAsc, Upload, UserRound, ShieldAlert, Mail, GraduationCap, CalendarClock, FileText, Database, Archive, ArrowUpRight, IdCard, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -55,6 +55,13 @@ const formatDate = (dateString) => {
     return "-";
   }
 };
+
+const getArchiveViolationDisplayDate = (record) =>
+  record?.original_created_at ||
+  record?.originalCreatedAt ||
+  record?.archived_at ||
+  record?.archivedAt ||
+  "";
 
 // Helper functions for export functionality
 const blobToDataUrl = (blob) =>
@@ -304,6 +311,16 @@ const buildViolationTypeAndReporter = (violation) => {
   return { type, reportedBy };
 };
 
+const isImportedArchiveRecord = (record) =>
+  String(record?.remarks || "").trim().toUpperCase() === "IMPORTED" &&
+  String(record?.sourceType || "").trim().toLowerCase() !== "workbook";
+
+const getArchiveSignatureStatus = (record) => {
+  if (record?.signatureImage) return "SIGNED";
+  if (isImportedArchiveRecord(record)) return "SIGNED";
+  return "No Signature";
+};
+
 const Archives = () => {
   const [activeFolder, setActiveFolder] = useState("users");
   const [activeSemester, setActiveSemester] = useState("1ST SEM");
@@ -321,6 +338,7 @@ const Archives = () => {
   const [allUnresolvedViolations, setAllUnresolvedViolations] = useState([]); // Global unresolved records
   const [preservedYearSectionByViolationId, setPreservedYearSectionByViolationId] = useState({});
   const [schoolYears, setSchoolYears] = useState([]);
+  const [semestersBySchoolYear, setSemestersBySchoolYear] = useState({});
   const [unresolvedSchoolYears, setUnresolvedSchoolYears] = useState([]);
   const [selectedUnresolvedYear, setSelectedUnresolvedYear] = useState("");
   const globalSearchLoadIdRef = useRef(0);
@@ -365,10 +383,13 @@ const Archives = () => {
   // School year management states
   const [isDeleteSchoolYearModalOpen, setIsDeleteSchoolYearModalOpen] = useState(false);
   const [schoolYearToDelete, setSchoolYearToDelete] = useState(null);
+  const [isDeleteSemesterModalOpen, setIsDeleteSemesterModalOpen] = useState(false);
+  const [semesterToDelete, setSemesterToDelete] = useState(null);
   const [isRenameSchoolYearModalOpen, setIsRenameSchoolYearModalOpen] = useState(false);
   const [schoolYearToRename, setSchoolYearToRename] = useState(null);
   const [newSchoolYearName, setNewSchoolYearName] = useState("");
   const [isSchoolYearActionLoading, setIsSchoolYearActionLoading] = useState(false);
+  const [isSemesterActionLoading, setIsSemesterActionLoading] = useState(false);
 
   // Download/Export states
   const [downloadModalOpen, setDownloadModalOpen] = useState(false);
@@ -377,6 +398,37 @@ const Archives = () => {
   const [downloadAllFormat, setDownloadAllFormat] = useState('excel');
   const [showDownloadAlertModal, setShowDownloadAlertModal] = useState(false);
   const [downloadAlertMessage, setDownloadAlertMessage] = useState("");
+
+  const loadArchiveSchoolYears = useCallback(async () => {
+    try {
+      const response = await fetch("/api/archive/school-years", {
+        headers: { ...getAuditHeaders() },
+      });
+
+      if (!response.ok) {
+        console.warn("Failed to load school years:", response.status);
+        setSchoolYears([]);
+        setSemestersBySchoolYear({});
+        return null;
+      }
+
+      const data = await response.json();
+      if (data.status === "ok" && Array.isArray(data.schoolYears)) {
+        setSchoolYears(data.schoolYears || []);
+        setSemestersBySchoolYear(data.semestersBySchoolYear || {});
+        return data;
+      }
+
+      setSchoolYears([]);
+      setSemestersBySchoolYear({});
+      return null;
+    } catch (err) {
+      console.error("Error loading school years:", err);
+      setSchoolYears([]);
+      setSemestersBySchoolYear({});
+      return null;
+    }
+  }, []);
 
   // Import workbook records states
   const [isImportConfirmModalOpen, setIsImportConfirmModalOpen] = useState(false);
@@ -436,39 +488,25 @@ const Archives = () => {
       }
 
       // Force immediate refresh of school years
-      const loadSchoolYears = async () => {
-        try {
-          const response = await fetch("/api/archive/school-years", {
-            headers: { ...getAuditHeaders() },
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            console.log("School years updated:", data.schoolYears);
-            if (data.status === "ok" && Array.isArray(data.schoolYears)) {
-              setSchoolYears(data.schoolYears || []);
-              
-              // Auto-select first folder if available
-              if (data.schoolYears.length > 0 && activeFolder === "users") {
-                console.log("Auto-selecting first folder:", data.schoolYears[0]);
-                setActiveFolder(data.schoolYears[0]);
-                setActiveSemester("1ST SEM");
-              }
-            }
-          }
-        } catch (err) {
-          console.error("Error refreshing school years:", err);
+      loadArchiveSchoolYears().then((data) => {
+        if (
+          data?.status === "ok" &&
+          Array.isArray(data.schoolYears) &&
+          data.schoolYears.length > 0 &&
+          activeFolder === "users"
+        ) {
+          console.log("Auto-selecting first folder:", data.schoolYears[0]);
+          setActiveFolder(data.schoolYears[0]);
+          setActiveSemester("1ST SEM");
         }
-      };
-      
-      loadSchoolYears();
+      });
     };
 
     window.addEventListener("archiveCompleted", handleArchiveEvent);
     return () => {
       window.removeEventListener("archiveCompleted", handleArchiveEvent);
     };
-  }, [activeFolder]);
+  }, [activeFolder, loadArchiveSchoolYears]);
 
   const isViolationType = (item, type) => {
     const categoryText = String(item.violationCategory || item.type || "").toLowerCase();
@@ -489,40 +527,13 @@ const Archives = () => {
 
   // Load school years on mount and refresh on meaningful events only.
   useEffect(() => {
-    const loadSchoolYears = async () => {
-      try {
-        const response = await fetch("/api/archive/school-years", {
-          headers: { ...getAuditHeaders() },
-        });
-        
-        if (!response.ok) {
-          console.warn("Failed to load school years:", response.status);
-          setSchoolYears([]);
-          return;
-        }
-        
-        const data = await response.json();
-
-        if (data.status === "ok" && Array.isArray(data.schoolYears)) {
-          const years = data.schoolYears || [];
-          setSchoolYears(years);
-          // Don't auto-select folder - keep users as default
-        } else {
-          setSchoolYears([]);
-        }
-      } catch (err) {
-        console.error("Error loading school years:", err);
-        setSchoolYears([]);
-      }
-    };
-
-    loadSchoolYears();
+    loadArchiveSchoolYears();
 
     const handleStorageChange = () => {
-      loadSchoolYears();
+      loadArchiveSchoolYears();
     };
     const handleWindowFocus = () => {
-      loadSchoolYears();
+      loadArchiveSchoolYears();
     };
 
     window.addEventListener("storage", handleStorageChange);
@@ -532,7 +543,7 @@ const Archives = () => {
       window.removeEventListener("storage", handleStorageChange);
       window.removeEventListener("focus", handleWindowFocus);
     };
-  }, []);
+  }, [loadArchiveSchoolYears]);
 
   // Load unresolved school years for UNRESOLVED folder
   useEffect(() => {
@@ -866,11 +877,13 @@ const Archives = () => {
       });
 
       if (response.ok) {
-        const data = await response.json();
-        // Remove the school year from the list
-        setSchoolYears((prev) => prev.filter((year) => year !== schoolYearToDelete));
+        await response.json();
+        const data = await loadArchiveSchoolYears();
         // If the deleted year was active, switch to users folder
-        if (activeFolder === schoolYearToDelete) {
+        if (
+          activeFolder === schoolYearToDelete &&
+          !data?.schoolYears?.includes(schoolYearToDelete)
+        ) {
           setActiveFolder("users");
           setActiveSemester("1ST SEM");
         }
@@ -887,6 +900,55 @@ const Archives = () => {
       setError("Error deleting school year: " + err.message);
     } finally {
       setIsSchoolYearActionLoading(false);
+    }
+  };
+
+  const handleDeleteSemester = async () => {
+    if (!semesterToDelete?.schoolYear || !semesterToDelete?.semester) return;
+
+    try {
+      setIsSemesterActionLoading(true);
+      const response = await fetch(
+        `/api/archive/semesters/${encodeURIComponent(semesterToDelete.schoolYear)}/${encodeURIComponent(semesterToDelete.semester)}`,
+        {
+          method: "DELETE",
+          headers: { ...getAuditHeaders() },
+        },
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const refreshed = await loadArchiveSchoolYears();
+        const remainingSemesters = refreshed?.semestersBySchoolYear?.[semesterToDelete.schoolYear] || [];
+
+        if (
+          activeFolder === semesterToDelete.schoolYear &&
+          activeSemester === semesterToDelete.semester
+        ) {
+          if (remainingSemesters.length > 0) {
+            setActiveSemester(remainingSemesters[0]);
+          } else {
+            setActiveFolder("users");
+            setActiveSemester("1ST SEM");
+          }
+        }
+
+        setIsDeleteSemesterModalOpen(false);
+        setSemesterToDelete(null);
+        setError("");
+        setArchiveSuccessMessage(
+          data.message || `Deleted ${semesterToDelete.semester} for S.Y. ${semesterToDelete.schoolYear}.`,
+        );
+        setTimeout(() => setArchiveSuccessMessage(""), 5000);
+        window.dispatchEvent(new CustomEvent("archiveCompleted"));
+      } else {
+        const data = await response.json();
+        setError(data.message || "Failed to delete semester");
+      }
+    } catch (err) {
+      setError("Error deleting semester: " + err.message);
+    } finally {
+      setIsSemesterActionLoading(false);
     }
   };
 
@@ -940,6 +1002,11 @@ const Archives = () => {
     setSchoolYearToRename(schoolYear);
     setNewSchoolYearName(schoolYear);
     setIsRenameSchoolYearModalOpen(true);
+  };
+
+  const handleDeleteSemesterClick = (schoolYear, semester) => {
+    setSemesterToDelete({ schoolYear, semester });
+    setIsDeleteSemesterModalOpen(true);
   };
 
   // Get all folders (USERS + UNRESOLVED + School Years)
@@ -1042,10 +1109,15 @@ const Archives = () => {
             violationDegree: violation.violation_degree || "",
             reportedBy,
             remarks: violation.remarks || "-",
-            signature: violation.signature_image ? "Signed" : "No Signature",
+            signature: getArchiveSignatureStatus({
+              signatureImage: violation.signature_image,
+              remarks: violation.remarks,
+              sourceType: violation.sourceType || (violation.isHistoricalWorkbook ? "workbook" : "archive"),
+            }),
             signatureImage: violation.signature_image,
-            date: formatDate(violation.archived_at),
+            date: formatDate(getArchiveViolationDisplayDate(violation)),
             archivedAt: violation.archived_at,
+            originalCreatedAt: getArchiveViolationDisplayDate(violation),
             semester: violation.semester || activeSemester,
             schoolYear:
               violation.school_year ||
@@ -1160,10 +1232,15 @@ const Archives = () => {
             violationDegree: violation.violation_degree || "",
             reportedBy,
             remarks: violation.remarks || "-",
-            signature: violation.signature_image ? "Signed" : "No Signature",
+            signature: getArchiveSignatureStatus({
+              signatureImage: violation.signature_image,
+              remarks: violation.remarks,
+              sourceType: violation.sourceType || (violation.isHistoricalWorkbook ? "workbook" : "archive"),
+            }),
             signatureImage: violation.signature_image,
-            date: formatDate(violation.archived_at),
+            date: formatDate(getArchiveViolationDisplayDate(violation)),
             archivedAt: violation.archived_at,
+            originalCreatedAt: getArchiveViolationDisplayDate(violation),
             semester: violation.semester || "",
             schoolYear: violation.school_year || "",
             violationId: violation.id,
@@ -1212,10 +1289,15 @@ const Archives = () => {
             violationDegree: violation.violation_degree || "",
             reportedBy,
             remarks: violation.remarks || "-",
-            signature: violation.signature_image ? "Signed" : "No Signature",
+            signature: getArchiveSignatureStatus({
+              signatureImage: violation.signature_image,
+              remarks: violation.remarks,
+              sourceType: violation.sourceType || (violation.isHistoricalWorkbook ? "workbook" : "archive"),
+            }),
             signatureImage: violation.signature_image,
-            date: formatDate(violation.archived_at),
+            date: formatDate(getArchiveViolationDisplayDate(violation)),
             archivedAt: violation.archived_at,
+            originalCreatedAt: getArchiveViolationDisplayDate(violation),
             semester: violation.semester || "",
             schoolYear: violation.school_year || "",
             violationId: violation.id,
@@ -1716,9 +1798,11 @@ const Archives = () => {
                   <img
                     src={row.signatureImage}
                     alt="Signature"
-                    className="h-8 w-24 object-contain bg-white rounded border border-gray-200"
-                  />
-                </div>
+                  className="h-8 w-24 object-contain bg-white rounded border border-gray-200"
+                />
+              </div>
+              ) : row.signature === "SIGNED" ? (
+                <span className="font-semibold text-green-300">SIGNED</span>
               ) : (
                 <Button
                   size="sm"
@@ -1831,6 +1915,8 @@ const Archives = () => {
                   className="h-8 w-24 object-contain bg-white rounded border border-gray-200"
                 />
               </div>
+            ) : row.signature === "SIGNED" ? (
+              <span className="font-semibold text-green-300">SIGNED</span>
             ) : (
               <Button
                 size="sm"
@@ -2266,7 +2352,7 @@ const Archives = () => {
         'Type': item.type || '-',
         'Reported by': item.reportedBy || '-',
         'Remarks': item.remarks || '-',
-        'Signature': item.signatureImage ? 'Signed' : 'No Signature',
+        'Signature': item.signature || 'No Signature',
         'Status': item.status || '-',
       }));
     }
@@ -2877,6 +2963,28 @@ const Archives = () => {
             tabs={semesterTabs}
             activeTab={activeSemester}
             onTabChange={setActiveSemester}
+            renderTabAction={(tab) =>
+              (semestersBySchoolYear[activeFolder] || []).includes(tab.key) ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleDeleteSemesterClick(activeFolder, tab.key);
+                  }}
+                  disabled={isSemesterActionLoading}
+                  className="absolute -right-2 -top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-red-400/40 bg-[#2D2F33] text-red-300 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50"
+                  title={`Delete ${tab.label} for S.Y. ${activeFolder}`}
+                >
+                  {isSemesterActionLoading &&
+                  semesterToDelete?.schoolYear === activeFolder &&
+                  semesterToDelete?.semester === tab.key ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              ) : null
+            }
             className="mb-4"
           />
         </AnimatedContent>
@@ -3351,6 +3459,56 @@ const Archives = () => {
                 className="bg-red-700 hover:bg-red-800 border-0 text-white"
               >
                 {isSchoolYearActionLoading ? "Deleting..." : "Delete School Year"}
+              </Button>
+            </ModalFooter>
+          </div>
+        </Modal>
+      )}
+
+      {/* Delete Semester Confirmation Modal */}
+      {isDeleteSemesterModalOpen && semesterToDelete && (
+        <Modal
+          isOpen={isDeleteSemesterModalOpen}
+          onClose={() => {
+            setIsDeleteSemesterModalOpen(false);
+            setSemesterToDelete(null);
+          }}
+          showCloseButton={true}
+        >
+          <div className="bg-transparent">
+            <div className="flex items-center gap-3 mb-4">
+              <AlertCircle className="w-6 h-6 text-red-400" />
+              <h3 className="text-lg font-bold text-white">Confirm Delete Semester</h3>
+            </div>
+            <p className="text-gray-300 mb-6">
+              Are you sure you want to delete{" "}
+              <span className="font-semibold text-[#A3AED0]">
+                {semesterToDelete.semester}
+              </span>{" "}
+              from{" "}
+              <span className="font-semibold text-[#A3AED0]">
+                S.Y. {semesterToDelete.schoolYear}
+              </span>
+              ? This will permanently delete archived records for that semester only and cannot be undone.
+            </p>
+            <ModalFooter>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setIsDeleteSemesterModalOpen(false);
+                  setSemesterToDelete(null);
+                }}
+                className="bg-[#3D4654] hover:bg-[#4d5664] border-0"
+                disabled={isSemesterActionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleDeleteSemester}
+                disabled={isSemesterActionLoading}
+                className="bg-red-700 hover:bg-red-800 border-0 text-white"
+              >
+                {isSemesterActionLoading ? "Deleting..." : "Delete Semester"}
               </Button>
             </ModalFooter>
           </div>

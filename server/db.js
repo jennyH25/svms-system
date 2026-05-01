@@ -1593,6 +1593,12 @@ export async function syncStudentViolationLogsDatabase() {
   `);
 
   await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS student_violation_archives_unresolved_term_idx
+    ON student_violation_archives (school_year, semester, archived_at DESC)
+    WHERE is_unresolved = TRUE
+  `);
+
+  await dbPool.query(`
     CREATE INDEX IF NOT EXISTS student_violation_archives_student_id_idx
     ON student_violation_archives (student_id)
   `);
