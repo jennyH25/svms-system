@@ -196,16 +196,6 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
     onClose();
   };
 
-  // Auto-close success modal after 3 seconds
-  useEffect(() => {
-    if (archiveResult?.success) {
-      const timer = setTimeout(() => {
-        handleClose();
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [archiveResult?.success]);
-
   if (!isOpen) return null;
 
   // Show success state

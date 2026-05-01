@@ -1740,7 +1740,7 @@ const Archives = () => {
                 onClick={() => handleClearUnresolved(row)}
               >
                 <Check className="w-4 h-4" />
-                <span className="font-semibold">Cleared</span>
+                <span className="font-semibold">Clear</span>
               </Button>
             ),
           },
