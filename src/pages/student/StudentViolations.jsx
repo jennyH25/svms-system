@@ -1737,7 +1737,12 @@ sheet.mergeCells('A1:H3');
 			// Optimistic update: immediately update records with signature for instant feedback
 			mergeRecord({ id: id, signature_image: signatureImage });
 			
-			// Confirm with server
+			// Show success modal immediately for instant feedback
+			setSignatureTarget(null);
+			setSignatureSuccessModal(true);
+			setIsSignatureSaving(false);
+			
+			// Confirm with server in background
 			const response = await fetch(
 				`/api/student-violations/${id}/signature`,
 				{
@@ -1762,15 +1767,12 @@ sheet.mergeCells('A1:H3');
 					invalidateFetchCache('/api/student-violations/me');
 				} catch (_e) {}
 			}
-			setSignatureTarget(null);
-			setSignatureSuccessModal(true);
 		} catch (error) {
 			setSignatureTarget(null);
 			setErrorModalMessage(error.message || "Unable to save signature.");
 			setShowErrorModal(true);
 			setSignatureSuccessModal(false); // close success modal if there's an error
 		} finally {
-			setIsSignatureSaving(false);
 			setSavingSignatureId(null);
 		}
 	}, [signatureTarget, mergeRecord]);
