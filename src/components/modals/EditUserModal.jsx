@@ -184,6 +184,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
             value={formData.violationCount}
             onChange={handleChange}
             placeholder="Violation Count"
+            disabled={true}
           />
         </div>
         <ModalFooter>
