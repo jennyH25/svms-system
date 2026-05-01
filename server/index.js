@@ -6570,20 +6570,21 @@ app.put("/api/archive/current-settings", async (req, res) => {
     }
     const previousSchoolYear = `${startYear - 1}-${endYear - 1}`;
 
-    // Update all active students' current_school_year and last_promoted_school_year
+    // Update all active students' current_semester, current_school_year and last_promoted_school_year
     await pool.query(
       `UPDATE "Students"
-       SET current_school_year = $1,
-           last_promoted_school_year = $2
+       SET current_semester = $1,
+           current_school_year = $2,
+           last_promoted_school_year = $3
        WHERE is_archived = false`,
-      [normalizedSchoolYear, previousSchoolYear],
+      [normalizedSemester, normalizedSchoolYear, previousSchoolYear],
     );
 
     await logAuditEvent(req, {
       action: "UPDATE_ARCHIVE_SETTINGS",
       targetType: "system_settings",
       targetId: null,
-      details: `Updated current semester and school year to ${normalizedSemester} S.Y. ${normalizedSchoolYear}. Updated all students' current_school_year to ${normalizedSchoolYear} and last_promoted_school_year to ${previousSchoolYear}`,
+      details: `Updated current semester and school year to ${normalizedSemester} S.Y. ${normalizedSchoolYear}. Updated all students' current_semester to ${normalizedSemester}, current_school_year to ${normalizedSchoolYear} and last_promoted_school_year to ${previousSchoolYear}`,
       metadata: {
         currentSemester: normalizedSemester,
         currentSchoolYear: normalizedSchoolYear,
