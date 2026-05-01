@@ -229,6 +229,19 @@ const EditViolationModal = ({
             />
           </div>
 
+          {record?.signature_image && (
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-white mb-2">Signature</label>
+              <div className="rounded-xl border border-white/10 bg-black/20 p-4 flex items-center justify-center min-h-[120px]">
+                <img
+                  src={record.signature_image}
+                  alt="Student signature"
+                  className="max-h-[250px] max-w-full object-contain"
+                />
+              </div>
+            </div>
+          )}
+
           {error ? <p className="text-sm text-red-300 mb-4">{error}</p> : null}
 
           <div className="mb-6 p-4 bg-blue-500/5 border border-blue-400/20 rounded-lg flex flex-col gap-3">
