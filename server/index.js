@@ -2152,7 +2152,7 @@ async function purgeExpiredAuditLogs() {
     const removedCount = Number(result.rowCount || 0);
     if (removedCount > 0) {
       console.log(
-        `Audit cleanup: removed ${removedCount} log(s) older than ${AUDIT_LOG_RETENTION_DAYS} days.`,
+        `Audit cleanup: removed ${removedCount} log${removedCount === 1 ? '' : 's'} older than ${AUDIT_LOG_RETENTION_DAYS} days.`,
       );
     }
   } catch (error) {
@@ -2183,7 +2183,7 @@ async function purgeExpiredNotifications() {
     const removedCount = Number(result.rowCount || 0);
     if (removedCount > 0) {
       console.log(
-        `Notification cleanup: removed ${removedCount} read notification(s) older than ${NOTIFICATION_RETENTION_DAYS} days.`,
+        `Notification cleanup: removed ${removedCount} read notification${removedCount === 1 ? '' : 's'} older than ${NOTIFICATION_RETENTION_DAYS} days.`,
       );
     }
   } catch (error) {
@@ -4262,7 +4262,7 @@ app.post("/api/students/alerts", async (req, res) => {
     await logAuditEvent(req, {
       action: "SEND_STUDENT_ALERT",
       targetType: "student_notification",
-      details: `Sent ${normalizedAlertType} alert to ${insertedNotifications.length} student(s).`,
+      details: `Sent ${normalizedAlertType} alert to ${insertedNotifications.length} student${insertedNotifications.length === 1 ? '' : 's'}.`,
       metadata: {
         alertType: normalizedAlertType,
         messageLength: normalizedMessage.length,
@@ -6357,7 +6357,7 @@ app.delete("/api/notifications", async (req, res) => {
 
     return res.status(200).json({
       status: "ok",
-      message: `${result.rowCount} notification(s) deleted successfully.`,
+      message: `${result.rowCount} notification${result.rowCount === 1 ? '' : 's'} deleted successfully.`,
       deleted_count: result.rowCount,
     });
   } catch (error) {
@@ -6394,7 +6394,7 @@ app.delete("/api/notifications/delete-all", async (req, res) => {
 
     return res.status(200).json({
       status: "ok",
-      message: `${result.rowCount} notification(s) deleted successfully.`,
+      message: `${result.rowCount} notification${result.rowCount === 1 ? '' : 's'} deleted successfully.`,
       deleted_count: result.rowCount,
     });
   } catch (error) {
@@ -7016,7 +7016,7 @@ app.post("/api/archive/violations", async (req, res) => {
     if (pendingWithoutSignature.length > 0) {
       return res.status(400).json({
         status: "error",
-        message: `Cannot archive violations. ${pendingWithoutSignature.length} pending violation(s) are missing signatures. Please attach signatures to all pending violations before archiving.`,
+        message: `Cannot archive violations. ${pendingWithoutSignature.length} pending violation${pendingWithoutSignature.length === 1 ? '' : 's'} are missing signatures. Please attach signatures to all pending violations before archiving.`,
       });
     }
 
@@ -7026,7 +7026,7 @@ app.post("/api/archive/violations", async (req, res) => {
     if (clearedWithoutSignature.length > 0) {
       return res.status(400).json({
         status: "error",
-        message: `Cannot archive violations. ${clearedWithoutSignature.length} cleared violation(s) are missing signatures. Please attach signatures to all cleared violations before archiving.`,
+        message: `Cannot archive violations. ${clearedWithoutSignature.length} cleared violation${clearedWithoutSignature.length === 1 ? '' : 's'} are missing signatures. Please attach signatures to all cleared violations before archiving.`,
       });
     }
 
@@ -7336,7 +7336,7 @@ app.post("/api/archive/violations", async (req, res) => {
 
     return res.status(200).json({
       status: "ok",
-      message: `Archive completed. ${archivedCount} violations moved to archive (${pendingCount} unresolved, ${clearedCount} cleared). ${promotedCount || 0} students promoted${blockedStudentCount ? `, ${blockedStudentCount} promotion(s) blocked due to pending/uncleared violations` : ""}.`,
+      message: `Archive completed. ${archivedCount} violations moved to archive (${pendingCount} unresolved, ${clearedCount} cleared). ${promotedCount || 0} students promoted${blockedStudentCount ? `, ${blockedStudentCount} promotion${blockedStudentCount === 1 ? '' : 's'} blocked due to pending/uncleared violations` : ""}.`,
       archivedCount,
       pendingCount,
       clearedCount,
@@ -7684,12 +7684,12 @@ app.delete("/api/archive/semesters/:schoolYear/:semester", async (req, res) => {
       action: "DELETE_ARCHIVE_SEMESTER",
       targetType: "ARCHIVE_SEMESTER",
       targetId: `${normalizedSchoolYear}|${normalizedSemester}`,
-      details: `Deleted ${deletedCount} archived violation record(s) for ${normalizedSemester} S.Y. ${normalizedSchoolYear}.`,
+      details: `Deleted ${deletedCount} archived violation record${deletedCount === 1 ? '' : 's'} for ${normalizedSemester} S.Y. ${normalizedSchoolYear}.`,
     });
 
     return res.status(200).json({
       status: "ok",
-      message: `Successfully deleted ${deletedCount} archived record(s) for ${normalizedSemester} S.Y. ${normalizedSchoolYear}.`,
+      message: `Successfully deleted ${deletedCount} archived record${deletedCount === 1 ? '' : 's'} for ${normalizedSemester} S.Y. ${normalizedSchoolYear}.`,
       deletedCount,
     });
   } catch (error) {
@@ -8182,7 +8182,7 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
 
     return res.status(200).json({
       status: "ok",
-      message: `Successfully restored ${restoredCount} archived user(s) to active status.`,
+      message: `Successfully restored ${restoredCount} archived user${restoredCount === 1 ? '' : 's'} to active status.`,
       restoredCount,
     });
   } catch (error) {

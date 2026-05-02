@@ -324,7 +324,7 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
                   {signatureCheck.hasAllSignatures ? (
                     'All violations have signatures attached.'
                   ) : (
-                    `${signatureCheck.violationsWithoutSignature} violation(s) are missing signatures. Please attach signatures before archiving.`
+                    `${signatureCheck.violationsWithoutSignature} violation${signatureCheck.violationsWithoutSignature === 1 ? '' : 's'} are missing signatures. Please attach signatures before archiving.`
                   )}
                 </div>
               </div>
@@ -376,7 +376,7 @@ const ArchiveViolationModal = ({ isOpen, onClose, onArchive }) => {
           title="Missing Signatures"
         >
           <div className="p-4 text-sm text-red-200">
-            {signatureCheck.violationsWithoutSignature} violation(s) are missing signatures.
+            {signatureCheck.violationsWithoutSignature} violation{signatureCheck.violationsWithoutSignature === 1 ? '' : 's'} are missing signatures.
             Please attach signatures before archiving.
           </div>
           <ModalFooter>

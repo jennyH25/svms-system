@@ -82,6 +82,9 @@ const formatStudentDisplayName = ({ firstName, middleInitial, lastName, fullName
   return formatted || String(fullName || "").trim();
 };
 
+const pluralize = (word, count) => `${word}${count === 1 ? "" : "s"}`;
+const formatStudentLabel = (count) => `${count} ${pluralize("student", count)}`;
+
 const UserManagement = () => {
   const [activeTab, setActiveTab] = useState("regular");
   const [selectedProgram, setSelectedProgram] = useState("");
@@ -128,6 +131,8 @@ const UserManagement = () => {
     title: "",
     message: "",
   });
+  const [showDeleteSelectedModal, setShowDeleteSelectedModal] = useState(false);
+  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [showSendAlertModal, setShowSendAlertModal] = useState(false);
   const [isSendingAlert, setIsSendingAlert] = useState(false);
   const [alertType, setAlertType] = useState("");
@@ -486,6 +491,47 @@ const UserManagement = () => {
     }
   };
 
+  const handleDeleteSelectedStudents = async () => {
+    if (selectedUserIds.size === 0) {
+      return;
+    }
+
+    setIsDeletingSelected(true);
+    try {
+      let deletedCount = 0;
+      const failedDeletes = [];
+
+      for (const userId of selectedUserIds) {
+        const response = await fetch(`/api/students/${userId}`, {
+          method: "DELETE",
+          headers: {
+            ...getAuditHeaders(),
+          },
+        });
+
+        if (response.ok) {
+          deletedCount += 1;
+        } else {
+          failedDeletes.push(userId);
+        }
+      }
+
+      await fetchStudents();
+      setSelectedUserIds(new Set());
+      setShowDeleteSelectedModal(false);
+
+      if (failedDeletes.length > 0) {
+        alert(
+          `Deleted ${formatStudentLabel(deletedCount)}. ${formatStudentLabel(failedDeletes.length)} could not be deleted. Please try again.`,
+        );
+      }
+    } catch (error) {
+      alert(error.message || "Unable to delete selected students.");
+    } finally {
+      setIsDeletingSelected(false);
+    }
+  };
+
   // Archive handlers
   const handleArchiveSchoolYear = async () => {
     if (!newSchoolYear.trim()) {
@@ -580,7 +626,7 @@ const UserManagement = () => {
       showArchiveAlert(
         "success",
         "School Year Archived",
-        `${archivedCount} 4th-year students archived. ${promotedCount} students promoted.${blockedCount ? ` ${blockedCount} student(s) were not promoted/graduated due to pending or uncleared violations.` : ""}`,
+        `${archivedCount} 4th-year students archived. ${promotedCount} students promoted.${blockedCount ? ` ${formatStudentLabel(blockedCount)} were not promoted/graduated due to pending or uncleared violations.` : ""}`,
       );
     } catch (error) {
       showArchiveAlert(
@@ -680,7 +726,7 @@ const UserManagement = () => {
       showArchiveAlert(
         "success",
         "Users Archived",
-        `Successfully archived ${archivedCount} student(s).${blockedCount ? ` ${blockedCount} student(s) were skipped due to pending or uncleared violations.` : ""}`,
+        `Successfully archived ${formatStudentLabel(archivedCount)}.${blockedCount ? ` ${formatStudentLabel(blockedCount)} were skipped due to pending or uncleared violations.` : ""}`,
       );
     } catch (error) {
       showArchiveAlert(
@@ -785,8 +831,8 @@ const UserManagement = () => {
 
       const deliverySummary =
         emailFailedCount > 0
-          ? `Email delivered to ${emailSentCount} student(s); ${emailFailedCount} email delivery issue(s).`
-          : `Email delivered to ${emailSentCount} student(s).`;
+          ? `Email delivered to ${formatStudentLabel(emailSentCount)}; ${emailFailedCount} email delivery issue${emailFailedCount === 1 ? '' : 's'}.`
+          : `Email delivered to ${formatStudentLabel(emailSentCount)}.`;
 
       setShowSendAlertModal(false);
       resetAlertForm();
@@ -796,8 +842,8 @@ const UserManagement = () => {
         title: "Alert Sent",
         message:
           skippedCount > 0
-            ? `Alert sent to ${sentCount} student(s). ${skippedCount} student(s) were skipped. ${deliverySummary}`
-            : `Alert successfully sent to selected student(s). ${deliverySummary}`,
+            ? `Alert sent to ${formatStudentLabel(sentCount)}. ${formatStudentLabel(skippedCount)} were skipped. ${deliverySummary}`
+            : `Alert successfully sent to selected ${pluralize("student", selectedStudentsForAlert.length)}. ${deliverySummary}`,
       });
     } catch (error) {
       setAlertResultModal({
@@ -1645,6 +1691,18 @@ const UserManagement = () => {
               <Archive className="w-4 h-4" />
               Archive {selectedUserIds.size > 0 && `(${selectedUserIds.size})`}
             </Button>
+            {selectedUserIds.size > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="gap-2 bg-red-600/30 hover:bg-red-600/50 border-red-600/50 border"
+                onClick={() => setShowDeleteSelectedModal(true)}
+                disabled={isLoading || isDeletingSelected}
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete {selectedUserIds.size > 0 && `(${selectedUserIds.size})`}
+              </Button>
+            )}
             <Button
               variant="secondary"
               size="sm"
@@ -1702,17 +1760,22 @@ const UserManagement = () => {
             setDeleteCandidate(null);
           }
         }}
-        title={<span className="font-black font-inter">Delete Student</span>}
+        title={
+          <span className="flex items-center gap-2 font-black font-inter">
+            <AlertCircle className="w-5 h-5" style={{ color: "rgb(255 0 69)" }} />
+            Delete Student
+          </span>
+        }
         size="md"
         showCloseButton={!isDeleting}
       >
         <div className="rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3 mb-4">
           <p className="text-red-300 text-sm font-medium">
-            This action permanently removes the student record from the database.
+            This action cannot be undone and will permanently remove the student record.
           </p>
         </div>
-        <p className="text-gray-200 text-sm">
-          Delete <span className="font-semibold text-white">{deleteCandidate?.studentName}</span>?
+        <p className="text-gray-200 text-sm" style={{ letterSpacing: "2px" }}>
+          Are you sure you want to delete <span className="font-semibold text-white">{deleteCandidate?.studentName}</span>?
         </p>
         <ModalFooter>
           <Button
@@ -1732,6 +1795,52 @@ const UserManagement = () => {
             className="px-6 py-2.5"
           >
             {isDeleting ? "Deleting..." : "Delete"}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        isOpen={showDeleteSelectedModal}
+        onClose={() => {
+          if (!isDeletingSelected) {
+            setShowDeleteSelectedModal(false);
+          }
+        }}
+        title={
+          <span className="flex items-center gap-2 font-black font-inter">
+            <AlertCircle className="w-5 h-5 text-red-400" />
+            Delete Selected Students
+          </span>
+        }
+        size="md"
+        showCloseButton={!isDeletingSelected}
+      >
+        <div className="rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3 mb-4">
+          <p className="text-red-300 text-sm font-medium">
+            This action cannot be undone and will permanently remove the selected student records.
+          </p>
+        </div>
+        <p className="text-gray-200 text-sm mb-4" style={{ letterSpacing: "2px" }}>
+          Are you sure you want to delete <span className="font-semibold text-white">{formatStudentLabel(selectedUserIds.size)}</span>?
+        </p>
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowDeleteSelectedModal(false)}
+            disabled={isDeletingSelected}
+            className="px-6 py-2.5"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            onClick={handleDeleteSelectedStudents}
+            disabled={isDeletingSelected}
+            className="px-6 py-2.5"
+          >
+            {isDeletingSelected ? "Deleting..." : "Delete Selected"}
           </Button>
         </ModalFooter>
       </Modal>
@@ -1774,7 +1883,7 @@ const UserManagement = () => {
       >
         <div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3 mb-4">
           <p className="text-sm font-medium text-green-300">
-            User changes were saved to the database.
+            User information updated successfully.
           </p>
         </div>
         <ModalFooter>
@@ -1973,7 +2082,7 @@ const UserManagement = () => {
         <div className="rounded-lg border border-orange-400/25 bg-orange-500/10 px-4 py-3 mb-4">
           <p className="text-sm text-orange-200 font-medium mb-1">Alert Recipients</p>
           <p className="text-xs text-orange-100 leading-relaxed">
-            {selectedStudentsForAlert.length} student(s) will receive this alert notification.
+            {formatStudentLabel(selectedStudentsForAlert.length)} will receive this alert notification.
           </p>
         </div>
 
@@ -2066,7 +2175,7 @@ const UserManagement = () => {
             onChange={(event) => setAlertMessage(event.target.value)}
             disabled={isSendingAlert}
             rows={5}
-            placeholder="Type the message that will be sent to selected student(s)."
+            placeholder={`Type the message that will be sent to selected ${pluralize("student", selectedStudentsForAlert.length)}.`}
             className="w-full resize-none backdrop-blur-md border border-white/20 rounded-lg px-4 py-3 text-sm text-white bg-white/5 placeholder-gray-400 focus:outline-none focus:border-cyan-300/60 focus:ring-1 focus:ring-cyan-300/30 transition-all disabled:opacity-50"
           />
         </div>
@@ -2117,7 +2226,7 @@ const UserManagement = () => {
         <div className="rounded-lg border border-orange-400/25 bg-orange-500/10 px-4 py-3 mb-3">
           <p className="text-sm text-orange-200 font-medium mb-2">⚠️ Archive Action</p>
           <p className="text-xs text-orange-100 leading-relaxed">
-            {selectedUserIds.size} student(s) will be moved to the archive folder. They will no longer appear in the User Management but can be viewed in the archive tab.
+            {formatStudentLabel(selectedUserIds.size)} will be moved to the archive folder. They will no longer appear in the User Management but can be viewed in the archive tab.
           </p>
         </div>
 

@@ -38,6 +38,7 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
 import { cachedFetchJSON, invalidateFetchCache } from "@/lib/fetchHelper";
+import { pluralize } from '@/lib/utils';
 import {
   addCenteredExcelHeaderImage,
   applyExcelPrintLayout,
@@ -397,7 +398,7 @@ const StudentViolation = () => {
 
     if (failedIds.length > 0) {
       alert(
-        `Failed to delete ${failedIds.length} selected violation(s). Please try again.`,
+        `Failed to delete ${failedIds.length} selected violation${failedIds.length === 1 ? '' : 's'}. Please try again.`,
       );
     }
   };
@@ -1490,7 +1491,7 @@ const StudentViolation = () => {
     confirmAction?.type === "delete"
       ? "This will permanently delete this student violation log."
       : confirmAction?.type === "bulk-delete"
-      ? `This will permanently delete ${confirmAction.ids?.length || 0} selected violation(s).`
+      ? `This will permanently delete ${confirmAction.ids?.length || 0} selected violation${confirmAction.ids?.length === 1 ? '' : 's'}.`
       : "This will mark the selected violation as cleared.";
 
   return (

@@ -4,7 +4,7 @@ import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
 import { getAuditHeaders } from "@/lib/auditHeaders";
 import ViolationPickerModal from "@/components/modals/ViolationPickerModal";
-import { CheckCircle } from "lucide-react";
+import { CheckCircle, AlertTriangle } from "lucide-react";
 
 const getTodayDateInputValue = () => {
   const now = new Date();
@@ -47,6 +47,7 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const [successModalOpen, setSuccessModalOpen] = useState(false);
+  const [showDuplicateViolationModal, setShowDuplicateViolationModal] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -181,6 +182,14 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
 
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
+        if (
+          response.status === 409 &&
+          String(result?.message || "").includes("same violation type and date already exists")
+        ) {
+          setShowDuplicateViolationModal(true);
+          return;
+        }
+
         throw new Error(result?.message || "Unable to log violation.");
       }
 
@@ -387,6 +396,38 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
         <Button
           variant="primary"
           onClick={() => setSuccessModalOpen(false)}
+          className="px-6"
+        >
+          OK
+        </Button>
+      </ModalFooter>
+    </Modal>
+
+    <Modal
+      isOpen={showDuplicateViolationModal}
+      onClose={() => setShowDuplicateViolationModal(false)}
+      title={
+        <span className="font-black font-inter flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 text-red-400" />
+          Duplicate Violation
+        </span>
+      }
+      size="sm"
+      showCloseButton
+    >
+      <div className="text-base space-y-3">
+  <div className="bg-red-500/10 border border-red-500/30 text-red-300 font-semibold px-3 py-2 rounded-md">
+    A violation for this student with the same type and date already exists.
+  </div>
+
+  <p className="text-slate-300 text-sm leading-relaxed">
+    Select another violation or review the student’s record for other incidents.
+  </p>
+</div>
+      <ModalFooter>
+        <Button
+          variant="primary"
+          onClick={() => setShowDuplicateViolationModal(false)}
           className="px-6"
         >
           OK

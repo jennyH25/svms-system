@@ -8,6 +8,7 @@ import Modal, { ModalFooter } from '../../components/ui/Modal';
 import Button from '../../components/ui/Button';
 import { getAuditHeaders } from '@/lib/auditHeaders';
 import { cachedFetchJSON } from '@/lib/fetchHelper';
+import { pluralize } from '@/lib/utils';
 
 const StudentNotification = () => {
   const [notifications, setNotifications] = useState([]);
@@ -120,7 +121,7 @@ const StudentNotification = () => {
       
       if (!response.ok) {
         console.error('Delete failed:', data.message);
-        setError(data.message || 'Failed to delete notification(s)');
+        setError(data.message || `Failed to delete notification${idsToDelete.length === 1 ? '' : 's'}`);
         // Revert optimistic update - reload notifications
         window.location.reload();
       } else {
@@ -129,7 +130,7 @@ const StudentNotification = () => {
       }
     } catch (err) {
       console.error('Delete error:', err);
-      setError('Network error while deleting notification(s)');
+      setError(`Network error while deleting notification${idsToDelete.length === 1 ? '' : 's'}`);
       // Revert optimistic update - reload notifications
       window.location.reload();
     } finally {
