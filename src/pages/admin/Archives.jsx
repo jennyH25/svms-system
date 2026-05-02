@@ -2972,15 +2972,15 @@ const Archives = () => {
                     handleDeleteSemesterClick(activeFolder, tab.key);
                   }}
                   disabled={isSemesterActionLoading}
-                  className="absolute -right-2 -top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-red-400/40 bg-[#2D2F33] text-red-300 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50"
+                  className="absolute right-1 top-1 z-10 flex h-4 w-5 items-center justify-center text-slate-400 transition-colors hover:text-white disabled:opacity-50"
                   title={`Delete ${tab.label} for S.Y. ${activeFolder}`}
                 >
                   {isSemesterActionLoading &&
                   semesterToDelete?.schoolYear === activeFolder &&
                   semesterToDelete?.semester === tab.key ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3 w-3" />
                   )}
                 </button>
               ) : null
