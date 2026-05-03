@@ -1716,7 +1716,7 @@ const Dashboard = () => {
               </button>
             </div>
             <div className="space-y-3">
-              <div className="grid grid-cols-[32px_1fr_160px] text-table-header mt-7 mb-2">
+              <div className="grid grid-cols-[32px_minmax(0,1fr)_170px] gap-x-4 text-table-header mt-7 mb-2">
                 <span>#</span>
                 <span>Name</span>
                 <span className="text-right">Total of Violations</span>
@@ -1748,10 +1748,10 @@ const Dashboard = () => {
                 return (
                   <div
                     key={student.rank}
-                    className="grid grid-cols-[32px_1fr_160px] items-center"
+                    className="grid grid-cols-[32px_minmax(0,1fr)_170px] gap-x-4 items-center"
                   >
                     <span className={rankNumSize}>{student.rank}</span>
-                    <span className={textSize}>{student.name}</span>
+                    <span className={`${textSize} pr-2 truncate`}>{student.name}</span>
                     <div className="flex items-center gap-2">
                       <div
                         className={`flex-1 bg-white/10 rounded-full ${barHeight}`}

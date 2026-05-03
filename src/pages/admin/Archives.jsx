@@ -2993,7 +2993,9 @@ const Archives = () => {
       {!(activeFolder === "unresolved" && !selectedUnresolvedYear && !isGlobalSearch) && (
         <AnimatedContent delay={0.4}>
           <div className="bg-[#23262B] rounded-xl p-6">
-          <h3 className="text-lg font-bold mb-4">{tableTitle}</h3>
+          {activeFolder !== "users" && !isGlobalSearch && (
+            <h3 className="text-lg font-bold mb-4">{tableTitle}</h3>
+          )}
 
           {archiveSuccessMessage && (
             <div className="mb-3 px-3 py-2 text-sm border border-emerald-300 bg-emerald-50 text-emerald-700 rounded">
@@ -3002,7 +3004,11 @@ const Archives = () => {
           )}
 
           <div className="flex justify-between items-center mb-4">
-            <div className="flex gap-2 items-center">
+            <div className="flex gap-2 items-center flex-wrap">
+              {(activeFolder === "users" || isGlobalSearch) && (
+                <h3 className="text-lg font-bold">{tableTitle}</h3>
+              )}
+
               {activeFolder !== "users" && !isGlobalSearch && (
                 <>
                   {/* Violation Type Filter */}

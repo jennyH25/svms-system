@@ -251,13 +251,15 @@ const StudentDashboard = () => {
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
                   <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/15 text-sky-300">
                     <BookOpen className="h-5 w-5" />
                   </div>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">Program</div>
-                  <div className="mt-1 text-sm font-semibold text-white leading-snug">
+                  <div className="text-[10px] md:text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-400">
+                    Program
+                  </div>
+                  <div className="mt-1 break-words text-xs md:text-sm font-semibold text-white leading-snug">
                     {dashboardInfo.program}
                   </div>
                 </div>
@@ -266,18 +268,22 @@ const StudentDashboard = () => {
                   <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/15 text-cyan-300">
                     <Hash className="h-5 w-5" />
                   </div>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">Section</div>
-                  <div className="mt-1 text-sm font-semibold text-white leading-snug">
+                  <div className="text-[10px] md:text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-400">
+                    Section
+                  </div>
+                  <div className="mt-1 break-words text-xs md:text-sm font-semibold text-white leading-snug">
                     {dashboardInfo.section}
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 sm:col-span-2 xl:col-span-1">
                   <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
                     <CalendarDays className="h-5 w-5" />
                   </div>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">Year</div>
-                  <div className="mt-1 text-sm font-semibold text-white leading-snug">
+                  <div className="text-[10px] md:text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-400">
+                    Year
+                  </div>
+                  <div className="mt-1 break-words text-xs md:text-sm font-semibold text-white leading-snug">
                     {dashboardInfo.year}
                   </div>
                 </div>
