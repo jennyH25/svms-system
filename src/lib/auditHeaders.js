@@ -12,12 +12,14 @@ export function getAuditHeaders() {
         currentUser?.username ||
         "Admin User",
       "x-actor-role": currentUser?.role || "admin",
+      "x-session-token": currentUser?.sessionToken || "",
     };
   } catch (_error) {
     return {
       "x-actor-user-id": "",
       "x-actor-name": "Admin User",
       "x-actor-role": "admin",
+      "x-session-token": "",
     };
   }
 }

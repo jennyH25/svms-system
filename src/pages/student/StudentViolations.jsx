@@ -757,25 +757,37 @@ if (format === 'pdf') {
 		const leftColX = margin + 6;
 		const rightColX = margin + contentWidth / 2 + 6;
 		const farRightX = margin + contentWidth - 50; // Very far right corner
-		const signLineY = cursorY + 12;
+		const signLineY = cursorY + 13;
+		const signatureLineWidth = 35;
+		const signatureImageWidth = 31;
+		const signatureImageHeight = 12;
+		const signatureImageX = farRightX + (signatureLineWidth - signatureImageWidth) / 2;
+		const signatureImageY = cursorY - 2.5;
 
 		// Draw signature area with single line on the FAR RIGHT corner
 		doc.setDrawColor(0, 0, 0);
 		doc.setLineWidth(0.3);
 
 		if (signatureImageData) {
-			// Center signature image in the line (35mm line, 20mm image)
-			doc.addImage(signatureImageData, 'PNG', farRightX + 7.5, cursorY, 20, 8);
+			// Center a larger signature image above the line without shifting the anchor.
+			doc.addImage(
+				signatureImageData,
+				'PNG',
+				signatureImageX,
+				signatureImageY,
+				signatureImageWidth,
+				signatureImageHeight,
+			);
 		}
 
 		// Draw single line for signature (35mm - same as JPEG ratio)
-		doc.line(farRightX, signLineY, farRightX + 35, signLineY);
+		doc.line(farRightX, signLineY, farRightX + signatureLineWidth, signLineY);
 
 		// Center SIGNATURE text BELOW the line
 		doc.setFont('helvetica', 'bold');
 		doc.setFontSize(9);
 		doc.setTextColor(0, 0, 0);
-		const signatureLineX = farRightX + 17.5; // Center of the line
+		const signatureLineX = farRightX + signatureLineWidth / 2; // Center of the line
 		doc.text('STUDENT SIGNATURE', signatureLineX, signLineY + 4, { align: 'center' });
 
 		doc.save(filename);
@@ -984,7 +996,7 @@ if (format === 'jpeg') {
 
 		// Draw signature image if available on the FAR RIGHT corner
 		const signatureLineLength = 250; // 250px line
-		const signatureImageWidth = 150; // Image size
+		const signatureImageWidth = 180; // Larger image size while preserving centering
 		const signatureStartX = 1900 - signatureLineLength - 20; // Far right with margin
 		
 		if (signatureImageData) {
@@ -992,7 +1004,7 @@ if (format === 'jpeg') {
 				const signatureImg = await loadImageFromDataUrl(signatureImageData);
 				// Center image within the signature area
 				const imageX = signatureStartX + (signatureLineLength - signatureImageWidth) / 2;
-				ctx.drawImage(signatureImg, imageX, y, signatureImageWidth, 50);
+				ctx.drawImage(signatureImg, imageX, y - 2, signatureImageWidth, 60);
 			} catch (err) {
 				console.error('Failed to load signature image in JPEG:', err);
 			}

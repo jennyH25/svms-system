@@ -30,6 +30,32 @@ const StudentNotification = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const highlightParam = searchParams.get('highlight');
 
+  const mergeIncomingNotification = (incomingNote) => {
+    if (!incomingNote?.id) return;
+
+    setNotifications((prev) => {
+      const normalizedNote = {
+        ...incomingNote,
+        metadata: parseNotificationMetadata(incomingNote.metadata),
+      };
+      const existingIndex = prev.findIndex(
+        (note) => String(note.id) === String(normalizedNote.id),
+      );
+
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        next[existingIndex] = {
+          ...next[existingIndex],
+          ...normalizedNote,
+        };
+        return next;
+      }
+
+      return [normalizedNote, ...prev];
+    });
+    setSelectedForDeletion(new Set());
+  };
+
   const selectedAlertNotification = useMemo(
     () => notifications.find((note) => String(note.id) === String(selectedAlertNotificationId)) || null,
     [notifications, selectedAlertNotificationId],
@@ -267,51 +293,60 @@ const StudentNotification = () => {
     // initial load
     loadNotifications();
 
-      // Try to open an EventSource for real-time updates. Fall back to polling if unavailable.
-      let es;
-      let pollIntervalId;
+      // Use Pusher for realtime delivery on Vercel. Fall back to polling if unavailable.
+      let pusherClient = null;
+      let pusherChannel = null;
+      let pollIntervalId = null;
       const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}');
       const uid = currentUser?.id;
-      const streamUrl = uid ? `/api/notifications/stream?uid=${uid}` : '/api/notifications/stream';
 
-      const setupEventSource = () => {
-        try {
-          es = new EventSource(streamUrl);
-        } catch (err) {
-          es = null;
-        }
-
-        if (!es || es.readyState === EventSource.CLOSED) {
-          // fallback to polling
+      const startPollingFallback = () => {
+        if (!pollIntervalId) {
           pollIntervalId = setInterval(() => loadNotifications({ silent: true }), 5000);
-          return;
         }
-
-        es.addEventListener('open', () => {
-          // connected
-        });
-
-        es.addEventListener('notification', (evt) => {
-          try {
-            const note = JSON.parse(evt.data);
-            note.metadata = parseNotificationMetadata(note.metadata);
-            setNotifications((prev) => [note, ...prev]);
-            // clear selection state to keep UI consistent
-            setSelectedForDeletion(new Set());
-          } catch (e) {
-            // ignore malformed events
-          }
-        });
-
-        es.addEventListener('error', (e) => {
-          // If EventSource errors, fallback to polling
-          try { es.close(); } catch (_) {}
-          es = null;
-          if (!pollIntervalId) pollIntervalId = setInterval(() => loadNotifications({ silent: true }), 5000);
-        });
       };
 
-      setupEventSource();
+      const setupPusher = async () => {
+        try {
+          const key = import.meta.env.VITE_PUSHER_KEY;
+          const cluster = import.meta.env.VITE_PUSHER_CLUSTER;
+          if (!key || !uid) return false;
+          const Pusher = (await import('pusher-js')).default;
+          pusherClient = new Pusher(key, {
+            cluster: cluster || undefined,
+            forceTLS: true,
+            channelAuthorization: {
+              endpoint: '/api/pusher/auth',
+              transport: 'ajax',
+              headersProvider: () => getAuditHeaders(),
+            },
+          });
+          pusherChannel = pusherClient.subscribe(`private-notifications-${uid}`);
+
+          pusherChannel.bind('pusher:subscription_error', () => {
+            try { pusherClient.disconnect(); } catch (_) {}
+            pusherClient = null;
+            pusherChannel = null;
+            startPollingFallback();
+          });
+
+          pusherChannel.bind('notification', (note) => {
+            try {
+              mergeIncomingNotification(note);
+            } catch (err) {}
+          });
+          return true;
+        } catch (err) {
+          return false;
+        }
+      };
+
+      (async () => {
+        const pusherReady = await setupPusher();
+        if (!pusherReady) {
+          startPollingFallback();
+        }
+      })();
 
       // allow other parts of the app to trigger an immediate refresh
       const onNotificationsUpdated = () => loadNotifications({ silent: false });
@@ -320,8 +355,15 @@ const StudentNotification = () => {
       return () => {
         isMountedRef.current = false;
         isFetchingRef.current = false;
-        if (es) try { es.close(); } catch (_) {}
-        if (pollIntervalId) clearInterval(pollIntervalId);
+        if (pusherChannel) {
+          try { pusherChannel.unbind_all(); } catch (_) {}
+        }
+        if (pusherClient) {
+          try { pusherClient.disconnect(); } catch (_) {}
+        }
+        if (pollIntervalId) {
+          clearInterval(pollIntervalId);
+        }
         window.removeEventListener('notificationsUpdated', onNotificationsUpdated);
       };
   }, []);

@@ -185,7 +185,10 @@ const Navbar = ({ onRequestLogout }) => {
             return false
           }
 
-          savedUser = result.user
+          savedUser = {
+            ...result.user,
+            sessionToken: currentUser?.sessionToken || result.user?.sessionToken || '',
+          }
           localStorage.setItem('svms_user', JSON.stringify(savedUser))
         } catch (_error) {
           setProfileErrorMessage('Unable to save admin profile right now.')
@@ -195,7 +198,10 @@ const Navbar = ({ onRequestLogout }) => {
         try {
           const response = await fetch('/api/profile/student', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...getAuditHeaders(),
+            },
             body: JSON.stringify({
               id: currentUser.id,
               username: formData.username,
@@ -217,7 +223,11 @@ const Navbar = ({ onRequestLogout }) => {
             return false
           }
 
-          savedUser = result.user || nextUser
+          savedUser = {
+            ...nextUser,
+            ...(result.user || {}),
+            sessionToken: currentUser?.sessionToken || result.user?.sessionToken || '',
+          }
           localStorage.setItem('svms_user', JSON.stringify(savedUser))
         } catch (_error) {
           setProfileErrorMessage('Unable to save student profile right now.')

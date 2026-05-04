@@ -108,6 +108,7 @@ const StudentDashboard = () => {
           middleInitial: result.data.student.middle_initial || studentUser.middleInitial || '',
           lastName: result.data.student.last_name || studentUser.lastName || '',
           fullName: result.data.student.full_name || studentUser.fullName || '',
+          sessionToken: studentUser.sessionToken || '',
         };
 
         localStorage.setItem('svms_user', JSON.stringify(nextUser));

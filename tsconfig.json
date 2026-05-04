@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "ignoreDeprecations": "6.0",
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "typeRoots": ["./node_modules/@types"]
+  },
+  "include": ["src", "server", "api", "vite.config.js"],
+  "exclude": ["node_modules", "dist", "electron"]
+}

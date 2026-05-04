@@ -63,6 +63,28 @@ const isServerlessRuntime =
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
   process.env.NODE_ENV === "serverless";
 
+// Pusher client (optional) - configured via env vars
+let pusherClient = null;
+if (
+  process.env.PUSHER_APP_ID &&
+  process.env.PUSHER_KEY &&
+  process.env.PUSHER_SECRET &&
+  process.env.PUSHER_CLUSTER
+) {
+  try {
+    const Pusher = (await import('pusher')).default;
+    pusherClient = new Pusher({
+      appId: String(process.env.PUSHER_APP_ID),
+      key: String(process.env.PUSHER_KEY),
+      secret: String(process.env.PUSHER_SECRET),
+      cluster: String(process.env.PUSHER_CLUSTER),
+      useTLS: true,
+    });
+  } catch (err) {
+    console.warn('Pusher client not initialized:', err?.message || err);
+  }
+}
+
 const apiGetResponseCache = new Map();
 
 function buildApiGetCacheKey(req) {
@@ -1974,6 +1996,76 @@ function hashSecret(value) {
     .digest("hex");
 }
 
+function getSessionTokenSecret() {
+  return (
+    process.env.SESSION_TOKEN_SECRET ||
+    process.env.ENCRYPTION_KEY ||
+    process.env.PUSHER_SECRET ||
+    "svms-dev-session-secret"
+  );
+}
+
+function signSessionToken(user) {
+  const payload = {
+    id: Number(user?.id) || 0,
+    role: String(user?.role || ""),
+    issuedAt: Date.now(),
+  };
+  const payloadText = JSON.stringify(payload);
+  const payloadBase64 = Buffer.from(payloadText, "utf8").toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", getSessionTokenSecret())
+    .update(payloadBase64)
+    .digest("base64url");
+  return `${payloadBase64}.${signature}`;
+}
+
+function verifySessionToken(token, expectedUserId, expectedRole = null) {
+  const normalized = String(token || "").trim();
+  if (!normalized.includes(".")) {
+    return false;
+  }
+
+  const [payloadBase64, providedSignature] = normalized.split(".", 2);
+  if (!payloadBase64 || !providedSignature) {
+    return false;
+  }
+
+  const expectedSignature = crypto
+    .createHmac("sha256", getSessionTokenSecret())
+    .update(payloadBase64)
+    .digest("base64url");
+
+  const providedBuffer = Buffer.from(providedSignature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (
+    providedBuffer.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(providedBuffer, expectedBuffer)
+  ) {
+    return false;
+  }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(payloadBase64, "base64url").toString("utf8"),
+    );
+    const payloadUserId = Number(payload?.id);
+    const payloadRole = String(payload?.role || "");
+
+    if (!Number.isFinite(payloadUserId) || payloadUserId !== Number(expectedUserId)) {
+      return false;
+    }
+
+    if (expectedRole && payloadRole !== String(expectedRole)) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isPersistedLogoPath(value) {
   const normalized = String(value || "").trim();
   return (
@@ -2761,6 +2853,8 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
+    const sessionToken = signSessionToken(user);
+
     return res.status(200).json({
       status: "ok",
       user: {
@@ -2779,6 +2873,7 @@ app.post("/api/auth/login", async (req, res) => {
         schoolId: user.school_id || "",
         program: user.program || "",
         yearSection: user.year_section || "",
+        sessionToken,
       },
     });
   } catch (error) {
@@ -4195,23 +4290,21 @@ app.post("/api/students/alerts", async (req, res) => {
         sentAt: new Date().toISOString(),
       };
 
-      const insertResult = await pool.query(
-        `
-        INSERT INTO notifications (student_user_id, title, description, metadata)
-        VALUES ($1, $2, $3, $4::jsonb)
-        RETURNING id, created_at
-        `,
-        [
-          Number(student.user_id),
-          `${normalizedAlertType} from Admin`,
-          normalizedMessage,
-          JSON.stringify(metadata),
-        ],
+      const insertedNotification = await insertNotificationForUser(
+        pool,
+        Number(student.user_id),
+        {
+          title: `${normalizedAlertType} from Admin`,
+          description: normalizedMessage,
+          metadata,
+        },
       );
 
       insertedNotifications.push({
-        notificationId: Number(insertResult.rows?.[0]?.id),
-        createdAt: insertResult.rows?.[0]?.created_at || null,
+        notificationId: Number.isFinite(Number(insertedNotification?.id))
+          ? Number(insertedNotification.id)
+          : null,
+        createdAt: insertedNotification?.created_at || null,
         studentId: Number(student.id),
       });
 
@@ -5821,19 +5914,11 @@ app.post("/api/violations", async (req, res) => {
     try {
       const notifTitle = "New violation added";
       const notifDesc = `A new violation \"${parent.name}\" (${parent.category} / ${parent.degree}) has been added.`;
-      await pool.query(
-        `
-        INSERT INTO notifications (student_user_id, title, description, metadata)
-        SELECT u.id, $1, $2, $3
-        FROM users u
-        WHERE u.role = 'student'
-        `,
-        [
-          notifTitle,
-          notifDesc,
-          JSON.stringify({ type: "violation_added", violationId: parent.id }),
-        ],
-      );
+      await insertNotificationForAllStudents(pool, {
+        title: notifTitle,
+        description: notifDesc,
+        metadata: { type: "violation_added", violationId: parent.id },
+      });
     } catch (notifErr) {
       console.warn("Failed to insert violation notifications", notifErr);
     }
@@ -5923,22 +6008,14 @@ app.put("/api/violations/:id", async (req, res) => {
     try {
       const notifTitle = "Violation updated";
       const notifDesc = `The violation \"${result.rows[0].name}\" has been updated.`;
-      await pool.query(
-        `
-        INSERT INTO notifications (student_user_id, title, description, metadata)
-        SELECT u.id, $1, $2, $3
-        FROM users u
-        WHERE u.role = 'student'
-        `,
-        [
-          notifTitle,
-          notifDesc,
-          JSON.stringify({
-            type: "violation_updated",
-            violationId: result.rows[0].id,
-          }),
-        ],
-      );
+      await insertNotificationForAllStudents(pool, {
+        title: notifTitle,
+        description: notifDesc,
+        metadata: {
+          type: "violation_updated",
+          violationId: result.rows[0].id,
+        },
+      });
     } catch (notifErr) {
       console.warn("Failed to insert violation update notifications", notifErr);
     }
@@ -6012,23 +6089,15 @@ app.delete("/api/violations/:id", async (req, res) => {
     try {
       const notifTitle = "Violation deleted";
       const notifDesc = `A violation has been removed: "${violation.name}" (${violation.category} / ${violation.degree}).`;
-      await pool.query(
-        `
-        INSERT INTO notifications (student_user_id, title, description, metadata)
-        SELECT u.id, $1, $2, $3
-        FROM users u
-        WHERE u.role = 'student'
-        `,
-        [
-          notifTitle,
-          notifDesc,
-          JSON.stringify({
-            type: "violation_deleted",
-            violationId: id,
-            violationName: violation.name,
-          }),
-        ],
-      );
+      await insertNotificationForAllStudents(pool, {
+        title: notifTitle,
+        description: notifDesc,
+        metadata: {
+          type: "violation_deleted",
+          violationId: id,
+          violationName: violation.name,
+        },
+      });
     } catch (notifErr) {
       console.warn("Failed to insert violation delete notifications", notifErr);
     }
@@ -6046,71 +6115,152 @@ app.delete("/api/violations/:id", async (req, res) => {
 // NOTIFICATIONS API (student-facing)
 // -----------------------------------------
 
-// Simple in-memory SSE client registry: Map<userId, Set<res>>
-const sseClients = new Map();
-
-function addSseClient(userId, res) {
-  if (!sseClients.has(userId)) sseClients.set(userId, new Set());
-  sseClients.get(userId).add(res);
-}
-
-function removeSseClient(userId, res) {
-  if (!sseClients.has(userId)) return;
-  sseClients.get(userId).delete(res);
-  if (sseClients.get(userId).size === 0) sseClients.delete(userId);
-}
-
-function broadcastNotificationToUser(userId, notification) {
-  const clients = sseClients.get(userId);
-  if (!clients || clients.size === 0) return;
-  const payload = JSON.stringify(notification);
-  for (const res of clients) {
-    try {
-      res.write(`event: notification\n`);
-      res.write(`data: ${payload}\n\n`);
-    } catch (err) {
-      // ignore client errors
-    }
-  }
-}
-
-// SSE endpoint for real-time notifications
-app.get('/api/notifications/stream', async (req, res) => {
-  // Accept user id via query param `uid` or fallback to header audit actor
-  const uidRaw = req.query.uid || req.get('x-actor-user-id');
-  const userId = Number(uidRaw);
-  if (!Number.isFinite(userId)) {
-    return res.status(400).json({ status: 'error', message: 'Missing or invalid user id.' });
+app.post('/api/pusher/auth', express.urlencoded({ extended: false }), async (req, res) => {
+  if (!pusherClient) {
+    return res.status(503).json({ error: 'Realtime service is not configured.' });
   }
 
-  // set SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
+  const socketId = String(req.body?.socket_id || req.body?.socketId || '').trim();
+  const channelName = String(req.body?.channel_name || req.body?.channelName || '').trim();
+  const { actorUserId, actorRole } = getAuditActor(req);
+  const sessionToken = String(req.get("x-session-token") || "").trim();
 
-  // send a comment to establish the stream
-  res.write(': connected\n\n');
+  if (!socketId || !channelName) {
+    return res.status(400).json({ error: 'Missing socket or channel information.' });
+  }
 
-  addSseClient(userId, res);
+  if (!Number.isFinite(actorUserId)) {
+    return res.status(401).json({ error: 'Missing actor identity.' });
+  }
 
-  // heartbeat
-  const keepAlive = setInterval(() => {
-    try {
-      res.write(': ping\n\n');
-    } catch (e) {}
-  }, 25000);
+  if (actorRole !== 'student') {
+    return res.status(403).json({ error: 'Forbidden.' });
+  }
 
-  req.on('close', () => {
-    clearInterval(keepAlive);
-    removeSseClient(userId, res);
-  });
+  if (!verifySessionToken(sessionToken, actorUserId, actorRole)) {
+    return res.status(401).json({ error: 'Invalid session token.' });
+  }
+
+  const expectedChannelName = `private-notifications-${actorUserId}`;
+  if (channelName !== expectedChannelName) {
+    return res.status(403).json({ error: 'Forbidden.' });
+  }
+
+  try {
+    const authResponse = pusherClient.authorizeChannel(socketId, channelName);
+    return res.json(authResponse);
+  } catch (error) {
+    console.error('Pusher auth error:', error);
+    return res.status(500).json({ error: 'Unable to authorize channel.' });
+  }
 });
 
 // helper to resolve current user from headers
 function getCurrentUserId(req) {
   const { actorUserId } = getAuditActor(req);
   return actorUserId || null;
+}
+
+function normalizeNotificationRow(row) {
+  if (!row) return null;
+
+  const notification = {
+    id: Number(row.id),
+    studentUserId: Number(row.studentUserId ?? row.student_user_id),
+    title: row.title,
+    description: row.description,
+    metadata: row.metadata ?? null,
+    created_at: row.created_at || row.createdAt || null,
+    read_at: row.read_at || row.readAt || null,
+  };
+
+  try {
+    notification.metadata = notification.metadata
+      ? JSON.parse(JSON.stringify(notification.metadata))
+      : null;
+  } catch {
+    // keep raw metadata if normalization fails
+  }
+
+  return notification;
+}
+
+async function publishNotificationRow(row) {
+  const notification = normalizeNotificationRow(row);
+  if (!notification || !Number.isFinite(notification.studentUserId)) {
+    return null;
+  }
+
+  if (pusherClient) {
+    try {
+      await pusherClient.trigger(
+        `private-notifications-${notification.studentUserId}`,
+        "notification",
+        notification,
+      );
+    } catch {
+      // ignore realtime publish failures; the record is still stored in the DB
+    }
+  }
+
+  return notification;
+}
+
+async function publishNotificationRows(rows) {
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  for (const row of normalizedRows) {
+    await publishNotificationRow(row);
+  }
+}
+
+async function insertNotificationForUser(
+  pool,
+  studentUserId,
+  { title, description, metadata = null },
+) {
+  const parsedStudentUserId = Number(studentUserId);
+  if (!Number.isFinite(parsedStudentUserId)) {
+    return null;
+  }
+
+  const insertedResult = await pool.query(
+    `
+    INSERT INTO notifications (student_user_id, title, description, metadata)
+    VALUES ($1, $2, $3, $4::jsonb)
+    RETURNING id, student_user_id AS "studentUserId", title, description, metadata, created_at, read_at
+    `,
+    [
+      parsedStudentUserId,
+      String(title || "Update"),
+      String(description || "A record related to your account was updated."),
+      metadata ? JSON.stringify(metadata) : null,
+    ],
+  );
+
+  return publishNotificationRow(insertedResult.rows?.[0] || null);
+}
+
+async function insertNotificationForAllStudents(
+  pool,
+  { title, description, metadata = null },
+) {
+  const insertedResult = await pool.query(
+    `
+    INSERT INTO notifications (student_user_id, title, description, metadata)
+    SELECT u.id, $1, $2, $3::jsonb
+    FROM users u
+    WHERE u.role = 'student'
+    RETURNING id, student_user_id AS "studentUserId", title, description, metadata, created_at, read_at
+    `,
+    [
+      String(title || "Update"),
+      String(description || "A record related to your account was updated."),
+      metadata ? JSON.stringify(metadata) : null,
+    ],
+  );
+
+  await publishNotificationRows(insertedResult.rows || []);
+  return insertedResult.rows || [];
 }
 
 async function createStudentNotificationForViolation(
@@ -6133,32 +6283,13 @@ async function createStudentNotificationForViolation(
     return;
   }
 
-  await pool.query(
-    `
-    INSERT INTO notifications (student_user_id, title, description, metadata)
-    VALUES ($1, $2, $3, $4::jsonb)
-    RETURNING id, student_user_id AS studentUserId, title, description, metadata, created_at
-    `,
-    [
-      studentUserId,
-      String(title || "Update"),
-      String(description || "A record related to your violations was updated."),
-      metadata ? JSON.stringify(metadata) : null,
-    ],
-  );
-
-  // If SSE clients exist for this student user, broadcast the new notification
-  try {
-    const inserted = await pool.query('SELECT id, student_user_id AS "studentUserId", title, description, metadata, created_at FROM notifications WHERE student_user_id = $1 ORDER BY created_at DESC LIMIT 1', [studentUserId]);
-    const notif = inserted.rows?.[0] || null;
-    if (notif) {
-      // normalize metadata
-      try { notif.metadata = notif.metadata ? JSON.parse(notif.metadata) : null; } catch (_) { /* ignore */ }
-      broadcastNotificationToUser(studentUserId, notif);
-    }
-  } catch (e) {
-    // ignore broadcast failures
-  }
+  return insertNotificationForUser(pool, studentUserId, {
+    title: String(title || "Update"),
+    description: String(
+      description || "A record related to your violations was updated.",
+    ),
+    metadata,
+  });
 }
 
 // GET notifications for logged-in student
