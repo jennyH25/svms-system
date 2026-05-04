@@ -66,18 +66,18 @@ function toOrdinalYearLabel(yearNumber) {
   return `${n}${suffix} YEAR`;
 }
 
-
+function readCurrentUser() {
+  try {
+    return JSON.parse(localStorage.getItem('svms_user') || '{}');
+  } catch (_error) {
+    return {};
+  }
+}
 
 const StudentDashboard = () => {
   const [studentProfile, setStudentProfile] = useState(null);
   const [studentViolations, setStudentViolations] = useState([]);
-  const [studentUser, setStudentUser] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('svms_user') || '{}');
-    } catch (_error) {
-      return {};
-    }
-  });
+  const [studentUser, setStudentUser] = useState(() => readCurrentUser());
 
   useEffect(() => {
     const userId = studentUser?.id;
@@ -85,11 +85,12 @@ const StudentDashboard = () => {
       return;
     }
 
-    const loadStudentProfile = async () => {
+    const loadStudentProfile = async ({ forceRefresh = false } = {}) => {
       try {
         const result = await cachedFetchJSON(`/api/students/profile/${userId}`, {}, {
           ttlMs: 30000,
           staleWhileRevalidate: true,
+          forceRefresh,
         });
 
         if (result.status !== 'ok' || !result?.data?.student) {
@@ -117,6 +118,33 @@ const StudentDashboard = () => {
     };
 
     loadStudentProfile();
+    const handleUserUpdated = (event) => {
+      const nextUser = event?.detail && typeof event.detail === 'object'
+        ? event.detail
+        : readCurrentUser();
+
+      setStudentUser((prev) => ({
+        ...prev,
+        ...nextUser,
+      }));
+      loadStudentProfile({ forceRefresh: true });
+    };
+
+    const handleStorage = (event) => {
+      if (event.key && event.key !== 'svms_user') {
+        return;
+      }
+      setStudentUser(readCurrentUser());
+      loadStudentProfile({ forceRefresh: true });
+    };
+
+    window.addEventListener('svmsUserUpdated', handleUserUpdated);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      window.removeEventListener('svmsUserUpdated', handleUserUpdated);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, [studentUser?.id]);
 
   useEffect(() => {

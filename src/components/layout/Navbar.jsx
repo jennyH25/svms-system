@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { getAuditHeaders } from '@/lib/auditHeaders'
+import { invalidateFetchCache } from '@/lib/fetchHelper'
 
 const Navbar = ({ onRequestLogout }) => {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false)
@@ -157,6 +158,8 @@ const Navbar = ({ onRequestLogout }) => {
         fullName: [formData.firstName, formData.middleInitial ? `${formData.middleInitial}.` : '', formData.lastName].filter(Boolean).join(' '),
       }
 
+      let savedUser = null
+
       if (currentUser?.role === 'admin') {
         try {
           const response = await fetch('/api/profile/admin', {
@@ -182,7 +185,8 @@ const Navbar = ({ onRequestLogout }) => {
             return false
           }
 
-          localStorage.setItem('svms_user', JSON.stringify(result.user))
+          savedUser = result.user
+          localStorage.setItem('svms_user', JSON.stringify(savedUser))
         } catch (_error) {
           setProfileErrorMessage('Unable to save admin profile right now.')
           return false
@@ -213,12 +217,18 @@ const Navbar = ({ onRequestLogout }) => {
             return false
           }
 
-          localStorage.setItem('svms_user', JSON.stringify(result.user || nextUser))
+          savedUser = result.user || nextUser
+          localStorage.setItem('svms_user', JSON.stringify(savedUser))
         } catch (_error) {
           setProfileErrorMessage('Unable to save student profile right now.')
           return false
         }
       }
+
+      if (savedUser?.id) {
+        invalidateFetchCache(`/api/students/profile/${savedUser.id}`)
+      }
+      window.dispatchEvent(new CustomEvent('svmsUserUpdated', { detail: savedUser || nextUser }))
 
       setShowProfileSaveSuccessModal(true)
       return true
