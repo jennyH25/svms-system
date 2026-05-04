@@ -6046,6 +6046,67 @@ app.delete("/api/violations/:id", async (req, res) => {
 // NOTIFICATIONS API (student-facing)
 // -----------------------------------------
 
+// Simple in-memory SSE client registry: Map<userId, Set<res>>
+const sseClients = new Map();
+
+function addSseClient(userId, res) {
+  if (!sseClients.has(userId)) sseClients.set(userId, new Set());
+  sseClients.get(userId).add(res);
+}
+
+function removeSseClient(userId, res) {
+  if (!sseClients.has(userId)) return;
+  sseClients.get(userId).delete(res);
+  if (sseClients.get(userId).size === 0) sseClients.delete(userId);
+}
+
+function broadcastNotificationToUser(userId, notification) {
+  const clients = sseClients.get(userId);
+  if (!clients || clients.size === 0) return;
+  const payload = JSON.stringify(notification);
+  for (const res of clients) {
+    try {
+      res.write(`event: notification\n`);
+      res.write(`data: ${payload}\n\n`);
+    } catch (err) {
+      // ignore client errors
+    }
+  }
+}
+
+// SSE endpoint for real-time notifications
+app.get('/api/notifications/stream', async (req, res) => {
+  // Accept user id via query param `uid` or fallback to header audit actor
+  const uidRaw = req.query.uid || req.get('x-actor-user-id');
+  const userId = Number(uidRaw);
+  if (!Number.isFinite(userId)) {
+    return res.status(400).json({ status: 'error', message: 'Missing or invalid user id.' });
+  }
+
+  // set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  // send a comment to establish the stream
+  res.write(': connected\n\n');
+
+  addSseClient(userId, res);
+
+  // heartbeat
+  const keepAlive = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch (e) {}
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    removeSseClient(userId, res);
+  });
+});
+
 // helper to resolve current user from headers
 function getCurrentUserId(req) {
   const { actorUserId } = getAuditActor(req);
@@ -6076,6 +6137,7 @@ async function createStudentNotificationForViolation(
     `
     INSERT INTO notifications (student_user_id, title, description, metadata)
     VALUES ($1, $2, $3, $4::jsonb)
+    RETURNING id, student_user_id AS studentUserId, title, description, metadata, created_at
     `,
     [
       studentUserId,
@@ -6084,6 +6146,19 @@ async function createStudentNotificationForViolation(
       metadata ? JSON.stringify(metadata) : null,
     ],
   );
+
+  // If SSE clients exist for this student user, broadcast the new notification
+  try {
+    const inserted = await pool.query('SELECT id, student_user_id AS "studentUserId", title, description, metadata, created_at FROM notifications WHERE student_user_id = $1 ORDER BY created_at DESC LIMIT 1', [studentUserId]);
+    const notif = inserted.rows?.[0] || null;
+    if (notif) {
+      // normalize metadata
+      try { notif.metadata = notif.metadata ? JSON.parse(notif.metadata) : null; } catch (_) { /* ignore */ }
+      broadcastNotificationToUser(studentUserId, notif);
+    }
+  } catch (e) {
+    // ignore broadcast failures
+  }
 }
 
 // GET notifications for logged-in student

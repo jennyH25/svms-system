@@ -25,6 +25,7 @@ const StudentNotification = () => {
   const [isMarking, setIsMarking] = useState(false);
   const [showCheckboxes, setShowCheckboxes] = useState(false);
   const isFetchingRef = useRef(false);
+  const isMountedRef = useRef(true);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const highlightParam = searchParams.get('highlight');
@@ -212,11 +213,11 @@ const StudentNotification = () => {
   };
 
   useEffect(() => {
-    let isMounted = true;
+    isMountedRef.current = true;
 
     const loadNotifications = async ({ silent = false } = {}) => {
       if (isFetchingRef.current) {
-        if (!silent && isMounted) {
+        if (!silent && isMountedRef.current) {
           setLoading(false);
         }
         return;
@@ -232,11 +233,11 @@ const StudentNotification = () => {
         const result = await cachedFetchJSON('/api/notifications', {
           headers: { ...getAuditHeaders() },
         }, {
-          ttlMs: 10000,
+          ttlMs: 5000,
           staleWhileRevalidate: true,
         });
         if (result.status === 'ok') {
-          if (isMounted) {
+          if (isMountedRef.current) {
             const notifications = (result.data?.notifications || []).map((note) => ({
               ...note,
               metadata: parseNotificationMetadata(note.metadata),
@@ -248,30 +249,81 @@ const StudentNotification = () => {
             if (!silent) setError('');
           }
         } else {
-          if (isMounted && !silent) {
+          if (isMountedRef.current && !silent) {
             setError(result.error || 'Unable to load notifications');
           }
         }
       } catch (err) {
         console.error('Notification fetch error', err);
-        if (isMounted && !silent) {
+        if (isMountedRef.current && !silent) {
           setError('Network error while fetching notifications');
         }
       } finally {
         isFetchingRef.current = false;
-        if (isMounted && !silent) setLoading(false);
+        if (isMountedRef.current && !silent) setLoading(false);
       }
     };
 
+    // initial load
     loadNotifications();
 
-    const intervalId = setInterval(() => loadNotifications({ silent: true }), 15000);
+      // Try to open an EventSource for real-time updates. Fall back to polling if unavailable.
+      let es;
+      let pollIntervalId;
+      const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}');
+      const uid = currentUser?.id;
+      const streamUrl = uid ? `/api/notifications/stream?uid=${uid}` : '/api/notifications/stream';
 
-    return () => {
-      isMounted = false;
-      isFetchingRef.current = false;
-      clearInterval(intervalId);
-    };
+      const setupEventSource = () => {
+        try {
+          es = new EventSource(streamUrl);
+        } catch (err) {
+          es = null;
+        }
+
+        if (!es || es.readyState === EventSource.CLOSED) {
+          // fallback to polling
+          pollIntervalId = setInterval(() => loadNotifications({ silent: true }), 5000);
+          return;
+        }
+
+        es.addEventListener('open', () => {
+          // connected
+        });
+
+        es.addEventListener('notification', (evt) => {
+          try {
+            const note = JSON.parse(evt.data);
+            note.metadata = parseNotificationMetadata(note.metadata);
+            setNotifications((prev) => [note, ...prev]);
+            // clear selection state to keep UI consistent
+            setSelectedForDeletion(new Set());
+          } catch (e) {
+            // ignore malformed events
+          }
+        });
+
+        es.addEventListener('error', (e) => {
+          // If EventSource errors, fallback to polling
+          try { es.close(); } catch (_) {}
+          es = null;
+          if (!pollIntervalId) pollIntervalId = setInterval(() => loadNotifications({ silent: true }), 5000);
+        });
+      };
+
+      setupEventSource();
+
+      // allow other parts of the app to trigger an immediate refresh
+      const onNotificationsUpdated = () => loadNotifications({ silent: false });
+      window.addEventListener('notificationsUpdated', onNotificationsUpdated);
+
+      return () => {
+        isMountedRef.current = false;
+        isFetchingRef.current = false;
+        if (es) try { es.close(); } catch (_) {}
+        if (pollIntervalId) clearInterval(pollIntervalId);
+        window.removeEventListener('notificationsUpdated', onNotificationsUpdated);
+      };
   }, []);
 
   useEffect(() => {

@@ -104,6 +104,7 @@ const UserManagement = () => {
   const [showEditSuccessModal, setShowEditSuccessModal] = useState(false);
   const [showCreateSuccessModal, setShowCreateSuccessModal] = useState(false);
   const [showDuplicateSchoolIdModal, setShowDuplicateSchoolIdModal] = useState(false);
+  const [showDuplicateEmailModal, setShowDuplicateEmailModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showExportAlertModal, setShowExportAlertModal] = useState(false);
   const [exportFormat, setExportFormat] = useState("excel");
@@ -303,6 +304,9 @@ const UserManagement = () => {
     const normalizedSchoolId = String(updatedData.schoolId || "")
       .trim()
       .toLowerCase();
+    const normalizedEmail = String(updatedData.email || "")
+      .trim()
+      .toLowerCase();
     const duplicateSchoolId = studentData.some(
       (student) =>
         Number(student.id) !== Number(id) &&
@@ -311,8 +315,20 @@ const UserManagement = () => {
           .toLowerCase() === normalizedSchoolId,
     );
 
+    const duplicateEmail = studentData.some(
+      (student) =>
+        Number(student.id) !== Number(id) &&
+        String(student.email || "")
+          .trim()
+          .toLowerCase() === normalizedEmail,
+    );
+
     if (duplicateSchoolId) {
       setShowDuplicateSchoolIdModal(true);
+      return false;
+    }
+    if (duplicateEmail) {
+      setShowDuplicateEmailModal(true);
       return false;
     }
 
@@ -361,6 +377,11 @@ const UserManagement = () => {
         message.toLowerCase().includes("school_id")
       ) {
         setShowDuplicateSchoolIdModal(true);
+      } else if (
+        message.toLowerCase().includes("email already exists") ||
+        message.toLowerCase().includes("email") && message.toLowerCase().includes("exists")
+      ) {
+        setShowDuplicateEmailModal(true);
       } else {
         alert(error.message || "Unable to update student.");
       }
@@ -374,6 +395,9 @@ const UserManagement = () => {
     const normalizedSchoolId = String(userData.schoolId || "")
       .trim()
       .toLowerCase();
+    const normalizedEmail = String(userData.email || "")
+      .trim()
+      .toLowerCase();
     const duplicateSchoolId = studentData.some(
       (student) =>
         String(student.schoolId || "")
@@ -381,8 +405,19 @@ const UserManagement = () => {
           .toLowerCase() === normalizedSchoolId,
     );
 
+    const duplicateEmail = studentData.some(
+      (student) =>
+        String(student.email || "")
+          .trim()
+          .toLowerCase() === normalizedEmail,
+    );
+
     if (duplicateSchoolId) {
       setShowDuplicateSchoolIdModal(true);
+      return false;
+    }
+    if (duplicateEmail) {
+      setShowDuplicateEmailModal(true);
       return false;
     }
 
@@ -414,10 +449,14 @@ const UserManagement = () => {
         setStudentData((prev) => [mapStudentRow(result.student), ...prev]);
       }
       setShowCreateSuccessModal(true);
+      // Notify student notification listeners to refresh immediately
+      window.dispatchEvent(new Event('notificationsUpdated'));
       return true;
     } catch (error) {
       if (String(error?.message || "").includes("School ID already exists")) {
         setShowDuplicateSchoolIdModal(true);
+      } else if (String(error?.message || "").toLowerCase().includes("email already exists")) {
+        setShowDuplicateEmailModal(true);
       } else {
         alert(error.message || "Unable to add student.");
       }
@@ -845,6 +884,8 @@ const UserManagement = () => {
             ? `Alert sent to ${formatStudentLabel(sentCount)}. ${formatStudentLabel(skippedCount)} were skipped. ${deliverySummary}`
             : `Alert successfully sent to selected ${pluralize("student", selectedStudentsForAlert.length)}. ${deliverySummary}`,
       });
+      // Tell student notification listeners to refresh immediately
+      window.dispatchEvent(new Event('notificationsUpdated'));
     } catch (error) {
       setAlertResultModal({
         isOpen: true,
@@ -1862,6 +1903,30 @@ const UserManagement = () => {
             type="button"
             variant="primary"
             onClick={() => setShowDuplicateSchoolIdModal(false)}
+            className="px-6 py-2.5"
+          >
+            OK
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        isOpen={showDuplicateEmailModal}
+        onClose={() => setShowDuplicateEmailModal(false)}
+        title={<span className="font-black font-inter">Duplicate Email</span>}
+        size="sm"
+        showCloseButton
+      >
+        <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-red-300">
+            Email already exists. Please use a unique email address.
+          </p>
+        </div>
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => setShowDuplicateEmailModal(false)}
             className="px-6 py-2.5"
           >
             OK
