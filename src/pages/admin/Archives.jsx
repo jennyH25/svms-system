@@ -1027,7 +1027,9 @@ const Archives = () => {
     if (!isGlobalSearch) {
       // Current folder-only search
       if (activeFolder === "users") {
-        return archivedUsers.map((user) => {
+        return archivedUsers
+          .filter((user) => !user.is_unresolved_archive)
+          .map((user) => {
           const normalizedName = splitMiddleInitialFromFirstName(
             user.first_name,
             user.middle_initial,
@@ -1075,6 +1077,58 @@ const Archives = () => {
           searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${user.year_section || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
           };
         });
+      } else if (activeFolder === "unresolved" && selectedUnresolvedYear === "users") {
+        // Unresolved archived users
+        return archivedUsers
+          .filter((user) => user.is_unresolved_archive)
+          .map((user) => {
+            const normalizedName = splitMiddleInitialFromFirstName(
+              user.first_name,
+              user.middle_initial,
+            );
+            const formattedFullName = formatDisplayName(
+              normalizedName.firstName,
+              user.last_name,
+              user.full_name,
+              normalizedName.middleInitial,
+            );
+
+            return {
+            id: user.id,
+            no: "",
+            full_name: formattedFullName,
+            firstName: normalizedName.firstName || "",
+            middleInitial: normalizedName.middleInitial || "",
+            lastName: user.last_name || "",
+            name: (
+              <div>
+                <div className="font-semibold">{formattedFullName}</div>
+                <div className="text-xs text-gray-400">{user.school_id}</div>
+              </div>
+            ),
+            school_id: user.school_id || user.schoolId || '',
+            email: user.email,
+            program: user.program,
+            yearSection: user.year_section,
+            status: user.status,
+            archivedReason: user.archived_reason,
+            statusDisplay: user.archived_reason ? (
+              <span className="text-red-500 font-medium">{user.archived_reason}</span>
+            ) : user.status === "Graduated" ? (
+              <span className="text-green-700 font-medium">Graduated</span>
+            ) : (
+              user.status
+            ),
+            violationCount: user.violation_count,
+            archivedDate: formatDate(user.archived_at),
+            folder: "UNRESOLVED/USERS",
+            folderKey: "unresolved-users",
+            recordType: "user",
+            sourceType: "archive",
+            sourceImportKey: "",
+            searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${user.year_section || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
+            };
+          });
       } else {
         return dedupeArchiveRows(archivedViolations.map((violation) => {
           const preservedYearSection =
@@ -2888,6 +2942,20 @@ const Archives = () => {
             <h3 className="text-lg font-bold mb-3">Unresolved Violations</h3>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {/* USERS subfolder */}
+              <button
+                onClick={() => {
+                  setSelectedUnresolvedYear("users");
+                  setActiveSemester("1ST SEM");
+                }}
+                className="rounded-lg border border-[#A3AED0]/30 p-3 text-left text-sm text-white hover:border-[#A3AED0]"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <UserRound className="w-4 h-4 text-[#A3AED0]" />
+                  <span className="font-semibold">USERS</span>
+                </div>
+                <div className="text-xs text-gray-400">Archived users with violations</div>
+              </button>
               {schoolYears.length === 0 ? (
                 <div className="text-gray-300 col-span-full">No school year yet.</div>
               ) : (
@@ -2935,7 +3003,9 @@ const Archives = () => {
               <Folder className="w-4 h-4 text-[#A3AED0]" />
               <span className="text-sm text-[#A3AED0] font-semibold">UNRESOLVED</span>
               <span className="text-sm text-gray-300">&gt;</span>
-              <span className="text-sm text-white font-medium">S.Y. {selectedUnresolvedYear}</span>
+              <span className="text-sm text-white font-medium">
+                {selectedUnresolvedYear === "users" ? "USERS" : `S.Y. ${selectedUnresolvedYear}`}
+              </span>
             </div>
             <Button
               size="xs"

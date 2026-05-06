@@ -16,6 +16,7 @@ import SearchBar from "../../components/ui/SearchBar";
 import DataTable from "../../components/ui/DataTable";
 import TableTabs from "../../components/ui/TableTabs";
 import AnimatedContent from "../../components/ui/AnimatedContent";
+import SelectField from "../../components/ui/SelectField";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -42,6 +43,17 @@ const ALERT_TYPE_OPTIONS = [
   "Violation",
   "Notice",
   "At-Risk Alert",
+  "Custom",
+];
+
+const ARCHIVE_REASON_OPTIONS = [
+  "LOA (Leave of Absence)",
+  "Transferred",
+  "Dropped",
+  "Dismissed",
+  "Expelled",
+  "Non-enrollment / Did Not Return",
+  "Deceased",
   "Custom",
 ];
 
@@ -124,8 +136,11 @@ const UserManagement = () => {
   const [selectedUserIds, setSelectedUserIds] = useState(new Set());
   const [showSelectionCheckboxes, setShowSelectionCheckboxes] = useState(false);
   const [showArchiveUsersModal, setShowArchiveUsersModal] = useState(false);
+  const [showArchiveConfirmationModal, setShowArchiveConfirmationModal] = useState(false);
   const [isArchivingUsers, setIsArchivingUsers] = useState(false);
-  const [archiveReason, setArchiveReason] = useState("");
+  const [archiveReasonType, setArchiveReasonType] = useState("");
+  const [customArchiveReason, setCustomArchiveReason] = useState("");
+  const [archiveDeactivateAccount, setArchiveDeactivateAccount] = useState(false);
   const [archiveAlertModal, setArchiveAlertModal] = useState({
     isOpen: false,
     type: "info",
@@ -229,6 +244,7 @@ const UserManagement = () => {
         }),
       );
     } catch (error) {
+      console.error("Error fetching students:", error);
       alert(error.message || "Unable to fetch students.");
       setStudentData([]);
     } finally {
@@ -272,6 +288,14 @@ const UserManagement = () => {
       window.removeEventListener("focus", handleSettingsUpdated);
     };
   }, [loadCurrentSettings]);
+
+  // Reset archive reason when archive modal opens
+  useEffect(() => {
+    if (showArchiveUsersModal) {
+      setArchiveReasonType("");
+      setCustomArchiveReason("");
+    }
+  }, [showArchiveUsersModal]);
 
   // Maps a raw student object from the API to the shape used in state.
   // Preserves violation-derived fields from the existing row when available.
@@ -707,7 +731,32 @@ const UserManagement = () => {
     setSelectedUserIds(new Set(filteredStudents.map((s) => s.id)));
   };
 
-  const handleArchiveUsers = async () => {
+  const handleArchiveUsers = () => {
+    // Validate archive reason
+    if (!archiveReasonType) {
+      showArchiveAlert(
+        "error",
+        "Archive Reason Required",
+        "Please select an archive reason before proceeding.",
+      );
+      return;
+    }
+
+    if (archiveReasonType === "Custom" && !customArchiveReason.trim()) {
+      showArchiveAlert(
+        "error",
+        "Custom Reason Required",
+        "Please enter a custom archive reason.",
+      );
+      return;
+    }
+
+    // Show confirmation modal
+    setShowArchiveUsersModal(false);
+    setShowArchiveConfirmationModal(true);
+  };
+
+  const handleConfirmArchive = async () => {
     if (selectedUserIds.size === 0) {
       showArchiveAlert(
         "warning",
@@ -720,7 +769,9 @@ const UserManagement = () => {
     setIsArchivingUsers(true);
     try {
       let archivedCount = 0;
-      let blockedCount = 0;
+      let unresolvedCount = 0;
+
+      const finalArchiveReason = archiveReasonType === "Custom" ? customArchiveReason.trim() : archiveReasonType;
 
       for (const userId of selectedUserIds) {
         const userRow = studentData.find((s) => s.id === userId);
@@ -729,10 +780,7 @@ const UserManagement = () => {
         }
 
         const hasPendingViolation = Number(userRow.violationCount || 0) > 0;
-        if (hasPendingViolation) {
-          blockedCount += 1;
-          continue;
-        }
+        const isUnresolvedArchive = hasPendingViolation;
 
         const yearMatch = String(userRow.yearSection || "").match(/^(\d+)/);
         const currentYear = yearMatch ? Number(yearMatch[1]) : null;
@@ -747,17 +795,24 @@ const UserManagement = () => {
             isArchived: true,
             archivedAt: new Date().toISOString(),
             yearLevel: currentYear ? Number(currentYear) : userRow.yearLevel,
-            archivedReason: archiveReason.trim() || null,
+            archivedReason: finalArchiveReason,
+            isUnresolvedArchive,
+            deactivateAccount: archiveDeactivateAccount,
           }),
         });
 
         archivedCount += 1;
+        if (isUnresolvedArchive) {
+          unresolvedCount += 1;
+        }
       }
 
       // Clear selection and refresh data
       setSelectedUserIds(new Set());
-      setShowArchiveUsersModal(false);
-      setArchiveReason("");
+      setShowArchiveConfirmationModal(false);
+      setArchiveReasonType("");
+      setCustomArchiveReason("");
+      setArchiveDeactivateAccount(false);
 
       // Refresh data
       await fetchStudents();
@@ -765,7 +820,9 @@ const UserManagement = () => {
       showArchiveAlert(
         "success",
         "Users Archived",
-        `Successfully archived ${formatStudentLabel(archivedCount)}.${blockedCount ? ` ${formatStudentLabel(blockedCount)} were skipped due to pending or uncleared violations.` : ""}`,
+        archiveDeactivateAccount
+          ? `Successfully archived and deactivated ${formatStudentLabel(archivedCount)}.${unresolvedCount ? ` ${formatStudentLabel(unresolvedCount)} were placed in the Unresolved folder due to pending violations.` : ""}`
+          : `Successfully archived ${formatStudentLabel(archivedCount)}.${unresolvedCount ? ` ${formatStudentLabel(unresolvedCount)} were placed in the Unresolved folder due to pending violations.` : ""}`,
       );
     } catch (error) {
       showArchiveAlert(
@@ -787,6 +844,11 @@ const UserManagement = () => {
   const selectedStudentsForAlert = useMemo(
     () => studentData.filter((student) => selectedUserIds.has(student.id)),
     [studentData, selectedUserIds],
+  );
+
+  const studentsWithViolations = useMemo(
+    () => selectedStudentsForAlert.filter((student) => Number(student.violationCount || 0) > 0),
+    [selectedStudentsForAlert],
   );
 
   const resetAlertForm = () => {
@@ -1761,12 +1823,26 @@ const UserManagement = () => {
       </AnimatedContent>
 
       <AnimatedContent distance={40} delay={0.5}>
-        <DataTable
-          columns={columns}
-          data={isLoading ? [] : filteredStudents}
-          actions={actions}
-          onRowClick={handleRowSelect}
-        />
+        {isLoading ? (
+          <div className="flex items-center justify-center p-8">
+            <div className="text-center">
+              <div className="mb-4 text-gray-400">
+                <svg className="animate-spin h-8 w-8 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              </div>
+              <p className="text-gray-400">Loading students...</p>
+            </div>
+          </div>
+        ) : (
+          <DataTable
+            columns={columns}
+            data={filteredStudents}
+            actions={actions}
+            onRowClick={handleRowSelect}
+          />
+        )}
       </AnimatedContent>
 
       {/* Add Modal */}
@@ -2295,6 +2371,15 @@ const UserManagement = () => {
           </p>
         </div>
 
+        {studentsWithViolations.length > 0 && (
+          <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-4 py-3 mb-3">
+            <p className="text-sm text-red-200 font-medium mb-2">🚨 Students with Violations</p>
+            <p className="text-xs text-red-100 leading-relaxed">
+              {formatStudentLabel(studentsWithViolations.length)} currently have violations and will be placed in the "Unresolved" folder. They will automatically be moved to the main "USERS" folder once all their violations are cleared.
+            </p>
+          </div>
+        )}
+
         <div className="rounded-lg border border-blue-400/25 bg-blue-500/10 px-4 py-3 mb-3">
           <p className="text-xs text-blue-200">
             <span className="font-semibold">Note:</span> Archived users' data remains in the database.
@@ -2339,18 +2424,39 @@ const UserManagement = () => {
 
         <div className="mb-3">
           <label className="block text-sm text-gray-300 font-semibold mb-2">
-            Archive Reason (Optional)
+            Archive Reason *
           </label>
-          <input
-            type="text"
-            value={archiveReason}
-            onChange={(e) => setArchiveReason(e.target.value)}
-            placeholder="e.g., LOA (Leave of Absence), Transferred, etc."
-            className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-xs text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          <SelectField
+            value={archiveReasonType}
+            onChange={(e) => {
+              const selectedReason = e.target.value;
+              setArchiveReasonType(selectedReason);
+              if (selectedReason !== "Custom") {
+                setCustomArchiveReason("");
+              }
+            }}
             disabled={isArchivingUsers}
-          />
+            className="w-full"
+          >
+            <option value="">Select an archive reason</option>
+            {ARCHIVE_REASON_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </SelectField>
+          {archiveReasonType === "Custom" && (
+            <input
+              type="text"
+              value={customArchiveReason}
+              onChange={(e) => setCustomArchiveReason(e.target.value)}
+              placeholder="Enter custom reason"
+              className="w-full mt-2 px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-xs text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={isArchivingUsers}
+            />
+          )}
           <p className="text-xs text-gray-400 mt-1">
-            If specified, this will be shown as the student's status in the archive.
+            This reason will be shown as the student's status in the archive.
           </p>
         </div>
 
@@ -2372,6 +2478,80 @@ const UserManagement = () => {
             className="px-6 py-2.5 bg-white text-black"
           >
             {isArchivingUsers ? "Archiving..." : "Archive Selected Users"}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      {/* Archive Confirmation Modal */}
+      <Modal
+        isOpen={showArchiveConfirmationModal}
+        onClose={() => {
+          if (!isArchivingUsers) {
+            setShowArchiveConfirmationModal(false);
+            setShowArchiveUsersModal(true); // Go back to archive modal
+          }
+        }}
+        title={<span className="font-black font-inter">Confirm Archive Action</span>}
+        size="lg"
+        showCloseButton={!isArchivingUsers}
+      >
+        <div className="text-center mb-6">
+          <p className="text-lg text-gray-300 mb-4">Do you want to archive this user?</p>
+          
+          <div className="space-y-3">
+            <button
+              onClick={() => setArchiveDeactivateAccount(true)}
+              className={`w-full p-4 rounded-lg border-2 transition-all ${
+                archiveDeactivateAccount
+                  ? "border-red-500 bg-red-500/20 text-red-300"
+                  : "border-gray-600 bg-gray-700/50 text-gray-300 hover:border-gray-500"
+              }`}
+              disabled={isArchivingUsers}
+            >
+              <div className="font-semibold">Archive & Deactivate</div>
+              <div className="text-sm text-gray-400 mt-1">
+                Archive the record and deactivate the account. User will receive an email notification.
+              </div>
+            </button>
+
+            <button
+              onClick={() => setArchiveDeactivateAccount(false)}
+              className={`w-full p-4 rounded-lg border-2 transition-all ${
+                !archiveDeactivateAccount
+                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                  : "border-gray-600 bg-gray-700/50 text-gray-300 hover:border-gray-500"
+              }`}
+              disabled={isArchivingUsers}
+            >
+              <div className="font-semibold">Archive Only (Keep Active)</div>
+              <div className="text-sm text-gray-400 mt-1">
+                Archive the record but keep the account active. User can still log in.
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setShowArchiveConfirmationModal(false);
+              setShowArchiveUsersModal(true);
+            }}
+            disabled={isArchivingUsers}
+            className="px-6 py-2.5"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            onClick={handleConfirmArchive}
+            disabled={isArchivingUsers}
+            className="px-6 py-2.5 bg-white text-black"
+          >
+            {isArchivingUsers ? "Archiving..." : "Confirm Archive"}
           </Button>
         </ModalFooter>
       </Modal>

@@ -2,7 +2,7 @@ import postgres from "postgres";
 import bcrypt from "bcryptjs";
 
 const requiredVars = ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE"];
-const DEFAULT_DB_POOL_MAX = Number(process.env.DB_POOL_MAX || 1);
+const DEFAULT_DB_POOL_MAX = Number(process.env.DB_POOL_MAX || 12);
 
 function getConnectionUrl() {
   return process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || "";
@@ -25,9 +25,9 @@ function getSqlOptions() {
 
   return {
     max: DEFAULT_DB_POOL_MAX,
-    connect_timeout: 10,
-    idle_timeout: 60,
-    max_lifetime: 60 * 60 * 24,
+    connect_timeout: 30, // Increased from 10 to 30 seconds for more reliable connections
+    idle_timeout: 30, // Reduced from 60 to 30 seconds to release connections faster
+    max_lifetime: 60 * 60, // Reduced from 24 hours to 1 hour
     query_timeout: 60 * 1000, // Increased from 30s to 60s for sync operations
     ssl: useSsl ? { rejectUnauthorized: false } : undefined,
   };
@@ -721,6 +721,11 @@ export async function syncStudentsDatabase() {
   await dbPool.query(`
     ALTER TABLE "Students"
     ADD COLUMN IF NOT EXISTS archived_reason VARCHAR(100)
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE "Students"
+    ADD COLUMN IF NOT EXISTS is_unresolved_archive BOOLEAN NOT NULL DEFAULT FALSE
   `);
 
   await dbPool.query(`

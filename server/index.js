@@ -2422,17 +2422,84 @@ function getMailTransporter() {
   }
 
   if (!_mailTransporter) {
-    _mailTransporter = nodemailer.createTransport({
-      service: "gmail",
+    const transportOptions = {
       auth: {
         user: smtpUser,
         pass: smtpPass,
       },
       pool: true,
-    });
+    };
+
+    if (process.env.SMTP_HOST) {
+      transportOptions.host = process.env.SMTP_HOST;
+      transportOptions.port = Number(process.env.SMTP_PORT || 587);
+      transportOptions.secure = process.env.SMTP_SECURE === "true";
+    } else {
+      transportOptions.service = "gmail";
+    }
+
+    _mailTransporter = nodemailer.createTransport(transportOptions);
   }
 
   return _mailTransporter;
+}
+
+async function deactivateGraduatedStudentAccounts() {
+  if (!hasDbConfig()) {
+    return;
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const result = await pool.query(
+      `UPDATE users u
+       SET is_active = FALSE, updated_at = NOW()
+       FROM "Students" s
+       WHERE u.id = s.user_id
+         AND u.role = 'student'
+         AND u.is_active = TRUE
+         AND TRIM(LOWER(s.status)) = 'graduated'
+       RETURNING s.email, s.full_name`,
+    );
+
+    const transporter = getMailTransporter();
+    for (const row of result.rows || []) {
+      if (!transporter) {
+        console.warn("SMTP not configured. Graduation deactivation email skipped for:", row.email);
+        continue;
+      }
+      if (!row.email) {
+        continue;
+      }
+      try {
+        await transporter.sendMail({
+          from: process.env.SMTP_FROM || process.env.SMTP_USER,
+          to: row.email,
+          subject: "Account Deactivated - Graduation",
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #333;">Account Deactivated</h2>
+              <p>Dear ${row.full_name || "Student"},</p>
+              <p>Your account has been deactivated because your status is "Graduated".</p>
+              <p>You will no longer be able to log in to the system.</p>
+              <p>If you believe this is an error, please contact your administrator.</p>
+              <br>
+              <p>Best regards,<br>Student Violation Management System</p>
+            </div>
+          `,
+        });
+      } catch (emailError) {
+        console.error("Failed to send graduated deactivation email:", emailError);
+      }
+    }
+
+    if (result.rowCount > 0) {
+      console.log(`Deactivated ${result.rowCount} graduated student account(s) on startup.`);
+    }
+  } catch (error) {
+    console.error("Failed to enforce graduated deactivations on startup:", error);
+  }
 }
 
 async function sendStudentCredentialEmail({
@@ -3903,6 +3970,8 @@ app.put("/api/students/:id", async (req, res) => {
     violationCount,
     isArchived,
     archivedReason,
+    isUnresolvedArchive,
+    deactivateAccount,
   } = req.body ?? {};
 
   if (!hasDbConfig()) {
@@ -4051,9 +4120,10 @@ app.put("/api/students/:id", async (req, res) => {
         is_archived = CASE WHEN $13::boolean IS NOT NULL THEN $13::boolean ELSE is_archived END,
         archived_at = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(archived_at, NOW()) ELSE archived_at END,
         archived_reason = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(NULLIF($14, ''), archived_reason) ELSE archived_reason END,
-        original_status = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(NULLIF($15, ''), original_status) ELSE original_status END
+        original_status = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(NULLIF($15, ''), original_status) ELSE original_status END,
+        is_unresolved_archive = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE($16::boolean, FALSE) ELSE is_unresolved_archive END
       WHERE id = $12
-      RETURNING id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, program, year_section, year_level, status, violation_count, is_archived, archived_at, archived_reason, original_status
+      RETURNING id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, program, year_section, year_level, status, violation_count, is_archived, archived_at, archived_reason, original_status, is_unresolved_archive
       `,
       [
         normalizedEmail || null,
@@ -4071,6 +4141,7 @@ app.put("/api/students/:id", async (req, res) => {
         isArchived ?? null,
         normalizedArchivedReason || null,
         normalizedOriginalStatus || null,
+        isUnresolvedArchive ?? null,
       ],
     );
 
@@ -4090,6 +4161,80 @@ app.put("/api/students/:id", async (req, res) => {
         ])
       : null;
     updatedStudent.username = userRow?.rows?.[0]?.username || null;
+
+    // If status is set to "Graduated", deactivate the user account and send email
+    if (normalizedStatus === "Graduated" && updatedStudent.user_id) {
+      await pool.query(
+        `UPDATE users SET is_active = FALSE WHERE id = $1 AND role = 'student'`,
+        [updatedStudent.user_id],
+      );
+
+      // Send deactivation email
+      try {
+        const userEmail = updatedStudent.email;
+        const transporter = getMailTransporter();
+        if (userEmail && transporter) {
+          await transporter.sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: userEmail,
+            subject: "Account Deactivated - Graduation",
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #333;">Account Deactivated</h2>
+                <p>Dear ${updatedStudent.full_name || "Student"},</p>
+                <p>Your account has been deactivated because your status has been updated to "Graduated".</p>
+                <p>You will no longer be able to log in to the system.</p>
+                <p>If you believe this is an error, please contact your administrator.</p>
+                <br>
+                <p>Best regards,<br>Student Violation Management System</p>
+              </div>
+            `,
+          });
+        } else if (userEmail) {
+          console.warn("SMTP not configured. Graduation deactivation email was skipped for:", userEmail);
+        }
+      } catch (emailError) {
+        console.error("Failed to send graduation deactivation email:", emailError);
+        // Don't fail the request if email fails
+      }
+    }
+
+    // If archiving and deactivateAccount is true, deactivate the user account and send email
+    if (isArchived === true && deactivateAccount === true && updatedStudent.user_id) {
+      await pool.query(
+        `UPDATE users SET is_active = FALSE WHERE id = $1 AND role = 'student'`,
+        [updatedStudent.user_id],
+      );
+
+      // Send deactivation email
+      try {
+        const userEmail = updatedStudent.email;
+        const transporter = getMailTransporter();
+        if (userEmail && transporter) {
+          await transporter.sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: userEmail,
+            subject: "Account Deactivated - Archived",
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #333;">Account Deactivated</h2>
+                <p>Dear ${updatedStudent.full_name || "Student"},</p>
+                <p>Your account has been deactivated because it has been archived with reason: ${normalizedArchivedReason || "Not specified"}.</p>
+                <p>You will no longer be able to log in to the system.</p>
+                <p>If you believe this is an error, please contact your administrator.</p>
+                <br>
+                <p>Best regards,<br>Student Violation Management System</p>
+              </div>
+            `,
+          });
+        } else if (userEmail) {
+          console.warn("SMTP not configured. Archive deactivation email was skipped for:", userEmail);
+        }
+      } catch (emailError) {
+        console.error("Failed to send archive deactivation email:", emailError);
+        // Don't fail the request if email fails
+      }
+    }
 
     const actionDetails = isArchived
       ? `Archived student ${updatedStudent.full_name}.`
@@ -4384,17 +4529,36 @@ app.post("/api/students/alerts", async (req, res) => {
 });
 
 async function refreshStudentViolationCount(pool, studentId) {
+  // For archived students, count all violations (active + archived)
+  // For active students, count only unresolved active violations
+  const countQuery = `
+    SELECT
+      CASE
+        WHEN s.is_archived = true THEN (
+          SELECT COUNT(*)::int
+          FROM student_violation_logs svl
+          WHERE svl.student_id = $1
+        ) + (
+          SELECT COUNT(*)::int
+          FROM student_violation_archives sva
+          WHERE sva.student_id = $1
+        )
+        ELSE (
+          SELECT COUNT(*)::int
+          FROM student_violation_logs svl
+          WHERE svl.student_id = $1 AND svl.cleared_at IS NULL
+        )
+      END as total_count
+    FROM "Students" s
+    WHERE s.id = $1
+  `;
+
+  const countResult = await pool.query(countQuery, [studentId]);
+  const totalCount = countResult.rows?.[0]?.total_count || 0;
+
   await pool.query(
-    `
-    UPDATE "Students"
-    SET violation_count = (
-      SELECT COUNT(*)::int
-      FROM student_violation_logs svl
-      WHERE svl.student_id = $1 AND svl.cleared_at IS NULL
-    )
-    WHERE id = $1
-    `,
-    [studentId],
+    `UPDATE "Students" SET violation_count = $2 WHERE id = $1`,
+    [studentId, totalCount],
   );
 }
 
@@ -7710,7 +7874,7 @@ app.get("/api/archive/users", async (req, res) => {
 
     const result = await pool.query(
       `SELECT id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, 
-              program, year_section, status, violation_count, is_archived, archived_at, archived_reason, original_status
+              program, year_section, status, violation_count, is_archived, archived_at, archived_reason, original_status, is_unresolved_archive
        FROM "Students"
        WHERE is_archived = true
        ORDER BY archived_at DESC NULLS LAST`,
@@ -8221,7 +8385,7 @@ app.put("/api/archive/users/:id", async (req, res) => {
            END
        WHERE id = $8 AND is_archived = true
        RETURNING id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, 
-                 program, year_section, status, violation_count, is_archived, archived_at, archived_reason`,
+                 program, year_section, status, violation_count, is_archived, archived_at, archived_reason, is_unresolved_archive`,
       [
         cleanedFirstName || null,
         cleanedMiddleInitial || "",
@@ -8281,7 +8445,7 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
 
     // Get the archived student to get user_id, name, and original status
     const studentResult = await pool.query(
-      `SELECT id, user_id, full_name, original_status FROM "Students"
+      `SELECT id, user_id, full_name, original_status, status FROM "Students"
        WHERE id = $1 AND is_archived = true
        LIMIT 1`,
       [id],
@@ -8294,7 +8458,9 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
       });
     }
 
-    const { user_id, full_name, original_status } = studentResult.rows[0];
+    const { user_id, full_name, original_status, status: currentStatus } = studentResult.rows[0];
+    const restoredStatus = String(original_status || currentStatus || "").trim();
+    const shouldActivate = restoredStatus.toLowerCase() !== "graduated";
 
     // Mark student as not archived and restore original status if it exists
     await pool.query(
@@ -8302,18 +8468,56 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
        SET is_archived = false, 
            archived_at = NULL,
            archived_reason = NULL,
+           is_unresolved_archive = false,
+           original_status = NULL,
            status = COALESCE(NULLIF($2, ''), status)
        WHERE id = $1`,
       [id, original_status || null],
     );
 
-    // Reactivate user account
-    await pool.query(
-      `UPDATE users
-       SET is_active = true, updated_at = NOW()
-       WHERE id = $1`,
-      [user_id],
-    );
+    // Reactivate user account only if restored status is not Graduated
+    if (shouldActivate) {
+      await pool.query(
+        `UPDATE users
+         SET is_active = true, updated_at = NOW()
+         WHERE id = $1`,
+        [user_id],
+      );
+    }
+
+    // Send restoration email only for non-Graduated restored users
+    try {
+      const studentEmailResult = await pool.query(
+        `SELECT email FROM "Students" WHERE id = $1 LIMIT 1`,
+        [id],
+      );
+      const userEmail = studentEmailResult.rows?.[0]?.email;
+      if (shouldActivate && userEmail) {
+        const transporter = getMailTransporter();
+        if (transporter) {
+          await transporter.sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: userEmail,
+            subject: "Account Restored",
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #333;">Account Restored</h2>
+                <p>Dear ${full_name || "Student"},</p>
+                <p>Your account has been restored and you can now log in to the system again.</p>
+                <p>If you have any questions, please contact your administrator.</p>
+                <br>
+                <p>Best regards,<br>Student Violation Management System</p>
+              </div>
+            `,
+          });
+        } else {
+          console.warn("SMTP not configured. Restoration email was skipped for:", userEmail);
+        }
+      }
+    } catch (emailError) {
+      console.error("Failed to send restoration email:", emailError);
+      // Don't fail the request if email fails
+    }
 
     // Log audit event
     await logAuditEvent(req, {
@@ -8351,7 +8555,7 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
 
     // Get all archived students
     const archivedStudents = await pool.query(
-      `SELECT id, user_id, full_name FROM "Students" WHERE is_archived = true`,
+      `SELECT id, user_id, full_name, status FROM "Students" WHERE is_archived = true`,
     );
 
     const students = archivedStudents.rows || [];
@@ -8361,18 +8565,53 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
     for (const student of students) {
       await pool.query(
         `UPDATE "Students"
-         SET is_archived = false, archived_at = NULL
+         SET is_archived = false, archived_at = NULL, archived_reason = NULL, is_unresolved_archive = false, original_status = NULL
          WHERE id = $1`,
         [student.id],
       );
 
-      if (student.user_id) {
+      const shouldActivate = String(student.status || "").trim().toLowerCase() !== "graduated";
+      if (student.user_id && shouldActivate) {
         await pool.query(
           `UPDATE users
            SET is_active = true, updated_at = NOW()
            WHERE id = $1`,
           [student.user_id],
         );
+      }
+
+      // Send restoration email only for non-Graduated restored users
+      try {
+        const studentEmailResult = await pool.query(
+          `SELECT email FROM "Students" WHERE id = $1 LIMIT 1`,
+          [student.id],
+        );
+        const userEmail = studentEmailResult.rows?.[0]?.email;
+        if (shouldActivate && userEmail) {
+          const transporter = getMailTransporter();
+          if (transporter) {
+            await transporter.sendMail({
+              from: process.env.SMTP_FROM || process.env.SMTP_USER,
+              to: userEmail,
+              subject: "Account Restored",
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h2 style="color: #333;">Account Restored</h2>
+                  <p>Dear ${student.full_name || "Student"},</p>
+                  <p>Your account has been restored and you can now log in to the system again.</p>
+                  <p>If you have any questions, please contact your administrator.</p>
+                  <br>
+                  <p>Best regards,<br>Student Violation Management System</p>
+                </div>
+              `,
+            });
+          } else {
+            console.warn("SMTP not configured. Restoration email was skipped for:", userEmail);
+          }
+        }
+      } catch (emailError) {
+        console.error("Failed to send restoration email:", emailError);
+        // Don't fail the request if email fails
       }
 
       restoredCount++;
@@ -8383,12 +8622,12 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
       action: "BULK_RESTORE_USERS",
       targetType: "Students",
       targetId: null,
-      details: `Bulk restored ${restoredCount} archived users to active status.`,
+      details: `Bulk restored ${restoredCount} archived users. Some Graduated users remained inactive.`,
     });
 
     return res.status(200).json({
       status: "ok",
-      message: `Successfully restored ${restoredCount} archived user${restoredCount === 1 ? '' : 's'} to active status.`,
+      message: `Successfully restored ${restoredCount} archived user${restoredCount === 1 ? '' : 's'}.`,
       restoredCount,
     });
   } catch (error) {
@@ -8560,6 +8799,40 @@ app.put("/api/archive/violations/:id", async (req, res) => {
         updatedViolation.semester,
         updatedViolation.school_year,
       );
+
+      // Check if student is in unresolved archive and should be moved to main archive
+      if (updatedViolation.student_id) {
+        const studentCheck = await pool.query(
+          `SELECT is_archived, is_unresolved_archive FROM "Students" WHERE id = $1 LIMIT 1`,
+          [updatedViolation.student_id],
+        );
+        const student = studentCheck.rows?.[0];
+        if (student?.is_archived && student?.is_unresolved_archive) {
+          // Count total unresolved violations for this student
+          const unresolvedCountResult = await pool.query(
+            `SELECT COUNT(*)::int AS count FROM student_violation_archives WHERE student_id = $1 AND is_unresolved = TRUE`,
+            [updatedViolation.student_id],
+          );
+          const unresolvedArchiveCount = Number(unresolvedCountResult.rows?.[0]?.count || 0);
+
+          // Count unresolved active violations
+          const activeUnresolvedResult = await pool.query(
+            `SELECT COUNT(*)::int AS count FROM student_violation_logs WHERE student_id = $1 AND cleared_at IS NULL`,
+            [updatedViolation.student_id],
+          );
+          const activeUnresolvedCount = Number(activeUnresolvedResult.rows?.[0]?.count || 0);
+
+          const totalUnresolved = unresolvedArchiveCount + activeUnresolvedCount;
+
+          if (totalUnresolved === 0) {
+            // Move student from unresolved archive to main archive
+            await pool.query(
+              `UPDATE "Students" SET is_unresolved_archive = FALSE WHERE id = $1`,
+              [updatedViolation.student_id],
+            );
+          }
+        }
+      }
     }
 
     let responseViolation = updatedViolation;
@@ -9109,7 +9382,7 @@ async function startServer() {
     const isDev = process.env.NODE_ENV === "development";
 
     ensureAuthDatabaseReady()
-      .then(() => {
+      .then(async () => {
         console.log("Auth database synchronized.");
 
         purgeExpiredAuditLogs();
@@ -9121,6 +9394,8 @@ async function startServer() {
         notificationCleanupTimer = setInterval(() => {
           purgeExpiredNotifications();
         }, NOTIFICATION_CLEANUP_INTERVAL_MS);
+
+        await deactivateGraduatedStudentAccounts();
 
         if (seedAccounts.length === 0) {
           console.log("No account seed variables detected during startup.");
