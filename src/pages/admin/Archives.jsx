@@ -486,7 +486,7 @@ const Archives = () => {
   const [recordToImport, setRecordToImport] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
 
-  // Cleanup and Re-import workbook records states
+  // Legacy cleanup modal state kept only so unreachable JSX remains harmless.
   const [isCleanupReimportModalOpen, setIsCleanupReimportModalOpen] = useState(false);
   const [isCleanupReimporting, setIsCleanupReimporting] = useState(false);
   const [cleanupSecretKey, setCleanupSecretKey] = useState("");
@@ -3317,19 +3317,6 @@ const Archives = () => {
               >
                 <Download className="w-4 h-4" /> Export
               </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="p-2 bg-blue-600 hover:bg-blue-700 text-white border-0"
-                onClick={() => {
-                  setCleanupSecretKey("");
-                  setIsCleanupReimportModalOpen(true);
-                }}
-                title="Cleanup & Re-Import Workbook"
-                aria-label="Cleanup and Re-Import Workbook"
-              >
-                <Upload className="w-4 h-4" />
-              </Button>
             </div>
 
           </div>
@@ -3338,7 +3325,7 @@ const Archives = () => {
             <div className="text-center py-8 text-gray-400">
               {showArchiveMaintenance ? (
                 <p className="mt-2 text-slate-300">
-                  Archive data will appear as soon as the workbook sync finishes.
+                  Archive data will appear as soon as the archive sync finishes.
                 </p>
               ) : (
                 <>

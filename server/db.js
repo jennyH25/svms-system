@@ -3,6 +3,14 @@ import bcrypt from "bcryptjs";
 
 const requiredVars = ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE"];
 const DEFAULT_DB_POOL_MAX = Number(process.env.DB_POOL_MAX || 12);
+const isServerlessRuntime =
+  process.env.VERCEL === "1" ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.NODE_ENV === "serverless";
+const isEnvEnabled = (value) =>
+  ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+const serverlessRuntimeDbSyncEnabled =
+  !isServerlessRuntime || isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_DB_SYNC);
 
 function getConnectionUrl() {
   return process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || "";
@@ -254,7 +262,16 @@ export async function isAuthSchemaCurrent() {
   }
 
   const dbPool = getDbPool();
-  await ensureSchemaStateTable(dbPool);
+  if (isServerlessRuntime && !serverlessRuntimeDbSyncEnabled) {
+    const relationCheck = await dbPool.query(
+      `SELECT to_regclass('public.app_state') AS relation_name`,
+    );
+    if (!relationCheck.rows?.[0]?.relation_name) {
+      return false;
+    }
+  } else {
+    await ensureSchemaStateTable(dbPool);
+  }
 
   const cachedSchemaVersion = await getSchemaStateValue(
     dbPool,

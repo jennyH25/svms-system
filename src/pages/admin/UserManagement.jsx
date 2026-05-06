@@ -548,6 +548,8 @@ const UserManagement = () => {
       return;
     }
 
+    const deleteCandidateId = Number(deleteCandidate.id);
+
     setIsDeleting(true);
     try {
       const response = await fetch(`/api/students/${deleteCandidate.id}`, {
@@ -561,7 +563,7 @@ const UserManagement = () => {
         throw new Error(result?.message || "Failed to delete student.");
       }
 
-      setStudentData((prev) => prev.filter((s) => s.id !== deleteCandidate.id));
+      setStudentData((prev) => prev.filter((s) => Number(s.id) !== deleteCandidateId));
       setDeleteCandidate(null);
     } catch (error) {
       alert(error.message || "Unable to delete student.");
@@ -579,6 +581,7 @@ const UserManagement = () => {
     try {
       let deletedCount = 0;
       const failedDeletes = [];
+      const deletedIds = new Set();
 
       for (const userId of selectedUserIds) {
         const response = await fetch(`/api/students/${userId}`, {
@@ -590,12 +593,16 @@ const UserManagement = () => {
 
         if (response.ok) {
           deletedCount += 1;
+          deletedIds.add(Number(userId));
         } else {
           failedDeletes.push(userId);
         }
       }
 
-      await fetchStudents();
+      setStudentData((prevData) =>
+        prevData.filter((student) => !deletedIds.has(Number(student.id))),
+      );
+      invalidateFetchCache("/api/students");
       setSelectedUserIds(new Set());
       setShowDeleteSelectedModal(false);
 

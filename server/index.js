@@ -62,6 +62,52 @@ const isServerlessRuntime =
   process.env.VERCEL === "1" ||
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
   process.env.NODE_ENV === "serverless";
+const isEnvEnabled = (value) =>
+  ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+const serverlessRuntimeDbSyncEnabled =
+  !isServerlessRuntime || isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_DB_SYNC);
+const serverlessArchiveMaintenanceEnabled =
+  !isServerlessRuntime || isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_ARCHIVE_MAINTENANCE);
+const serverlessArchiveMaintenanceAutostartEnabled =
+  !isServerlessRuntime ||
+  isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_ARCHIVE_AUTOSTART);
+const serverlessLegacyWorkbookImportEnabled =
+  isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_LEGACY_WORKBOOK_IMPORT);
+const legacyWorkbookSourceEnabled =
+  !isServerlessRuntime || serverlessLegacyWorkbookImportEnabled;
+
+function getServerlessDbSyncGuidance() {
+  return "Run the API once in a non-serverless environment to apply schema updates, or temporarily set SVMS_ENABLE_SERVERLESS_DB_SYNC=true for a one-time deployment sync.";
+}
+
+function getServerlessArchiveGuidance() {
+  return "Enable SVMS_ENABLE_SERVERLESS_ARCHIVE_MAINTENANCE=true to allow workbook archive maintenance on Vercel, and optionally SVMS_ENABLE_SERVERLESS_ARCHIVE_AUTOSTART=true to run it automatically.";
+}
+
+function getLegacyWorkbookGuidance() {
+  return "This deployment runs archive data from Postgres only. If you still need a one-time workbook import, run it outside serverless or temporarily set SVMS_ENABLE_SERVERLESS_LEGACY_WORKBOOK_IMPORT=true.";
+}
+
+async function getLegacyWorkbookAvailability() {
+  if (!legacyWorkbookSourceEnabled) {
+    return {
+      available: false,
+      reason: "disabled",
+      message: getLegacyWorkbookGuidance(),
+    };
+  }
+
+  try {
+    await access(HISTORICAL_VIOLATION_RECORDS_PATH);
+    return { available: true, reason: "available", message: "" };
+  } catch {
+    return {
+      available: false,
+      reason: "missing",
+      message: "ViolationRecords1.xlsx is not available on this deployment.",
+    };
+  }
+}
 
 // Pusher client (optional) - configured via env vars
 let pusherClient = null;
@@ -919,9 +965,8 @@ function parseWorkbookTypeLabel(value) {
 }
 
 async function loadHistoricalViolationRecordsFromWorkbook() {
-  try {
-    await access(HISTORICAL_VIOLATION_RECORDS_PATH);
-  } catch {
+  const workbookAvailability = await getLegacyWorkbookAvailability();
+  if (!workbookAvailability.available) {
     return [];
   }
 
@@ -1463,11 +1508,6 @@ function getArchiveMaintenanceSnapshot() {
   };
 }
 
-const isWorkbookBusyError = (error) => {
-  const code = String(error?.code || "").toUpperCase();
-  return code === "EBUSY" || Number(error?.errno) === -4082;
-};
-
 async function cleanupDuplicateArchivedViolations(pool) {
   const result = await pool.query(
     `WITH ranked AS (
@@ -1576,6 +1616,49 @@ async function maybeRunArchiveMaintenance(pool) {
   });
 
   return archiveMaintenanceInFlight;
+}
+
+async function requestArchiveMaintenance(
+  pool,
+  { trigger = "request", forceStart = false } = {},
+) {
+  if (!pool) {
+    return { skipped: true, reason: "missing_pool" };
+  }
+
+  const workbookAvailability = await getLegacyWorkbookAvailability();
+  if (!workbookAvailability.available) {
+    updateArchiveMaintenanceState({
+      running: false,
+      phase: "idle",
+      message: "Archive maintenance disabled: archive data is served from Postgres.",
+      percent: 100,
+      completed: 0,
+      total: 0,
+      finishedAt: new Date().toISOString(),
+    });
+    return {
+      skipped: true,
+      reason: `legacy_workbook_${workbookAvailability.reason}`,
+    };
+  }
+
+  if (isServerlessRuntime && !serverlessArchiveMaintenanceEnabled) {
+    console.log(
+      `Skipping archive maintenance for ${trigger} in serverless mode. ${getServerlessArchiveGuidance()}`,
+    );
+    return { skipped: true, reason: "serverless_archive_maintenance_disabled" };
+  }
+
+  if (
+    isServerlessRuntime &&
+    !forceStart &&
+    !serverlessArchiveMaintenanceAutostartEnabled
+  ) {
+    return { skipped: true, reason: "serverless_archive_autostart_disabled" };
+  }
+
+  return maybeRunArchiveMaintenance(pool);
 }
 
 async function getViolationCandidatesForInference(pool) {
@@ -1711,6 +1794,41 @@ async function ensureArchiveColumnsExist(pool) {
 
   archiveColumnsEnsureInFlight = (async () => {
     try {
+      if (isServerlessRuntime && !serverlessRuntimeDbSyncEnabled) {
+        const columnResult = await pool.query(
+          `SELECT column_name
+             FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'student_violation_archives'
+              AND column_name = ANY($1::text[])`,
+          [[
+            "violation_category",
+            "violation_degree",
+            "violation_type_label",
+          ]],
+        );
+        const availableColumns = new Set(
+          (columnResult.rows || []).map((row) => String(row.column_name || "")),
+        );
+        const requiredColumns = [
+          "violation_category",
+          "violation_degree",
+          "violation_type_label",
+        ];
+        const missingColumns = requiredColumns.filter(
+          (column) => !availableColumns.has(column),
+        );
+
+        if (missingColumns.length > 0) {
+          throw new Error(
+            `Archive schema is not ready for serverless runtime. Missing column(s): ${missingColumns.join(", ")}. ${getServerlessDbSyncGuidance()}`,
+          );
+        }
+
+        archiveColumnsEnsured = true;
+        return;
+      }
+
       await pool.query(`ALTER TABLE student_violation_archives ADD COLUMN IF NOT EXISTS violation_category text`);
       await pool.query(`ALTER TABLE student_violation_archives ADD COLUMN IF NOT EXISTS violation_degree text`);
       await pool.query(`ALTER TABLE student_violation_archives ADD COLUMN IF NOT EXISTS violation_type_label text`);
@@ -1727,6 +1845,7 @@ async function ensureArchiveColumnsExist(pool) {
       archiveColumnsEnsured = true;
     } catch (err) {
       console.warn('Could not ensure archive columns exist:', err.message || err);
+      throw err;
     } finally {
       archiveColumnsEnsureInFlight = null;
     }
@@ -4681,15 +4800,12 @@ app.get("/api/violation-analytics", async (req, res) => {
   const requestedSemester = req.query.semester
     ? normalizeSemester(String(req.query.semester).trim())
     : null;
-  let workbookRecords = [];
   let databaseRecords = [];
   let archivedRecords = [];
   let currentSemester = "";
   let currentSchoolYear = "";
 
   try {
-    workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
-
     if (hasDbConfig()) {
       await ensureAuthDatabaseReady();
       const pool = getDbPool();
@@ -4781,7 +4897,9 @@ app.get("/api/violation-analytics", async (req, res) => {
         });
       } else {
         await ensureArchiveColumnsExist(pool);
-        await maybeRunArchiveMaintenance(pool);
+        await requestArchiveMaintenance(pool, {
+          trigger: "GET /api/archive/analytics",
+        });
 
         const archivedResult = await pool.query(
           `
@@ -4840,11 +4958,14 @@ app.get("/api/violation-analytics", async (req, res) => {
         archivedRecords = [...archiveDatabaseRecords];
         databaseRecords = [...archivedRecords];
       }
+    } else {
+      return res.status(500).json({
+        status: "error",
+        message: "Database is not configured.",
+      });
     }
 
-    const selectedRecordsSource =
-      databaseRecords.length > 0 ? databaseRecords : workbookRecords;
-    const mergedRecords = selectedRecordsSource.filter((record) => {
+    const mergedRecords = databaseRecords.filter((record) => {
       const semester = normalizeSemester(record.semester);
       const schoolYear = normalizeSchoolYear(record.schoolYear);
       const hasTerm = semester && schoolYear;
@@ -4889,7 +5010,7 @@ app.get("/api/violation-analytics", async (req, res) => {
       ongoingSemesters,
       targetSchoolYear,
       metadata: {
-        historicalRecordCount: workbookRecords.length,
+        historicalRecordCount: 0,
         databaseRecordCount: databaseRecords.length,
         archivedRecordCount: archivedRecords.length,
         currentRecordCount: databaseRecords.length - archivedRecords.length,
@@ -7857,7 +7978,9 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
 
-    void maybeRunArchiveMaintenance(pool).catch((error) => {
+    void requestArchiveMaintenance(pool, {
+      trigger: "GET /api/archive/unresolved",
+    }).catch((error) => {
       console.warn(
         "Archive maintenance skipped/failed:",
         error?.message || error,
@@ -7940,7 +8063,9 @@ app.get("/api/archive/users", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
-    void maybeRunArchiveMaintenance(pool).catch((error) => {
+    void requestArchiveMaintenance(pool, {
+      trigger: "GET /api/archive/users",
+    }).catch((error) => {
       console.warn(
         "Archive maintenance skipped/failed:",
         error?.message || error,
@@ -7989,7 +8114,10 @@ app.get("/api/archive/maintenance-status", async (req, res) => {
     await ensureArchiveColumnsExist(pool);
 
     if (String(req.query.start || "1") !== "0") {
-      void maybeRunArchiveMaintenance(pool).catch((error) => {
+      void requestArchiveMaintenance(pool, {
+        trigger: "GET /api/archive/maintenance-status",
+        forceStart: true,
+      }).catch((error) => {
         console.warn(
           "Archive maintenance skipped/failed:",
           error?.message || error,
@@ -8022,7 +8150,9 @@ app.get("/api/archive/school-years", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
-    void maybeRunArchiveMaintenance(pool).catch((error) => {
+    void requestArchiveMaintenance(pool, {
+      trigger: "GET /api/archive/school-years",
+    }).catch((error) => {
       console.warn(
         "Archive maintenance skipped/failed:",
         error?.message || error,
@@ -8157,7 +8287,7 @@ app.delete("/api/archive/semesters/:schoolYear/:semester", async (req, res) => {
     if (deletedCount === 0) {
       return res.status(200).json({
         status: "ok",
-        message: `${normalizedSemester} S.Y. ${normalizedSchoolYear} has no database archive records. Workbook source remains unchanged.`,
+        message: `${normalizedSemester} S.Y. ${normalizedSchoolYear} has no database archive records.`,
         deletedCount: 0,
       });
     }
@@ -8357,7 +8487,9 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
 
-    void maybeRunArchiveMaintenance(pool).catch((error) => {
+    void requestArchiveMaintenance(pool, {
+      trigger: "GET /api/archive/violations",
+    }).catch((error) => {
       console.warn(
         "Archive maintenance skipped/failed:",
         error?.message || error,
@@ -9053,6 +9185,17 @@ app.post("/api/archive/violations/:id/import", async (req, res) => {
     });
   }
 
+  const workbookAvailability = await getLegacyWorkbookAvailability();
+  if (!workbookAvailability.available) {
+    return res.status(409).json({
+      status: "error",
+      message:
+        workbookAvailability.reason === "disabled"
+          ? getLegacyWorkbookGuidance()
+          : workbookAvailability.message,
+    });
+  }
+
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
@@ -9123,6 +9266,23 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
     });
   }
 
+  return res.status(410).json({
+    status: "error",
+    message:
+      "Cleanup and re-import is no longer available. Archive data now runs from Postgres only.",
+  });
+
+  const workbookAvailability = await getLegacyWorkbookAvailability();
+  if (!workbookAvailability.available) {
+    return res.status(409).json({
+      status: "error",
+      message:
+        workbookAvailability.reason === "disabled"
+          ? getLegacyWorkbookGuidance()
+          : workbookAvailability.message,
+    });
+  }
+
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
@@ -9152,8 +9312,7 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
 
       return res.status(200).json({
         status: "ok",
-        message:
-          "Cleanup completed. No rows found in ViolationRecords1.xlsx to re-import.",
+        message: "Cleanup completed. No workbook rows found to re-import.",
         cleanupCount,
         importCount: 0,
         importedRecords: [],
@@ -9228,6 +9387,16 @@ app.delete("/api/archive/violations/:id", async (req, res) => {
     const pool = getDbPool();
 
     if (typeof id === "string" && id.startsWith("wb-")) {
+      const workbookAvailability = await getLegacyWorkbookAvailability();
+      if (!workbookAvailability.available) {
+        return res.status(409).json({
+          status: "error",
+          message:
+            workbookAvailability.reason === "disabled"
+              ? getLegacyWorkbookGuidance()
+              : workbookAvailability.message,
+        });
+      }
       deleted = await deleteHistoricalWorkbookRecordById(id);
     } else {
       const result = await pool.query(
@@ -9256,13 +9425,6 @@ app.delete("/api/archive/violations/:id", async (req, res) => {
       message: "Archived violation deleted.",
     });
   } catch (error) {
-    if (isWorkbookBusyError(error)) {
-      return res.status(423).json({
-        status: "error",
-        message:
-          "ViolationRecords1.xlsx is currently in use. Close the file and try deleting again.",
-      });
-    }
     console.error("Error deleting archived violation:", error);
     return res.status(503).json({
       status: "error",
@@ -9295,52 +9457,64 @@ async function ensureAuthDatabaseReady() {
     const seedAccounts = getSeedAccountsFromEnv();
     const isDev = process.env.NODE_ENV === "development";
 
-    const runFullSynchronization = async () => {
-      // Run base table syncs sequentially for predictable migration ordering.
-      await syncAuthDatabase({ seedAccounts });
-      await syncStudentsDatabase();
-      await syncSystemSettingsDatabase();
-      await syncViolationsDatabase(false);
-      await syncAuditLogsDatabase();
-      await syncStudentsFromUsers();
-      await syncNotificationsDatabase();
-      await syncPasswordResetDatabase();
-      await syncStudentViolationLogsDatabase();
-      await syncAppStateDatabase();
-    };
-
-    authSyncPromise = (async () => {
-      const schemaIsCurrent = await isAuthSchemaCurrent();
-
-      if (schemaIsCurrent) {
-        try {
-          // Fast path for known/current schema - skip heavy operations in dev.
-          await syncAuthDatabase({ seedAccounts, skipSchemaCheck: true });
-          await syncStudentsDatabase();
-          await syncSystemSettingsDatabase();
-          // In dev, skip re-seeding violations and app state sync - they're heavy operations
-          await syncViolationsDatabase(isDev);
-          await syncAuditLogsDatabase();
-          await syncStudentsFromUsers();
-          await syncNotificationsDatabase();
-          await syncPasswordResetDatabase();
-          await syncStudentViolationLogsDatabase();
-          // Defer app state sync in dev mode - it creates triggers on all tables
-          if (!isDev) {
-            await syncAppStateDatabase();
-          }
-          return;
-        } catch (fastPathError) {
-          console.warn(
-            `Fast startup sync failed, retrying with full synchronization: ${fastPathError.message}`,
+    if (isServerlessRuntime && !serverlessRuntimeDbSyncEnabled) {
+      authSyncPromise = (async () => {
+        const schemaIsCurrent = await isAuthSchemaCurrent();
+        if (!schemaIsCurrent) {
+          throw new Error(
+            `Database schema is not ready for serverless runtime. ${getServerlessDbSyncGuidance()}`,
           );
-          await runFullSynchronization();
-          return;
         }
-      }
+      })();
+    } else {
 
-      await runFullSynchronization();
-    })();
+      const runFullSynchronization = async () => {
+        // Run base table syncs sequentially for predictable migration ordering.
+        await syncAuthDatabase({ seedAccounts });
+        await syncStudentsDatabase();
+        await syncSystemSettingsDatabase();
+        await syncViolationsDatabase(false);
+        await syncAuditLogsDatabase();
+        await syncStudentsFromUsers();
+        await syncNotificationsDatabase();
+        await syncPasswordResetDatabase();
+        await syncStudentViolationLogsDatabase();
+        await syncAppStateDatabase();
+      };
+
+      authSyncPromise = (async () => {
+        const schemaIsCurrent = await isAuthSchemaCurrent();
+
+        if (schemaIsCurrent) {
+          try {
+            // Fast path for known/current schema - skip heavy operations in dev.
+            await syncAuthDatabase({ seedAccounts, skipSchemaCheck: true });
+            await syncStudentsDatabase();
+            await syncSystemSettingsDatabase();
+            // In dev, skip re-seeding violations and app state sync - they're heavy operations
+            await syncViolationsDatabase(isDev);
+            await syncAuditLogsDatabase();
+            await syncStudentsFromUsers();
+            await syncNotificationsDatabase();
+            await syncPasswordResetDatabase();
+            await syncStudentViolationLogsDatabase();
+            // Defer app state sync in dev mode - it creates triggers on all tables
+            if (!isDev) {
+              await syncAppStateDatabase();
+            }
+            return;
+          } catch (fastPathError) {
+            console.warn(
+              `Fast startup sync failed, retrying with full synchronization: ${fastPathError.message}`,
+            );
+            await runFullSynchronization();
+            return;
+          }
+        }
+
+        await runFullSynchronization();
+      })();
+    }
   }
 
   try {
@@ -9375,7 +9549,9 @@ async function startServer() {
         }, NOTIFICATION_CLEANUP_INTERVAL_MS);
 
         await ensureArchiveColumnsExist(getDbPool());
-        void maybeRunArchiveMaintenance(getDbPool()).catch((error) => {
+        void requestArchiveMaintenance(getDbPool(), {
+          trigger: "startup prewarm",
+        }).catch((error) => {
           console.warn("Archive prewarm skipped/failed:", error?.message || error);
         });
 
@@ -9450,7 +9626,9 @@ if (!isServerlessRuntime) {
       const pool = getDbPool();
       if (!pool) return;
       await ensureArchiveColumnsExist(pool);
-      void maybeRunArchiveMaintenance(pool).catch((error) => {
+      void requestArchiveMaintenance(pool, {
+        trigger: "serverless cold start",
+      }).catch((error) => {
         console.warn("Archive prewarm skipped/failed:", error?.message || error);
       });
     })
