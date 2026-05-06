@@ -5,8 +5,10 @@ import StudentStatCard from '../../components/ui/StudentStatCard';
 // GaugeIndicator is now used inside StatCard
 import AnimatedContent from '../../components/ui/AnimatedContent';
 import { getAuditHeaders } from '@/lib/auditHeaders';
-import { cachedFetchJSON } from '@/lib/fetchHelper';
+import { cachedFetchJSON, invalidateFetchCache } from '@/lib/fetchHelper';
 import { BookOpen, CalendarDays, Hash, ShieldCheck, AlertTriangle, ListChecks, Eye } from 'lucide-react';
+
+const STUDENT_PROFILE_REFRESH_INTERVAL_MS = 8000;
 
 function formatStudentName(lastName, firstName, middleInitial, fallbackFullName) {
   const cleanLast = String(lastName || '').trim();
@@ -74,6 +76,39 @@ function readCurrentUser() {
   }
 }
 
+function buildStudentUserSnapshot(student, fallbackUser = {}) {
+  return {
+    ...fallbackUser,
+    schoolId: student?.school_id || fallbackUser.schoolId || '',
+    program: student?.program || fallbackUser.program || '',
+    yearSection: student?.year_section || fallbackUser.yearSection || '',
+    firstName: student?.first_name || fallbackUser.firstName || '',
+    middleInitial: student?.middle_initial || fallbackUser.middleInitial || '',
+    lastName: student?.last_name || fallbackUser.lastName || '',
+    fullName: student?.full_name || fallbackUser.fullName || '',
+    violationCount:
+      Number(student?.violation_count ?? fallbackUser.violationCount ?? 0) || 0,
+    sessionToken: fallbackUser.sessionToken || '',
+  };
+}
+
+function hasStudentIdentityChanged(previousUser = {}, nextUser = {}) {
+  const keysToCompare = [
+    'schoolId',
+    'program',
+    'yearSection',
+    'firstName',
+    'middleInitial',
+    'lastName',
+    'fullName',
+    'violationCount',
+  ];
+
+  return keysToCompare.some(
+    (key) => String(previousUser?.[key] ?? '') !== String(nextUser?.[key] ?? ''),
+  );
+}
+
 const StudentDashboard = () => {
   const [studentProfile, setStudentProfile] = useState(null);
   const [studentViolations, setStudentViolations] = useState([]);
@@ -85,40 +120,48 @@ const StudentDashboard = () => {
       return;
     }
 
+    let isMounted = true;
+
     const loadStudentProfile = async ({ forceRefresh = false } = {}) => {
       try {
-        const result = await cachedFetchJSON(`/api/students/profile/${userId}`, {}, {
+        if (forceRefresh) {
+          invalidateFetchCache(`/api/students/profile/${userId}`);
+        }
+
+        const result = await cachedFetchJSON(`/api/students/profile/${userId}`, {
+          headers: forceRefresh ? { 'Cache-Control': 'no-cache', ...getAuditHeaders() } : { ...getAuditHeaders() },
+        }, {
           ttlMs: 30000,
           staleWhileRevalidate: true,
           forceRefresh,
         });
 
-        if (result.status !== 'ok' || !result?.data?.student) {
+        if (!isMounted || result.status !== 'ok' || !result?.data?.student) {
           return;
         }
 
-        setStudentProfile(result.data.student);
+        const nextProfile = result.data.student;
+        setStudentProfile(nextProfile);
 
-        const nextUser = {
-          ...studentUser,
-          schoolId: result.data.student.school_id || studentUser.schoolId || '',
-          program: result.data.student.program || studentUser.program || '',
-          yearSection: result.data.student.year_section || studentUser.yearSection || '',
-          firstName: result.data.student.first_name || studentUser.firstName || '',
-          middleInitial: result.data.student.middle_initial || studentUser.middleInitial || '',
-          lastName: result.data.student.last_name || studentUser.lastName || '',
-          fullName: result.data.student.full_name || studentUser.fullName || '',
-          sessionToken: studentUser.sessionToken || '',
-        };
+        const latestStoredUser = readCurrentUser();
+        const nextUser = buildStudentUserSnapshot(nextProfile, latestStoredUser);
 
         localStorage.setItem('svms_user', JSON.stringify(nextUser));
         setStudentUser(nextUser);
+
+        if (hasStudentIdentityChanged(latestStoredUser, nextUser)) {
+          window.dispatchEvent(new CustomEvent('svmsUserUpdated', { detail: nextUser }));
+        }
       } catch (_error) {
         // Keep existing local user data if profile fetch fails.
       }
     };
 
     loadStudentProfile();
+    const intervalId = setInterval(() => {
+      loadStudentProfile({ forceRefresh: true });
+    }, STUDENT_PROFILE_REFRESH_INTERVAL_MS);
+
     const handleUserUpdated = (event) => {
       const nextUser = event?.detail && typeof event.detail === 'object'
         ? event.detail
@@ -143,6 +186,8 @@ const StudentDashboard = () => {
     window.addEventListener('storage', handleStorage);
 
     return () => {
+      isMounted = false;
+      clearInterval(intervalId);
       window.removeEventListener('svmsUserUpdated', handleUserUpdated);
       window.removeEventListener('storage', handleStorage);
     };
