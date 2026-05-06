@@ -2075,58 +2075,6 @@ function isPersistedLogoPath(value) {
   );
 }
 
-function isLegacyUploadsLogoPath(value) {
-  return String(value || "")
-    .trim()
-    .startsWith("/uploads/");
-}
-
-async function resolveSystemSettingsLogoPath(pool, settings) {
-  if (!settings?.logo_path) {
-    return {
-      logoPath: null,
-      legacyLogoUnavailable: false,
-    };
-  }
-
-  const tried = decryptImagePath(settings.logo_path);
-  const candidatePath = isPersistedLogoPath(tried)
-    ? tried
-    : isPersistedLogoPath(settings.logo_path)
-      ? settings.logo_path
-      : null;
-
-  if (!candidatePath) {
-    return {
-      logoPath: null,
-      legacyLogoUnavailable: false,
-    };
-  }
-
-  if (candidatePath !== tried && settings.logo_path !== encryptImagePath(candidatePath)) {
-    await pool.query(
-      `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
-      [encryptImagePath(candidatePath), settings.id],
-    );
-  }
-
-  if (isServerlessRuntime && isLegacyUploadsLogoPath(candidatePath)) {
-    await pool.query(
-      `UPDATE "SystemSettings" SET logo_path = NULL WHERE id = $1`,
-      [settings.id],
-    );
-    return {
-      logoPath: null,
-      legacyLogoUnavailable: true,
-    };
-  }
-
-  return {
-    logoPath: candidatePath,
-    legacyLogoUnavailable: false,
-  };
-}
-
 /**
  * Validate password against strong requirements
  * Requirements:
@@ -2337,22 +2285,24 @@ async function purgeExpiredNotifications() {
 
 function buildCredentialEmailTemplate({ firstName, username, password }) {
   return `
-    <div style="background:#0d0d0d;padding:32px;font-family:Segoe UI,Arial,sans-serif;color:#f1f5f9;">
-      <div style="max-width:620px;margin:0 auto;background:linear-gradient(135deg, rgba(42,45,53,0.92), rgba(22,24,30,0.92));border:1px solid rgba(255,255,255,0.12);border-radius:16px;overflow:hidden;">
-        <div style="padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.12);">
-          <h2 style="margin:0;font-size:20px;font-weight:800;letter-spacing:0.04em;color:#ffffff;">Student Violation System</h2>
-          <p style="margin:6px 0 0 0;color:#94a3b8;font-size:13px;">Your student account credentials</p>
+    <div style="background:linear-gradient(180deg,#eaf6fb 0%,#f4f8fc 45%,#f8fafc 100%);padding:36px 18px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
+      <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 12px 36px rgba(2,6,23,0.08);">
+        <div style="padding:22px 26px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);border-bottom:1px solid rgba(255,255,255,0.12);">
+          <p style="margin:0 0 8px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">SVMS Account Created</p>
+          <h2 style="margin:0;color:#f8fafc;font-size:22px;font-weight:800;line-height:1.3;">Your Student Account Credentials</h2>
         </div>
-        <div style="padding:24px;">
-          <p style="margin:0 0 14px 0;color:#e2e8f0;font-size:14px;">Hello ${firstName || "Student"},</p>
-          <p style="margin:0 0 18px 0;color:#cbd5e1;font-size:14px;line-height:1.6;">An account has been created for you in the Student Violation System. Use the credentials below to sign in.</p>
-          <div style="background:rgba(15,17,19,0.85);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">
-            <p style="margin:0 0 8px 0;font-size:13px;color:#94a3b8;">Username</p>
-            <p style="margin:0 0 14px 0;font-size:16px;color:#ffffff;font-weight:700;letter-spacing:0.02em;">${username}</p>
-            <p style="margin:0 0 8px 0;font-size:13px;color:#94a3b8;">Temporary Password</p>
-            <p style="margin:0;font-size:16px;color:#ffffff;font-weight:700;letter-spacing:0.02em;">${password}</p>
+        <div style="padding:24px 26px;background:#ffffff;">
+          <p style="margin:0 0 14px 0;color:#1f2937;font-size:14px;line-height:1.6;">Hello ${escapeHtml(firstName || "Student")},</p>
+          <p style="margin:0 0 20px 0;color:#4b5563;font-size:14px;line-height:1.6;">An account has been created for you in the Student Violation Management System. Use the credentials below to sign in.</p>
+          <div style="background:linear-gradient(180deg,#f0f9ff 0%,#f8fbff 100%);border:1px solid #cfe9ff;border-radius:14px;padding:18px;margin:20px 0;">
+            <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Username</p>
+            <p style="margin:0 0 18px 0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(username)}</p>
+            <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Temporary Password</p>
+            <p style="margin:0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(password)}</p>
           </div>
-          <p style="margin:18px 0 0 0;font-size:12px;color:#94a3b8;line-height:1.5;">For security, please log in and change your password immediately.</p>
+          <div style="margin:20px 0;padding:12px 14px;border-radius:12px;background:#fef3c7;border:1px solid #fde68a;">
+            <p style="margin:0;color:#92400e;font-size:13px;line-height:1.6;font-weight:500;">⚠ For security, please log in and change your password immediately.</p>
+          </div>
         </div>
       </div>
     </div>
@@ -2528,18 +2478,24 @@ async function deactivateGraduatedStudentAccounts() {
         await transporter.sendMail({
           from: process.env.SMTP_FROM || process.env.SMTP_USER,
           to: row.email,
-          subject: "Account Deactivated - Graduation",
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #333;">Account Deactivated</h2>
-              <p>Dear ${row.full_name || "Student"},</p>
-              <p>Your account has been deactivated because your status is "Graduated".</p>
-              <p>You will no longer be able to log in to the system.</p>
-              <p>If you believe this is an error, please contact your administrator.</p>
-              <br>
-              <p>Best regards,<br>Student Violation Management System</p>
-            </div>
-          `,
+          subject: "Account Deactivated - Graduation Status",
+          html: buildSystemEmailShell({
+            eyebrow: "SVMS Security",
+            heading: "Account Deactivated",
+            lead: "Your account status has been updated.",
+            contentHtml: `
+              <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
+                <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#991b1b;">Account Status Changed</p>
+                <p style="margin:0;color:#7f1d1d;font-size:14px;line-height:1.6;">Your status has been updated to "Graduated" and your account has been deactivated. You will no longer be able to log in to the Student Violation Management System.</p>
+              </div>
+              <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
+                <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">
+                  <strong>If you believe this is an error</strong>, please contact your administrator immediately.
+                </p>
+              </div>
+            `,
+            footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+          }),
         });
       } catch (emailError) {
         console.error("Failed to send graduated deactivation email:", emailError);
@@ -2720,8 +2676,7 @@ const upload = multer({
     }
   },
   limits: {
-    // Stay below Vercel's 4.5 MB function payload limit.
-    fileSize: 4 * 1024 * 1024, // 4MB limit
+    fileSize: 5 * 1024 * 1024, // 5MB limit
   },
 });
 
@@ -4109,6 +4064,27 @@ app.put("/api/students/:id", async (req, res) => {
       // The reason will be used for display in Archives page
     }
 
+    let computedUnresolvedArchive = null;
+    if (isArchived === true) {
+      const activeUnresolvedResult = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM student_violation_logs WHERE student_id = $1 AND cleared_at IS NULL`,
+        [id],
+      );
+      const unresolvedArchiveResult = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM student_violation_archives WHERE student_id = $1 AND is_unresolved = TRUE`,
+        [id],
+      );
+
+      const activeUnresolvedCount = Number(
+        activeUnresolvedResult.rows?.[0]?.count || 0,
+      );
+      const unresolvedArchiveCount = Number(
+        unresolvedArchiveResult.rows?.[0]?.count || 0,
+      );
+
+      computedUnresolvedArchive = activeUnresolvedCount + unresolvedArchiveCount > 0;
+    }
+
     // If yearSection is provided, keep year_level in sync based on section prefix
     if (normalizedYearSection) {
       const sectionYearMatch = normalizedYearSection.match(/^(\d+)/);
@@ -4194,7 +4170,9 @@ app.put("/api/students/:id", async (req, res) => {
         isArchived ?? null,
         normalizedArchivedReason || null,
         normalizedOriginalStatus || null,
-        isUnresolvedArchive ?? null,
+        computedUnresolvedArchive !== null
+          ? computedUnresolvedArchive
+          : isUnresolvedArchive ?? null,
       ],
     );
 
@@ -4268,17 +4246,22 @@ app.put("/api/students/:id", async (req, res) => {
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
             to: userEmail,
             subject: "Account Deactivated - Archived",
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #333;">Account Deactivated</h2>
-                <p>Dear ${updatedStudent.full_name || "Student"},</p>
-                <p>Your account has been deactivated because it has been archived with reason: ${normalizedArchivedReason || "Not specified"}.</p>
-                <p>You will no longer be able to log in to the system.</p>
-                <p>If you believe this is an error, please contact your administrator.</p>
-                <br>
-                <p>Best regards,<br>Student Violation Management System</p>
-              </div>
-            `,
+            html: buildSystemEmailShell({
+              eyebrow: "SVMS Security",
+              heading: "Account Deactivated",
+              lead: "Your student record has been archived.",
+              contentHtml: `
+                <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
+                  <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#991b1b;">Record Archived</p>
+                  <p style="margin:0 0 8px 0;color:#7f1d1d;font-size:14px;line-height:1.6;">Your account has been deactivated because your record has been archived.</p>
+                  <p style="margin:0;color:#7f1d1d;font-size:14px;line-height:1.6;"><strong>Reason:</strong> ${escapeHtml(normalizedArchivedReason || "Not specified")}</p>
+                </div>
+                <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
+                  <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">You will no longer be able to log in to the Student Violation Management System. If you believe this is an error, please contact your administrator.</p>
+                </div>
+              `,
+              footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+            }),
           });
         } else if (userEmail) {
           console.warn("SMTP not configured. Archive deactivation email was skipped for:", userEmail);
@@ -5506,6 +5489,40 @@ app.put("/api/student-violations/:id/clear", async (req, res) => {
 
     await refreshStudentViolationCount(pool, updated.student_id);
 
+    // If the student is archived in the unresolved folder and all active and archived unresolved violations are cleared,
+    // move them automatically to the main Archived Users folder.
+    if (updated.student_id) {
+      const studentArchiveStatus = await pool.query(
+        `SELECT is_archived, is_unresolved_archive FROM "Students" WHERE id = $1 LIMIT 1`,
+        [updated.student_id],
+      );
+      const studentArchiveRow = studentArchiveStatus.rows?.[0] || {};
+      if (studentArchiveRow.is_archived && studentArchiveRow.is_unresolved_archive) {
+        const activeUnresolvedCountResult = await pool.query(
+          `SELECT COUNT(*)::int AS count FROM student_violation_logs WHERE student_id = $1 AND cleared_at IS NULL`,
+          [updated.student_id],
+        );
+        const unresolvedArchiveCountResult = await pool.query(
+          `SELECT COUNT(*)::int AS count FROM student_violation_archives WHERE student_id = $1 AND is_unresolved = TRUE`,
+          [updated.student_id],
+        );
+
+        const activeUnresolvedCount = Number(
+          activeUnresolvedCountResult.rows?.[0]?.count || 0,
+        );
+        const unresolvedArchiveCount = Number(
+          unresolvedArchiveCountResult.rows?.[0]?.count || 0,
+        );
+
+        if (activeUnresolvedCount === 0 && unresolvedArchiveCount === 0) {
+          await pool.query(
+            `UPDATE "Students" SET is_unresolved_archive = FALSE WHERE id = $1`,
+            [updated.student_id],
+          );
+        }
+      }
+    }
+
     // Note: For Student Violation tab clear action, do NOT auto-promote immediately.
     // Promotion is handled during archive flow to ensure student records first land in the
     // correct school year/semester archive view and keep section/year before promotion.
@@ -5701,8 +5718,25 @@ app.get("/api/settings", async (req, res) => {
     }
 
     const settings = result.rows[0];
-    const { logoPath: decryptedLogoPath, legacyLogoUnavailable } =
-      await resolveSystemSettingsLogoPath(pool, settings);
+    let decryptedLogoPath = null;
+    if (settings.logo_path) {
+      // Try to decrypt legacy encrypted values and accept modern persisted URL/data formats.
+      const tried = decryptImagePath(settings.logo_path);
+      if (isPersistedLogoPath(tried)) {
+        decryptedLogoPath = tried;
+        const shouldReencrypt = settings.logo_path !== encryptImagePath(tried);
+        if (shouldReencrypt) {
+          await pool.query(
+            `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+            [encryptImagePath(tried), settings.id],
+          );
+        }
+      } else if (isPersistedLogoPath(settings.logo_path)) {
+        decryptedLogoPath = settings.logo_path;
+      } else {
+        decryptedLogoPath = null;
+      }
+    }
 
     return res.status(200).json({
       status: "ok",
@@ -5716,9 +5750,6 @@ app.get("/api/settings", async (req, res) => {
         themeColor: settings.theme_color || "#000000",
         updatedAt: settings.updated_at,
       },
-      message: legacyLogoUnavailable
-        ? "Stored logo used a legacy /uploads path that is unavailable on Vercel. Re-upload the logo to restore it."
-        : undefined,
     });
   } catch (error) {
     return res.status(503).json({
@@ -5763,8 +5794,24 @@ app.post("/api/settings", async (req, res) => {
     }
 
     const settings = result.rows[0];
-    const { logoPath: decryptedLogoPath, legacyLogoUnavailable } =
-      await resolveSystemSettingsLogoPath(pool, settings);
+    let decryptedLogoPath = null;
+    if (settings.logo_path) {
+      const tried = decryptImagePath(settings.logo_path);
+      if (isPersistedLogoPath(tried)) {
+        decryptedLogoPath = tried;
+        const shouldReencrypt = settings.logo_path !== encryptImagePath(tried);
+        if (shouldReencrypt) {
+          await pool.query(
+            `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+            [encryptImagePath(tried), settings.id],
+          );
+        }
+      } else if (isPersistedLogoPath(settings.logo_path)) {
+        decryptedLogoPath = settings.logo_path;
+      } else {
+        decryptedLogoPath = null;
+      }
+    }
 
     await logAuditEvent(req, {
       action: "UPDATE_SYSTEM_SETTINGS",
@@ -5789,9 +5836,6 @@ app.post("/api/settings", async (req, res) => {
         themeColor: settings.theme_color,
         updatedAt: settings.updated_at,
       },
-      message: legacyLogoUnavailable
-        ? "Stored logo used a legacy /uploads path that is unavailable on Vercel. Re-upload the logo to restore it."
-        : undefined,
     });
   } catch (error) {
     return res.status(503).json({
@@ -7899,11 +7943,17 @@ app.get("/api/archive/users", async (req, res) => {
     await ensureArchiveColumnsExist(pool);
 
     const result = await pool.query(
-      `SELECT id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, 
-              program, year_section, status, violation_count, is_archived, archived_at, archived_reason, original_status, is_unresolved_archive
-       FROM "Students"
-       WHERE is_archived = true
-       ORDER BY archived_at DESC NULLS LAST`,
+      `SELECT 
+        s.id, s.user_id, s.email, s.school_id, s.full_name, s.first_name, s.middle_initial, s.last_name, 
+        s.program, s.year_section, s.status, s.is_archived, s.archived_at, s.archived_reason, s.original_status, s.is_unresolved_archive,
+        COALESCE(
+          (SELECT COUNT(*) FROM student_violation_logs WHERE student_id = s.id) +
+          (SELECT COUNT(*) FROM student_violation_archives WHERE student_id = s.id),
+          0
+        )::int AS violation_count
+       FROM "Students" s
+       WHERE s.is_archived = true
+       ORDER BY s.archived_at DESC NULLS LAST`,
     );
 
     return res.status(200).json({
@@ -8469,10 +8519,10 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
-    // Get the archived student to get user_id, name, and original status
+    // Get the student row to get user_id, name, and original status
     const studentResult = await pool.query(
-      `SELECT id, user_id, full_name, original_status, status FROM "Students"
-       WHERE id = $1 AND is_archived = true
+      `SELECT id, user_id, full_name, original_status, status, is_archived FROM "Students"
+       WHERE id = $1
        LIMIT 1`,
       [id],
     );
@@ -8484,9 +8534,40 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
       });
     }
 
-    const { user_id, full_name, original_status, status: currentStatus } = studentResult.rows[0];
+    const {
+      user_id,
+      full_name,
+      original_status,
+      status: currentStatus,
+      is_archived,
+    } = studentResult.rows[0];
+
+    if (!is_archived) {
+      return res.status(200).json({
+        status: "ok",
+        message: `User ${full_name} is already restored.`,
+      });
+    }
+
     const restoredStatus = String(original_status || currentStatus || "").trim();
     const shouldActivate = restoredStatus.toLowerCase() !== "graduated";
+
+    // Count active unresolved violations that belong to this restored student
+    const activeUnresolvedResult = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM student_violation_logs WHERE student_id = $1 AND cleared_at IS NULL`,
+      [id],
+    );
+    const activeUnresolvedCount = Number(activeUnresolvedResult.rows?.[0]?.count || 0);
+
+    // Count archived unresolved violations
+    const archiveUnresolvedResult = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM student_violation_archives WHERE student_id = $1 AND is_unresolved = TRUE`,
+      [id],
+    );
+    const archiveUnresolvedCount = Number(archiveUnresolvedResult.rows?.[0]?.count || 0);
+
+    // Total unresolved violations to preserve the violation count
+    const totalUnresolved = activeUnresolvedCount + archiveUnresolvedCount;
 
     // Mark student as not archived and restore original status if it exists
     await pool.query(
@@ -8496,9 +8577,10 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
            archived_reason = NULL,
            is_unresolved_archive = false,
            original_status = NULL,
+           violation_count = CASE WHEN $3::int > 0 THEN $3::int ELSE violation_count END,
            status = COALESCE(NULLIF($2, ''), status)
        WHERE id = $1`,
-      [id, original_status || null],
+      [id, original_status || null, totalUnresolved],
     );
 
     // Reactivate user account only if restored status is not Graduated
@@ -8525,16 +8607,21 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
             to: userEmail,
             subject: "Account Restored",
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #333;">Account Restored</h2>
-                <p>Dear ${full_name || "Student"},</p>
-                <p>Your account has been restored and you can now log in to the system again.</p>
-                <p>If you have any questions, please contact your administrator.</p>
-                <br>
-                <p>Best regards,<br>Student Violation Management System</p>
-              </div>
-            `,
+            html: buildSystemEmailShell({
+              eyebrow: "SVMS Security",
+              heading: "Account Restored",
+              lead: "Your account is now active and ready to use.",
+              contentHtml: `
+                <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#f0fdf4;border:1px solid #86efac;">
+                  <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#166534;">Account Status Changed</p>
+                  <p style="margin:0;color:#15803d;font-size:14px;line-height:1.6;">Your archive has been removed and your account has been reactivated. You can now log in to the Student Violation Management System with your credentials.</p>
+                </div>
+                <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
+                  <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">If you have any questions or need assistance, please contact your administrator.</p>
+                </div>
+              `,
+              footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+            }),
           });
         } else {
           console.warn("SMTP not configured. Restoration email was skipped for:", userEmail);
@@ -8589,11 +8676,27 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
 
     // Restore all archived students
     for (const student of students) {
+      // Count active unresolved violations for this student
+      const activeUnresolvedResult = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM student_violation_logs WHERE student_id = $1 AND cleared_at IS NULL`,
+        [student.id],
+      );
+      const activeUnresolvedCount = Number(activeUnresolvedResult.rows?.[0]?.count || 0);
+
+      // Count archived unresolved violations
+      const archiveUnresolvedResult = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM student_violation_archives WHERE student_id = $1 AND is_unresolved = TRUE`,
+        [student.id],
+      );
+      const archiveUnresolvedCount = Number(archiveUnresolvedResult.rows?.[0]?.count || 0);
+      const totalUnresolved = activeUnresolvedCount + archiveUnresolvedCount;
+
       await pool.query(
         `UPDATE "Students"
-         SET is_archived = false, archived_at = NULL, archived_reason = NULL, is_unresolved_archive = false, original_status = NULL
+         SET is_archived = false, archived_at = NULL, archived_reason = NULL, is_unresolved_archive = false, original_status = NULL,
+             violation_count = CASE WHEN $2::int > 0 THEN $2::int ELSE violation_count END
          WHERE id = $1`,
-        [student.id],
+        [student.id, totalUnresolved],
       );
 
       const shouldActivate = String(student.status || "").trim().toLowerCase() !== "graduated";
@@ -8620,16 +8723,21 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
               from: process.env.SMTP_FROM || process.env.SMTP_USER,
               to: userEmail,
               subject: "Account Restored",
-              html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                  <h2 style="color: #333;">Account Restored</h2>
-                  <p>Dear ${student.full_name || "Student"},</p>
-                  <p>Your account has been restored and you can now log in to the system again.</p>
-                  <p>If you have any questions, please contact your administrator.</p>
-                  <br>
-                  <p>Best regards,<br>Student Violation Management System</p>
-                </div>
-              `,
+              html: buildSystemEmailShell({
+                eyebrow: "SVMS Security",
+                heading: "Account Restored",
+                lead: "Your account is now active and ready to use.",
+                contentHtml: `
+                  <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#f0fdf4;border:1px solid #86efac;">
+                    <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#166534;">Account Status Changed</p>
+                    <p style="margin:0;color:#15803d;font-size:14px;line-height:1.6;">Your archive has been removed and your account has been reactivated. You can now log in to the Student Violation Management System with your credentials.</p>
+                  </div>
+                  <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
+                    <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;\">If you have any questions or need assistance, please contact your administrator.</p>
+                  </div>
+                `,
+                footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+              }),
             });
           } else {
             console.warn("SMTP not configured. Restoration email was skipped for:", userEmail);

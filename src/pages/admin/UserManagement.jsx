@@ -807,14 +807,19 @@ const UserManagement = () => {
         }
       }
 
-      // Clear selection and refresh data
+      // Clear selection and immediately remove archived users from state
       setSelectedUserIds(new Set());
       setShowArchiveConfirmationModal(false);
       setArchiveReasonType("");
       setCustomArchiveReason("");
       setArchiveDeactivateAccount(false);
 
-      // Refresh data
+      // Remove archived users from display immediately
+      setStudentData((prevData) =>
+        prevData.filter((student) => !selectedUserIds.has(student.id)),
+      );
+
+      // Then refresh data from server
       await fetchStudents();
 
       showArchiveAlert(

@@ -340,6 +340,14 @@ const StudentViolation = () => {
         throw new Error(result?.message || "Unable to clear record.");
       }
       mergeRecord(result.record);
+      window.localStorage.setItem("archiveRefresh", Date.now().toString());
+      window.dispatchEvent(
+        new CustomEvent("archiveCompleted", {
+          detail: {
+            source: "studentViolation",
+          },
+        }),
+      );
       setClearSuccessModal({
         isOpen: true,
         message: `The violation for ${row.full_name || "this student"} has been marked as cleared.`,

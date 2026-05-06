@@ -374,6 +374,7 @@ const Archives = () => {
   const [editType, setEditType] = useState("user"); // "user" or "violation"
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
   const [userToRestore, setUserToRestore] = useState(null);
+  const [isRestoreLoading, setIsRestoreLoading] = useState(false);
   const [archiveSuccessMessage, setArchiveSuccessMessage] = useState("");
 
   // Delete archived violation modal states
@@ -832,9 +833,10 @@ const Archives = () => {
   };
 
   const handleRestoreConfirm = async () => {
-    if (!userToRestore) return;
+    if (!userToRestore || isRestoreLoading) return;
 
     try {
+      setIsRestoreLoading(true);
       const response = await fetch(`/api/archive/users/${userToRestore.id}/restore`, {
         method: "PUT",
         headers: {
@@ -843,20 +845,19 @@ const Archives = () => {
         },
       });
 
-      if (response.ok) {
-        await response.json();
-        // Remove the user from archived list
+      const data = await response.json();
+      if (response.ok && data.status === "ok") {
         setArchivedUsers((prev) => prev.filter((u) => u.id !== userToRestore.id));
         setIsRestoreModalOpen(false);
         setUserToRestore(null);
-        // Show success message
         setError("");
       } else {
-        const data = await response.json();
         setError(data.message || "Failed to restore user");
       }
     } catch (err) {
       setError("Error restoring user: " + err.message);
+    } finally {
+      setIsRestoreLoading(false);
     }
   };
 
@@ -1371,7 +1372,7 @@ const Archives = () => {
 
       return dedupeArchiveRows(allData);
     }
-  }, [activeFolder, archivedUsers, archivedViolations, allArchivedViolations, isGlobalSearch]);
+  }, [activeFolder, archivedUsers, archivedViolations, allArchivedViolations, isGlobalSearch, selectedUnresolvedYear]);
 
   // Filter function
   const filteredData = useMemo(() => {
@@ -1738,7 +1739,7 @@ const Archives = () => {
       ];
     } else {
       // Regular folder view columns
-      if (activeFolder === "users") {
+      if (activeFolder === "users" || (activeFolder === "unresolved" && selectedUnresolvedYear === "users")) {
         return [
           {
             key: "no",
@@ -2017,7 +2018,7 @@ const Archives = () => {
         },
       ];
     }
-  }, [activeFolder, isGlobalSearch, searchQuery]);
+  }, [activeFolder, isGlobalSearch, searchQuery, selectedUnresolvedYear]);
 
   const tableTitle = isGlobalSearch
     ? searchQuery
@@ -2026,9 +2027,11 @@ const Archives = () => {
     : activeFolder === "users"
     ? "Archived Users"
     : activeFolder === "unresolved"
-    ? selectedUnresolvedYear
-      ? `Unresolved Student Records - S.Y. ${selectedUnresolvedYear} (${activeSemester})`
-      : "Unresolved Student Records - Select a Year"
+    ? selectedUnresolvedYear === "users"
+      ? "Archived Users [Unresolved]"
+      : selectedUnresolvedYear
+        ? `Unresolved Student Records - S.Y. ${selectedUnresolvedYear}`
+        : "Unresolved Student Records - Select a Year"
     : `Archived Student Records - S.Y. ${activeFolder} (${activeSemester})`;
 
   const handleClearUnresolved = async (row) => {
@@ -3018,12 +3021,6 @@ const Archives = () => {
               Back to Year Selection
             </Button>
           </div>
-          <TableTabs
-            tabs={semesterTabs}
-            activeTab={activeSemester}
-            onTabChange={setActiveSemester}
-            className="mb-4"
-          />
         </AnimatedContent>
       )}
 
@@ -3238,7 +3235,9 @@ const Archives = () => {
                 : activeFolder === "users"
                 ? "No archived users found"
                 : activeFolder === "unresolved"
-                ? "No unresolved records found for this semester."
+                ? selectedUnresolvedYear === "users"
+                  ? "No unresolved archived users found."
+                  : "No unresolved records found for this semester."
                 : "No records found for this semester."}
             </div>
           ) : (
@@ -3486,9 +3485,10 @@ const Archives = () => {
               </Button>
               <Button
                 onClick={handleRestoreConfirm}
+                disabled={isRestoreLoading}
                 className="bg-green-700 hover:bg-green-800 border-0 text-white"
               >
-                Restore User
+                {isRestoreLoading ? "Restoring..." : "Restore User"}
               </Button>
             </ModalFooter>
           </div>
