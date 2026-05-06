@@ -238,6 +238,11 @@ const StudentViolation = () => {
         return;
       }
 
+      // Keep original history counts so we can run a local forecast and show ranges
+      const remoteHistoryCounts = Array.isArray(data?.studentAnalytics?.historyCounts)
+        ? data.studentAnalytics.historyCounts.map((v) => Number(v) || 0)
+        : null;
+
       setAnalyticsData({
         cards: {
           activeViolations: {
@@ -257,16 +262,18 @@ const StudentViolation = () => {
           },
         },
         studentAnalytics: {
+          // graphData remains a visual normalization used by the chart
           graphData:
-            Array.isArray(data?.studentAnalytics?.historyCounts) &&
-            data?.studentAnalytics?.predictedNextTerm
+            remoteHistoryCounts && data?.studentAnalytics?.predictedNextTerm
               ? [
-                  ...data.studentAnalytics.historyCounts.map((value) => Number(value) || 0),
+                  ...remoteHistoryCounts,
                   Number(data.studentAnalytics.predictedNextTerm.predictedViolations) || 0,
                 ]
               : Array.isArray(data?.studentAnalytics?.graphData)
                 ? data.studentAnalytics.graphData
                 : [0, 0, 0, 0],
+          // Store raw history counts for client-side re-calculation
+          historyCounts: remoteHistoryCounts,
           predictedNextTerm: data?.studentAnalytics?.predictedNextTerm || null,
           predictedChangePercent:
             Number(data?.studentAnalytics?.predictedChangePercent) || 0,
@@ -275,6 +282,64 @@ const StudentViolation = () => {
     } catch {
       // Keep existing fallback values if analytics loading fails.
     }
+  };
+
+  // ---------------------- Client-side forecast helpers ----------------------
+  // Ported simple forecasting logic so the UI can compute a fallback and a
+  // conservative range (lower/upper) to show possible violation counts.
+  const calculateLinearRegressionNextY = (points) => {
+    if (!Array.isArray(points) || points.length === 0) return 0;
+    if (points.length === 1) return points[0].y || 0;
+    const n = points.length;
+    let sumX = 0;
+    let sumY = 0;
+    let sumXY = 0;
+    let sumXX = 0;
+    points.forEach((p) => {
+      sumX += p.x;
+      sumY += p.y;
+      sumXY += p.x * p.y;
+      sumXX += p.x * p.x;
+    });
+    const denom = n * sumXX - sumX * sumX;
+    if (denom === 0) return points[points.length - 1].y || 0;
+    const slope = (n * sumXY - sumX * sumY) / denom;
+    const intercept = (sumY - slope * sumX) / n;
+    const nextX = points.length;
+    return slope * nextX + intercept;
+  };
+
+  const calculateClientForecast = (historyCounts = []) => {
+    if (!Array.isArray(historyCounts) || historyCounts.length === 0) return {pred:0, low:0, high:0};
+    const values = historyCounts.map((v) => Number(v) || 0);
+    const lastValue = values[values.length - 1] || 0;
+
+    const regressionPoints = values.map((v, i) => ({ x: i, y: v }));
+    const regressionPrediction = Math.max(0, calculateLinearRegressionNextY(regressionPoints));
+
+    const recentSlice = values.slice(-3);
+    const recentWeights = [0.2, 0.3, 0.5].slice(3 - recentSlice.length);
+    const recentWeightTotal = recentWeights.reduce((s, w) => s + w, 0) || 1;
+    const recentPrediction = recentSlice.reduce((s, val, idx) => s + val * recentWeights[idx], 0) / recentWeightTotal;
+
+    const allMean = values.reduce((s, v) => s + v, 0) / values.length;
+
+    // weights tuned to prefer recent data but include trend
+    let regressionWeight = values.length >= 6 ? 0.5 : values.length >= 3 ? 0.35 : 0.2;
+    let recentWeight = values.length >= 6 ? 0.35 : values.length >= 3 ? 0.5 : 0.7;
+    const totalW = regressionWeight + recentWeight;
+    regressionWeight /= totalW; recentWeight /= totalW;
+
+    let forecast = regressionPrediction * regressionWeight + recentPrediction * recentWeight;
+    if (!Number.isFinite(forecast) || forecast < 0) forecast = allMean;
+
+    // Conservative bounds using variability
+    const maxRecent = recentSlice.length ? Math.max(...recentSlice) : lastValue;
+    const std = Math.sqrt(values.reduce((s, v) => s + Math.pow(v - allMean, 2), 0) / values.length) || 0;
+    const upper = Math.round(Math.max(forecast, maxRecent, lastValue) + Math.max(2, std * 1.5));
+    const lower = Math.round(Math.max(0, Math.min(lastValue, Math.floor(forecast * 0.4))));
+
+    return { pred: Math.max(0, Math.round(forecast)), low: Math.max(0, lower), high: Math.max(upper, Math.round(forecast)) };
   };
 
   const fetchStudentViolations = async ({ silent = false, forceRefresh = false } = {}) => {
@@ -1600,14 +1665,27 @@ const StudentViolation = () => {
                     </span>
                   </div>
                   <div className="mt-4 flex items-end justify-between gap-3">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-2xl font-semibold tracking-tight text-white">
-                        {analyticsData.studentAnalytics.predictedNextTerm?.predictedViolations ?? 0}
-                      </span>
-                      <span className="text-xs uppercase tracking-[0.16em] text-emerald-100/65">
-                        violations
-                      </span>
-                    </div>
+                    {(() => {
+                      const history = analyticsData.studentAnalytics.historyCounts || null;
+                      const serverPred = analyticsData.studentAnalytics.predictedNextTerm?.predictedViolations ?? null;
+                      const client = history ? calculateClientForecast(history) : null;
+                      const displayPred = client ? client.pred : (serverPred ?? 0);
+                      return (
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-2xl font-semibold tracking-tight text-white">
+                            {displayPred}
+                          </span>
+                          <span className="text-xs uppercase tracking-[0.16em] text-emerald-100/65">
+                            violations
+                          </span>
+                          {client ? (
+                            <span className="ml-2 text-[11px] text-emerald-100/60">({client.low}–{client.high})</span>
+                          ) : serverPred != null ? (
+                            <span className="ml-2 text-[11px] text-emerald-100/60">(model {serverPred})</span>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                     {analyticsData.studentAnalytics.predictedNextTerm?.label ? (
                       <span className="max-w-[55%] text-right text-[11px] font-medium text-emerald-50/70 break-words">
                         {analyticsData.studentAnalytics.predictedNextTerm.label}
@@ -1938,14 +2016,27 @@ const StudentViolation = () => {
               </span>
             </div>
             <div className="mt-4 flex items-end justify-between gap-4">
-              <div>
-                <p className="text-3xl font-semibold tracking-tight text-white">
-                  {analyticsData.studentAnalytics.predictedNextTerm?.predictedViolations ?? 0}
-                </p>
-                <p className="mt-1 text-xs uppercase tracking-[0.16em] text-emerald-100/65">
-                  expected violations
-                </p>
-              </div>
+              {(() => {
+                const history = analyticsData.studentAnalytics.historyCounts || null;
+                const serverPred = analyticsData.studentAnalytics.predictedNextTerm?.predictedViolations ?? null;
+                const client = history ? calculateClientForecast(history) : null;
+                const displayPred = client ? client.pred : (serverPred ?? 0);
+                return (
+                  <div>
+                    <p className="text-3xl font-semibold tracking-tight text-white">
+                      {displayPred}
+                    </p>
+                    <p className="mt-1 text-xs uppercase tracking-[0.16em] text-emerald-100/65">
+                      expected violations
+                    </p>
+                    {client ? (
+                      <p className="mt-1 text-xs text-emerald-100/60">Estimated range: {client.low}–{client.high}</p>
+                    ) : serverPred != null ? (
+                      <p className="mt-1 text-xs text-emerald-100/60">Model prediction: {serverPred}</p>
+                    ) : null}
+                  </div>
+                );
+              })()}
               <p className="max-w-[52%] text-right text-xs text-emerald-50/70 whitespace-normal break-words">
                 {analyticsData.studentAnalytics.predictedNextTerm?.label || "No term label available"}
               </p>
