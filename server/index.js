@@ -2075,6 +2075,58 @@ function isPersistedLogoPath(value) {
   );
 }
 
+function isLegacyUploadsLogoPath(value) {
+  return String(value || "")
+    .trim()
+    .startsWith("/uploads/");
+}
+
+async function resolveSystemSettingsLogoPath(pool, settings) {
+  if (!settings?.logo_path) {
+    return {
+      logoPath: null,
+      legacyLogoUnavailable: false,
+    };
+  }
+
+  const tried = decryptImagePath(settings.logo_path);
+  const candidatePath = isPersistedLogoPath(tried)
+    ? tried
+    : isPersistedLogoPath(settings.logo_path)
+      ? settings.logo_path
+      : null;
+
+  if (!candidatePath) {
+    return {
+      logoPath: null,
+      legacyLogoUnavailable: false,
+    };
+  }
+
+  if (candidatePath !== tried && settings.logo_path !== encryptImagePath(candidatePath)) {
+    await pool.query(
+      `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+      [encryptImagePath(candidatePath), settings.id],
+    );
+  }
+
+  if (isServerlessRuntime && isLegacyUploadsLogoPath(candidatePath)) {
+    await pool.query(
+      `UPDATE "SystemSettings" SET logo_path = NULL WHERE id = $1`,
+      [settings.id],
+    );
+    return {
+      logoPath: null,
+      legacyLogoUnavailable: true,
+    };
+  }
+
+  return {
+    logoPath: candidatePath,
+    legacyLogoUnavailable: false,
+  };
+}
+
 /**
  * Validate password against strong requirements
  * Requirements:
@@ -2668,7 +2720,8 @@ const upload = multer({
     }
   },
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    // Stay below Vercel's 4.5 MB function payload limit.
+    fileSize: 4 * 1024 * 1024, // 4MB limit
   },
 });
 
@@ -5648,25 +5701,8 @@ app.get("/api/settings", async (req, res) => {
     }
 
     const settings = result.rows[0];
-    let decryptedLogoPath = null;
-    if (settings.logo_path) {
-      // Try to decrypt legacy encrypted values and accept modern persisted URL/data formats.
-      const tried = decryptImagePath(settings.logo_path);
-      if (isPersistedLogoPath(tried)) {
-        decryptedLogoPath = tried;
-        const shouldReencrypt = settings.logo_path !== encryptImagePath(tried);
-        if (shouldReencrypt) {
-          await pool.query(
-            `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
-            [encryptImagePath(tried), settings.id],
-          );
-        }
-      } else if (isPersistedLogoPath(settings.logo_path)) {
-        decryptedLogoPath = settings.logo_path;
-      } else {
-        decryptedLogoPath = null;
-      }
-    }
+    const { logoPath: decryptedLogoPath, legacyLogoUnavailable } =
+      await resolveSystemSettingsLogoPath(pool, settings);
 
     return res.status(200).json({
       status: "ok",
@@ -5680,6 +5716,9 @@ app.get("/api/settings", async (req, res) => {
         themeColor: settings.theme_color || "#000000",
         updatedAt: settings.updated_at,
       },
+      message: legacyLogoUnavailable
+        ? "Stored logo used a legacy /uploads path that is unavailable on Vercel. Re-upload the logo to restore it."
+        : undefined,
     });
   } catch (error) {
     return res.status(503).json({
@@ -5724,24 +5763,8 @@ app.post("/api/settings", async (req, res) => {
     }
 
     const settings = result.rows[0];
-    let decryptedLogoPath = null;
-    if (settings.logo_path) {
-      const tried = decryptImagePath(settings.logo_path);
-      if (isPersistedLogoPath(tried)) {
-        decryptedLogoPath = tried;
-        const shouldReencrypt = settings.logo_path !== encryptImagePath(tried);
-        if (shouldReencrypt) {
-          await pool.query(
-            `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
-            [encryptImagePath(tried), settings.id],
-          );
-        }
-      } else if (isPersistedLogoPath(settings.logo_path)) {
-        decryptedLogoPath = settings.logo_path;
-      } else {
-        decryptedLogoPath = null;
-      }
-    }
+    const { logoPath: decryptedLogoPath, legacyLogoUnavailable } =
+      await resolveSystemSettingsLogoPath(pool, settings);
 
     await logAuditEvent(req, {
       action: "UPDATE_SYSTEM_SETTINGS",
@@ -5766,6 +5789,9 @@ app.post("/api/settings", async (req, res) => {
         themeColor: settings.theme_color,
         updatedAt: settings.updated_at,
       },
+      message: legacyLogoUnavailable
+        ? "Stored logo used a legacy /uploads path that is unavailable on Vercel. Re-upload the logo to restore it."
+        : undefined,
     });
   } catch (error) {
     return res.status(503).json({
