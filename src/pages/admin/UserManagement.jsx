@@ -171,7 +171,7 @@ const UserManagement = () => {
     });
   }, []);
 
-  const fetchStudents = async () => {
+  const fetchStudents = async (forceRefresh = false) => {
     setIsLoading(true);
 
     const degreeRank = {
@@ -186,7 +186,11 @@ const UserManagement = () => {
 
     try {
       const results = await fetchMultiple([
-        { url: "/api/students", key: "students" },
+        {
+          url: "/api/students",
+          key: "students",
+          cacheOptions: { forceRefresh },
+        },
         { url: "/api/student-violations", key: "violations" },
       ]);
 
@@ -684,8 +688,9 @@ const UserManagement = () => {
       setNewSchoolYear("");
       setShowArchiveSchoolYearModal(false);
 
-      // Refresh data
-      await fetchStudents();
+      invalidateFetchCache("/api/students");
+      // Refresh data with forced cache refresh so the UI sees updated archive state immediately.
+      await fetchStudents(true);
       showArchiveAlert(
         "success",
         "School Year Archived",
@@ -819,8 +824,9 @@ const UserManagement = () => {
         prevData.filter((student) => !selectedUserIds.has(student.id)),
       );
 
-      // Then refresh data from server
-      await fetchStudents();
+      invalidateFetchCache("/api/students");
+      // Then refresh data from server with a forced cache refresh to avoid stale student rows.
+      await fetchStudents(true);
 
       showArchiveAlert(
         "success",
