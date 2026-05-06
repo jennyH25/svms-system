@@ -3,9 +3,26 @@ import { NavLink } from "react-router-dom";
 import logo from "../../assets/css_logo.png";
 import { useSettings } from "../../context/SettingsContext";
 import { getAuditHeaders } from '@/lib/auditHeaders';
+import { cachedFetchJSON } from '@/lib/fetchHelper';
 
 const StudentSidebar = ({ onRequestLogout }) => {
   const { settings } = useSettings();
+  const prefetchStudentViolations = () => {
+    void Promise.allSettled([
+      cachedFetchJSON('/api/student-violations/me', {
+        headers: { ...getAuditHeaders() },
+      }, {
+        ttlMs: 15000,
+        staleWhileRevalidate: true,
+      }),
+      cachedFetchJSON('/api/notifications', {
+        headers: { ...getAuditHeaders() },
+      }, {
+        ttlMs: 10000,
+        staleWhileRevalidate: true,
+      }),
+    ]);
+  };
   
   // Parse the display name to show first two words in bold
   const displayName = settings?.displayName || "Student Violation Management System";
@@ -118,6 +135,8 @@ const StudentSidebar = ({ onRequestLogout }) => {
               <NavLink
                 to={item.path}
                 {...(item.path === "/student" ? { end: true } : {})}
+                onMouseEnter={item.path === "/student/violations" ? prefetchStudentViolations : undefined}
+                onFocus={item.path === "/student/violations" ? prefetchStudentViolations : undefined}
                 className={({ isActive }) =>
                   `flex items-center gap-3 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${
                     isActive

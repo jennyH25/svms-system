@@ -1528,6 +1528,16 @@ export async function syncStudentViolationLogsDatabase() {
   `);
 
   await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS student_violation_logs_admin_sort_idx
+    ON student_violation_logs (cleared_at ASC NULLS FIRST, created_at DESC, id DESC)
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS student_violation_logs_student_recent_idx
+    ON student_violation_logs (student_id, created_at DESC, id DESC)
+  `);
+
+  await dbPool.query(`
     CREATE OR REPLACE FUNCTION set_student_violation_logs_updated_at()
     RETURNS TRIGGER AS $$
     BEGIN

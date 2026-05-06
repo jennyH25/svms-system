@@ -612,29 +612,6 @@ function buildWorkbookImportKey(record) {
   return [personKey, labelKey, semester, schoolYear, dateKey].join("|");
 }
 
-function buildWorkbookImportKeyVariants(record, studentId = null) {
-  const personKey = normalizeWorkbookPersonKey(record.studentName || record.student_name);
-  const labelKey = normalizeWorkbookComparisonText(
-    record.violationLabel || record.violation_label,
-  );
-  const semester = normalizeSemester(record.semester);
-  const schoolYear = normalizeSchoolYear(record.schoolYear || record.school_year);
-  const dateKey = formatWorkbookComparisonDate(
-    record.date || record.original_created_at || record.archived_at,
-  );
-  const keys = [];
-
-  if (studentId != null && studentId !== "") {
-    keys.push(`student:${studentId}|${labelKey}|${semester}|${schoolYear}|${dateKey}`);
-  }
-
-  if (personKey) {
-    keys.push(`name:${personKey}|${labelKey}|${semester}|${schoolYear}|${dateKey}`);
-  }
-
-  return keys;
-}
-
 async function resolveWorkbookStudentId(pool, studentName) {
   const normalizedStudentName = normalizeWorkbookText(studentName);
   if (!normalizedStudentName) {
@@ -941,38 +918,6 @@ function parseWorkbookTypeLabel(value) {
   };
 }
 
-function mapWorkbookRecordToArchiveRow(record, index) {
-  const archivedAt = toArchiveTimestamp(record.date);
-  const { category, degree, label } = parseWorkbookTypeLabel(record.typeLabel);
-
-  return {
-    id: `wb-${record.schoolYear}-${record.semester}-${index}`,
-    student_id: null,
-    violation_catalog_id: null,
-    violation_label: record.violationLabel || "",
-    reported_by: "",
-    remarks: "IMPORTED",
-    signature_image: "",
-    signature_updated_at: null,
-    semester: record.semester,
-    school_year: record.schoolYear,
-    archived_at: archivedAt,
-    archived_by_name: "Historical Import",
-    original_created_at: archivedAt,
-    original_updated_at: archivedAt,
-    student_name: record.studentName || "",
-    school_id: record.schoolId || "",
-    program: record.program || "",
-    year_section: record.yearSection || "",
-    violation_category: category,
-    violation_degree: degree,
-    violation_name: record.violationLabel || "",
-    violation_type_label: label,
-    isHistoricalWorkbook: true,
-    sourceType: "workbook",
-  };
-}
-
 async function loadHistoricalViolationRecordsFromWorkbook() {
   try {
     await access(HISTORICAL_VIOLATION_RECORDS_PATH);
@@ -1092,33 +1037,216 @@ async function loadHistoricalViolationRecordsFromWorkbook() {
   }
 }
 
-async function getImportedWorkbookRecordKeys(pool, schoolYear, semester) {
-  const result = await pool.query(
-    `SELECT
-       sva.student_id,
-       sva.violation_label,
-       sva.reported_by,
-       sva.semester,
-       sva.school_year,
-       sva.original_created_at,
-       sva.archived_at,
-       sva.source_import_key,
-       s.full_name AS student_name
-     FROM student_violation_archives sva
-     LEFT JOIN "Students" s ON sva.student_id = s.id
-     WHERE sva.remarks = 'IMPORTED'
-       AND sva.school_year = $1
-       AND sva.semester = $2`,
-    [normalizeSchoolYear(schoolYear), normalizeSemester(semester)],
+async function getWorkbookRecordByWorkbookId(workbookId) {
+  if (typeof workbookId !== "string" || !workbookId.startsWith("wb-")) {
+    return null;
+  }
+
+  const chunks = workbookId.split("-");
+  if (chunks.length < 5) {
+    return null;
+  }
+
+  const indexString = chunks.pop();
+  const index = Number(indexString);
+  if (!Number.isFinite(index) || index < 0) {
+    return null;
+  }
+
+  const schoolYear = `${chunks[1]}-${chunks[2]}`;
+  const semester = chunks.slice(3).join("-");
+  const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+  const filteredRecords = workbookRecords.filter(
+    (record) =>
+      normalizeSchoolYear(record.schoolYear) === normalizeSchoolYear(schoolYear) &&
+      normalizeSemester(record.semester) === normalizeSemester(semester),
   );
 
-  return new Set(
-    (result.rows || []).flatMap((row) => {
-      const fallbackKey = String(row.source_import_key || "").trim();
-      const keys = buildWorkbookImportKeyVariants(row, row.student_id);
-      return fallbackKey ? [fallbackKey, ...keys] : keys;
-    }),
+  return filteredRecords[index] || null;
+}
+
+async function upsertWorkbookArchiveRecord(
+  pool,
+  record,
+  actor = {},
+  options = {},
+) {
+  const normalizedSemester = normalizeSemester(record.semester);
+  const normalizedSchoolYear = normalizeSchoolYear(record.schoolYear);
+
+  if (!normalizedSemester || !normalizedSchoolYear) {
+    return {
+      status: "skipped",
+      inserted: false,
+      violationId: null,
+      sourceImportKey: "",
+    };
+  }
+
+  const {
+    existingImportedKeys = null,
+    studentIdCache = null,
+  } = options;
+  const sourceImportKey = buildWorkbookImportKey(record);
+
+  if (existingImportedKeys?.has(sourceImportKey)) {
+    return {
+      status: "existing",
+      inserted: false,
+      violationId: null,
+      sourceImportKey,
+    };
+  }
+
+  const studentCacheKey = normalizeWorkbookPersonKey(record.studentName);
+  let studentId = studentIdCache?.get(studentCacheKey) || null;
+  if (!studentId) {
+    studentId = await resolveWorkbookStudentId(pool, record.studentName);
+    if (!studentId) {
+      studentId = await getOrCreateHistoricalWorkbookStudent(pool, record);
+    }
+    if (studentIdCache && studentCacheKey) {
+      studentIdCache.set(studentCacheKey, studentId);
+    }
+  }
+
+  const archivedAt = toArchiveTimestamp(record.date) || new Date().toISOString();
+  const { category, degree, label } = parseWorkbookTypeLabel(record.typeLabel);
+
+  const existing = await pool.query(
+    `SELECT id
+     FROM student_violation_archives
+     WHERE remarks = 'IMPORTED'
+       AND (
+         source_import_key = $1
+         OR (
+           student_id = $2
+           AND violation_label = $3
+           AND school_year = $4
+           AND semester = $5
+           AND archived_at::date = $6::date
+         )
+       )
+     LIMIT 1`,
+    [
+      sourceImportKey,
+      studentId,
+      record.violationLabel || "",
+      normalizedSchoolYear,
+      normalizedSemester,
+      formatWorkbookComparisonDate(record.date),
+    ],
   );
+
+  if (existing.rows?.[0]?.id) {
+    if (existingImportedKeys) {
+      existingImportedKeys.add(sourceImportKey);
+    }
+    return {
+      status: "existing",
+      inserted: false,
+      violationId: existing.rows[0].id,
+      sourceImportKey,
+    };
+  }
+
+  const insertResult = await pool.query(
+    `INSERT INTO student_violation_archives
+     (student_id, violation_catalog_id, violation_label, reported_by, remarks, source_import_key,
+      signature_image, signature_updated_at, semester, school_year, is_unresolved,
+      archived_by_user_id, archived_by_name, original_created_at, original_updated_at,
+      violation_category, violation_degree, violation_type_label)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+     RETURNING id`,
+    [
+      studentId,
+      null,
+      record.violationLabel || "",
+      "",
+      "IMPORTED",
+      sourceImportKey,
+      "",
+      null,
+      normalizedSemester,
+      normalizedSchoolYear,
+      false,
+      actor.id || null,
+      actor.full_name || "System",
+      archivedAt,
+      archivedAt,
+      category,
+      degree,
+      label,
+    ],
+  );
+
+  return {
+    status: "inserted",
+    inserted: true,
+    violationId: insertResult.rows?.[0]?.id || null,
+    sourceImportKey,
+  };
+}
+
+async function syncHistoricalWorkbookArchiveRecordsToDatabase(pool) {
+  const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+  if (!Array.isArray(workbookRecords) || workbookRecords.length === 0) {
+    return { syncedCount: 0, scannedCount: 0 };
+  }
+
+  updateArchiveMaintenanceState({
+    phase: "importing",
+    message: "Importing workbook archive records into the database...",
+    percent: 8,
+    total: workbookRecords.length,
+    completed: 0,
+  });
+
+  const existingResult = await pool.query(
+    `SELECT source_import_key
+     FROM student_violation_archives
+     WHERE remarks = 'IMPORTED'
+       AND source_import_key IS NOT NULL
+       AND source_import_key <> ''`,
+  );
+  const existingImportedKeys = new Set(
+    (existingResult.rows || [])
+      .map((row) => String(row.source_import_key || "").trim())
+      .filter(Boolean),
+  );
+  const studentIdCache = new Map();
+  let syncedCount = 0;
+  let completed = 0;
+
+  for (const record of workbookRecords) {
+    const result = await upsertWorkbookArchiveRecord(pool, record, {}, {
+      existingImportedKeys,
+      studentIdCache,
+    });
+    if (result.inserted) {
+      syncedCount += 1;
+      existingImportedKeys.add(result.sourceImportKey);
+    }
+
+    completed += 1;
+    if (
+      completed === workbookRecords.length ||
+      completed % 10 === 0
+    ) {
+      updateArchiveMaintenanceState({
+        phase: "importing",
+        message: "Importing workbook archive records into the database...",
+        percent: 8 + (completed / workbookRecords.length) * 62,
+        total: workbookRecords.length,
+        completed,
+      });
+    }
+  }
+
+  return {
+    syncedCount,
+    scannedCount: workbookRecords.length,
+  };
 }
 
 async function reconcileImportedWorkbookArchiveRecords(pool) {
@@ -1126,6 +1254,12 @@ async function reconcileImportedWorkbookArchiveRecords(pool) {
   if (!Array.isArray(workbookRecords) || workbookRecords.length === 0) {
     return { correctedCount: 0, scannedCount: 0, unmatchedCount: 0, unresolvedFixedCount: 0 };
   }
+
+  updateArchiveMaintenanceState({
+    phase: "reconciling",
+    message: "Reconciling imported archive records with workbook data...",
+    percent: 72,
+  });
 
   const workbookRecordsByKey = new Map();
   workbookRecords.forEach((record) => {
@@ -1164,8 +1298,10 @@ async function reconcileImportedWorkbookArchiveRecords(pool) {
   let correctedCount = 0;
   let unmatchedCount = 0;
   let unresolvedFixedCount = 0;
+  let processed = 0;
 
   for (const row of importedRows) {
+    processed += 1;
     const key = buildWorkbookImportKey(row);
     const candidates = workbookRecordsByKey.get(key);
 
@@ -1180,6 +1316,18 @@ async function reconcileImportedWorkbookArchiveRecords(pool) {
           [row.id],
         );
         unresolvedFixedCount += 1;
+      }
+      if (processed === importedRows.length || processed % 20 === 0) {
+        updateArchiveMaintenanceState({
+          phase: "reconciling",
+          message: "Reconciling imported archive records with workbook data...",
+          percent:
+            importedRows.length > 0
+              ? 72 + (processed / importedRows.length) * 20
+              : 92,
+          total: importedRows.length,
+          completed: processed,
+        });
       }
       continue;
     }
@@ -1245,6 +1393,19 @@ async function reconcileImportedWorkbookArchiveRecords(pool) {
     if (row.is_unresolved) {
       unresolvedFixedCount += 1;
     }
+
+    if (processed === importedRows.length || processed % 20 === 0) {
+      updateArchiveMaintenanceState({
+        phase: "reconciling",
+        message: "Reconciling imported archive records with workbook data...",
+        percent:
+          importedRows.length > 0
+            ? 72 + (processed / importedRows.length) * 20
+            : 92,
+        total: importedRows.length,
+        completed: processed,
+      });
+    }
   }
 
   return {
@@ -1260,6 +1421,17 @@ let lastArchiveMaintenanceAt = 0;
 let archiveMaintenanceInFlight = null;
 let archiveColumnsEnsured = false;
 let archiveColumnsEnsureInFlight = null;
+const archiveMaintenanceState = {
+  running: false,
+  phase: "idle",
+  message: "Archive maintenance idle.",
+  percent: 100,
+  completed: 0,
+  total: 0,
+  startedAt: null,
+  finishedAt: null,
+  stats: {},
+};
 
 const VIOLATION_INFERENCE_CACHE_TTL_MS = 5 * 60 * 1000;
 let violationInferenceCache = {
@@ -1267,41 +1439,34 @@ let violationInferenceCache = {
   rows: [],
 };
 
+function updateArchiveMaintenanceState(patch = {}) {
+  Object.assign(archiveMaintenanceState, patch);
+  if (typeof archiveMaintenanceState.percent === "number") {
+    archiveMaintenanceState.percent = Math.max(
+      0,
+      Math.min(100, Math.round(archiveMaintenanceState.percent)),
+    );
+  }
+}
+
+function getArchiveMaintenanceSnapshot() {
+  return {
+    running: Boolean(archiveMaintenanceState.running),
+    phase: archiveMaintenanceState.phase,
+    message: archiveMaintenanceState.message,
+    percent: Number(archiveMaintenanceState.percent || 0),
+    completed: Number(archiveMaintenanceState.completed || 0),
+    total: Number(archiveMaintenanceState.total || 0),
+    startedAt: archiveMaintenanceState.startedAt,
+    finishedAt: archiveMaintenanceState.finishedAt,
+    stats: archiveMaintenanceState.stats || {},
+  };
+}
+
 const isWorkbookBusyError = (error) => {
   const code = String(error?.code || "").toUpperCase();
   return code === "EBUSY" || Number(error?.errno) === -4082;
 };
-
-const delayMs = (ms) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
-async function runWithWorkbookRetry(task, { attempts = 5, waitMs = 250 } = {}) {
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      return await task();
-    } catch (error) {
-      lastError = error;
-      if (!isWorkbookBusyError(error) || attempt === attempts) {
-        break;
-      }
-      await delayMs(waitMs * attempt);
-    }
-  }
-
-  if (isWorkbookBusyError(lastError)) {
-    const lockedError = new Error(
-      "ViolationRecords1.xlsx is currently busy or locked. Close the file and try again.",
-    );
-    lockedError.code = "EBUSY";
-    throw lockedError;
-  }
-
-  throw lastError;
-}
 
 async function cleanupDuplicateArchivedViolations(pool) {
   const result = await pool.query(
@@ -1350,21 +1515,58 @@ async function maybeRunArchiveMaintenance(pool) {
 
   archiveMaintenanceInFlight = (async () => {
     console.log("Running archive workbook maintenance...");
-    const [reconcileResult, duplicateRemovedCount] = await Promise.all([
-      reconcileImportedWorkbookArchiveRecords(pool),
-      cleanupDuplicateArchivedViolations(pool),
-    ]);
+    updateArchiveMaintenanceState({
+      running: true,
+      phase: "preparing",
+      message: "Preparing archive workbook maintenance...",
+      percent: 2,
+      total: 0,
+      completed: 0,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      stats: {},
+    });
+
+    const syncResult = await syncHistoricalWorkbookArchiveRecordsToDatabase(pool);
+    const reconcileResult = await reconcileImportedWorkbookArchiveRecords(pool);
+    updateArchiveMaintenanceState({
+      phase: "cleanup",
+      message: "Finalizing archive records and removing duplicates...",
+      percent: 94,
+      total: 0,
+      completed: 0,
+    });
+    const duplicateRemovedCount = await cleanupDuplicateArchivedViolations(pool);
 
     lastArchiveMaintenanceAt = Date.now();
 
     console.log("Archive workbook maintenance completed:", {
+      syncedCount: Number(syncResult?.syncedCount || 0),
       correctedCount: Number(reconcileResult?.correctedCount || 0),
       unresolvedFixedCount: Number(reconcileResult?.unresolvedFixedCount || 0),
       duplicateRemovedCount,
     });
 
+    updateArchiveMaintenanceState({
+      running: false,
+      phase: "completed",
+      message: "Archive workbook maintenance completed.",
+      percent: 100,
+      completed: Number(syncResult?.scannedCount || 0),
+      total: Number(syncResult?.scannedCount || 0),
+      finishedAt: new Date().toISOString(),
+      stats: {
+        syncedCount: Number(syncResult?.syncedCount || 0),
+        scannedCount: Number(syncResult?.scannedCount || 0),
+        correctedCount: Number(reconcileResult?.correctedCount || 0),
+        unresolvedFixedCount: Number(reconcileResult?.unresolvedFixedCount || 0),
+        duplicateRemovedCount: Number(duplicateRemovedCount || 0),
+      },
+    });
+
     return {
       skipped: false,
+      syncedCount: Number(syncResult?.syncedCount || 0),
       correctedCount: Number(reconcileResult?.correctedCount || 0),
       duplicateRemovedCount,
       unresolvedFixedCount: Number(reconcileResult?.unresolvedFixedCount || 0),
@@ -1471,117 +1673,29 @@ function enrichArchiveViolationRow(row, violationMatch) {
 }
 
 async function deleteHistoricalWorkbookRecordById(workbookId) {
-  if (typeof workbookId !== "string" || !workbookId.startsWith("wb-")) {
+  const record = await getWorkbookRecordByWorkbookId(workbookId);
+  if (!record) {
     return false;
   }
-
-  const chunks = workbookId.split("-");
-  if (chunks.length < 5) {
-    return false;
-  }
-
-  const indexString = chunks.pop();
-  const index = Number(indexString);
-  if (!Number.isFinite(index) || index < 0) {
-    return false;
-  }
-
-  const schoolYear = `${chunks[1]}-${chunks[2]}`;
-  const semester = chunks.slice(3).join("-");
 
   try {
-    const excelModule = await import("exceljs");
-    const ExcelJS = excelModule.default || excelModule;
-
-    const { workbook, worksheet } = await runWithWorkbookRetry(async () => {
-      const wb = new ExcelJS.Workbook();
-      await wb.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
-      return { workbook: wb, worksheet: wb.worksheets?.[0] };
-    });
-
-    if (!worksheet) {
+    const pool = getDbPool();
+    if (!pool) {
       return false;
     }
 
-    const headerRow = worksheet.getRow(1);
-    const headerMap = {};
-    headerRow.eachCell((cell, colNumber) => {
-      const headerText = String(cell.value || "")
-        .trim()
-        .toUpperCase();
-      if (headerText) {
-        headerMap[headerText] = colNumber;
-      }
-    });
+    const sourceImportKey = buildWorkbookImportKey(record);
+    const deleteResult = await pool.query(
+      `DELETE FROM student_violation_archives
+       WHERE remarks = 'IMPORTED'
+         AND source_import_key = $1
+       RETURNING id`,
+      [sourceImportKey],
+    );
 
-    const dateColumn = headerMap.DATE;
-    const nameColumn = headerMap.NAME;
-
-    if (!dateColumn) {
-      return false;
-    }
-
-    let currentSemester = "";
-    let currentSchoolYear = "";
-    let workbookIndex = 0;
-    let deleteRowNumber = null;
-
-    for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-      const row = worksheet.getRow(rowNumber);
-      const rowValues = row.values;
-      const termHeader = parseWorkbookTermHeader(rowValues);
-      if (termHeader) {
-        currentSemester = termHeader.semester;
-        currentSchoolYear = termHeader.schoolYear;
-        continue;
-      }
-
-      const nameValue = normalizeWorkbookText(
-        nameColumn ? row.getCell(nameColumn).value || "" : "",
-      );
-      const dateValue = parseCellDate(row.getCell(dateColumn).value);
-
-      if (!dateValue || !nameValue) {
-        continue;
-      }
-
-      const normalizedSemester = normalizeSemester(currentSemester);
-      const normalizedSchoolYear = normalizeSchoolYear(currentSchoolYear);
-      if (!normalizedSemester || !normalizedSchoolYear) {
-        continue;
-      }
-
-      if (
-        normalizeSchoolYear(schoolYear) === normalizedSchoolYear &&
-        normalizeSemester(semester) === normalizedSemester
-      ) {
-        if (workbookIndex === index) {
-          deleteRowNumber = rowNumber;
-          break;
-        }
-        workbookIndex += 1;
-      }
-    }
-
-    if (deleteRowNumber === null) {
-      return false;
-    }
-
-    worksheet.spliceRows(deleteRowNumber, 1);
-    await runWithWorkbookRetry(async () => {
-      await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
-    });
-    HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
-    HISTORICAL_VIOLATION_CACHE.records = [];
-    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs = 0;
-    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.counts = new Map();
-
-    return true;
+    return Boolean(deleteResult.rows?.[0]?.id);
   } catch (error) {
-    if (isWorkbookBusyError(error)) {
-      throw error;
-    }
-    console.error("Failed to delete historical workbook record:", error);
+    console.error("Failed to delete imported workbook archive record:", error);
     return false;
   }
 }
@@ -1600,6 +1714,16 @@ async function ensureArchiveColumnsExist(pool) {
       await pool.query(`ALTER TABLE student_violation_archives ADD COLUMN IF NOT EXISTS violation_category text`);
       await pool.query(`ALTER TABLE student_violation_archives ADD COLUMN IF NOT EXISTS violation_degree text`);
       await pool.query(`ALTER TABLE student_violation_archives ADD COLUMN IF NOT EXISTS violation_type_label text`);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS student_violation_archives_resolved_term_idx
+        ON student_violation_archives (school_year, semester, archived_at DESC)
+        WHERE is_unresolved = FALSE
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS student_violation_archives_imported_source_idx
+        ON student_violation_archives (source_import_key)
+        WHERE remarks = 'IMPORTED'
+      `);
       archiveColumnsEnsured = true;
     } catch (err) {
       console.warn('Could not ensure archive columns exist:', err.message || err);
@@ -1609,92 +1733,6 @@ async function ensureArchiveColumnsExist(pool) {
   })();
 
   return archiveColumnsEnsureInFlight;
-}
-
-async function deleteHistoricalWorkbookRecordsBySchoolYear(schoolYear) {
-  try {
-    const excelModule = await import("exceljs");
-    const ExcelJS = excelModule.default || excelModule;
-    const { workbook, worksheet } = await runWithWorkbookRetry(async () => {
-      const wb = new ExcelJS.Workbook();
-      await wb.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
-      return { workbook: wb, worksheet: wb.worksheets?.[0] };
-    });
-
-    if (!worksheet) {
-      return 0; // No workbook records
-    }
-
-    const headerRow = worksheet.getRow(1);
-    const headerMap = {};
-    headerRow.eachCell((cell, colNumber) => {
-      const headerText = String(cell.value || "")
-        .trim()
-        .toUpperCase();
-      if (headerText) {
-        headerMap[headerText] = colNumber;
-      }
-    });
-
-    const dateColumn = headerMap.DATE;
-    if (!dateColumn) {
-      return 0;
-    }
-
-    let currentSemester = "";
-    let currentSchoolYear = "";
-    let deletedCount = 0;
-    const rowsToDelete = [];
-
-    // Collect all rows to delete for this school year
-    for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
-      const row = worksheet.getRow(rowNumber);
-      const rowValues = row.values;
-      const termHeader = parseWorkbookTermHeader(rowValues);
-      if (termHeader) {
-        currentSemester = termHeader.semester;
-        currentSchoolYear = termHeader.schoolYear;
-        continue;
-      }
-
-      const dateValue = parseCellDate(row.getCell(dateColumn).value);
-      if (!dateValue) {
-        continue;
-      }
-
-      const normalizedSchoolYear = normalizeSchoolYear(currentSchoolYear);
-      if (normalizeSchoolYear(schoolYear) === normalizedSchoolYear) {
-        rowsToDelete.push(rowNumber);
-      }
-    }
-
-    // Delete rows in reverse order to maintain row numbers
-    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
-      worksheet.spliceRows(rowsToDelete[i], 1);
-      deletedCount++;
-    }
-
-    if (deletedCount > 0) {
-      await runWithWorkbookRetry(async () => {
-        await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
-      });
-      HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
-      HISTORICAL_VIOLATION_CACHE.records = [];
-      HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs = 0;
-      HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.counts = new Map();
-    }
-
-    return deletedCount;
-  } catch (error) {
-    if (isWorkbookBusyError(error)) {
-      throw error;
-    }
-    console.error(
-      "Failed to delete historical workbook records by school year:",
-      error,
-    );
-    return 0;
-  }
 }
 
 function buildAnalyticsFromRecords({
@@ -4742,6 +4780,9 @@ app.get("/api/violation-analytics", async (req, res) => {
           };
         });
       } else {
+        await ensureArchiveColumnsExist(pool);
+        await maybeRunArchiveMaintenance(pool);
+
         const archivedResult = await pool.query(
           `
           SELECT
@@ -4764,12 +4805,6 @@ app.get("/api/violation-analytics", async (req, res) => {
           ORDER BY sva.created_at ASC, sva.id ASC
           `,
           [targetSchoolYear, targetSemester],
-        );
-
-        const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
-          pool,
-          targetSchoolYear,
-          targetSemester,
         );
 
         const archiveDatabaseRecords = (archivedResult.rows || []).map(
@@ -4802,43 +4837,7 @@ app.get("/api/violation-analytics", async (req, res) => {
             };
           },
         );
-
-        const archiveWorkbookRecords = workbookRecords
-          .filter(
-            (record) =>
-              normalizeSchoolYear(record.schoolYear) === targetSchoolYear &&
-              normalizeSemester(record.semester) === targetSemester &&
-              !importedWorkbookKeys.has(buildWorkbookImportKey(record)),
-          )
-          .map((record, index) => {
-            const archivedRow = mapWorkbookRecordToArchiveRow(record, index);
-            const createdAt = new Date(
-              archivedRow.original_created_at || archivedRow.archived_at,
-            );
-
-            return {
-              source: archivedRow.sourceType || "workbook",
-              studentKey: archivedRow.student_id
-                ? `student:${Number(archivedRow.student_id)}`
-                : archivedRow.student_name
-                  ? `name:${String(archivedRow.student_name).toLowerCase()}`
-                  : `workbook-row:${index}`,
-              studentName: String(archivedRow.student_name || "").trim(),
-              program: String(archivedRow.program || "").trim(),
-              yearSection: String(archivedRow.year_section || "").trim(),
-              violationLabel: String(archivedRow.violation_label || "").trim(),
-              degreeRank: parseDegreeRank(archivedRow.violation_degree),
-              date: createdAt,
-              monthLabel: toMonthLabel(createdAt),
-              semester: normalizeSemester(archivedRow.semester),
-              schoolYear: normalizeSchoolYear(archivedRow.school_year),
-            };
-          });
-
-        archivedRecords = [
-          ...archiveDatabaseRecords,
-          ...archiveWorkbookRecords,
-        ];
+        archivedRecords = [...archiveDatabaseRecords];
         databaseRecords = [...archivedRecords];
       }
     }
@@ -7941,6 +7940,12 @@ app.get("/api/archive/users", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
+    void maybeRunArchiveMaintenance(pool).catch((error) => {
+      console.warn(
+        "Archive maintenance skipped/failed:",
+        error?.message || error,
+      );
+    });
 
     const result = await pool.query(
       `SELECT 
@@ -7953,6 +7958,7 @@ app.get("/api/archive/users", async (req, res) => {
         )::int AS violation_count
        FROM "Students" s
        WHERE s.is_archived = true
+         AND UPPER(COALESCE(s.archived_reason, '')) <> 'IMPORTED'
        ORDER BY s.archived_at DESC NULLS LAST`,
     );
 
@@ -7969,6 +7975,40 @@ app.get("/api/archive/users", async (req, res) => {
   }
 });
 
+app.get("/api/archive/maintenance-status", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    await ensureArchiveColumnsExist(pool);
+
+    if (String(req.query.start || "1") !== "0") {
+      void maybeRunArchiveMaintenance(pool).catch((error) => {
+        console.warn(
+          "Archive maintenance skipped/failed:",
+          error?.message || error,
+        );
+      });
+    }
+
+    return res.status(200).json({
+      status: "ok",
+      maintenance: getArchiveMaintenanceSnapshot(),
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to fetch archive maintenance status (${error.message}).`,
+    });
+  }
+});
+
 // GET school years with archived violations
 app.get("/api/archive/school-years", async (req, res) => {
   if (!hasDbConfig()) {
@@ -7981,8 +8021,13 @@ app.get("/api/archive/school-years", async (req, res) => {
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
-
-    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+    await ensureArchiveColumnsExist(pool);
+    void maybeRunArchiveMaintenance(pool).catch((error) => {
+      console.warn(
+        "Archive maintenance skipped/failed:",
+        error?.message || error,
+      );
+    });
 
     const archiveResult = await pool.query(
       `
@@ -8000,15 +8045,6 @@ app.get("/api/archive/school-years", async (req, res) => {
         semester: normalizeSemester(row.semester),
       }))
       .filter((row) => row.schoolYear && row.semester);
-
-    const workbookTerms = Array.isArray(workbookRecords)
-      ? workbookRecords
-          .map((record) => ({
-            schoolYear: normalizeSchoolYear(record.schoolYear),
-            semester: normalizeSemester(record.semester),
-          }))
-          .filter((row) => row.schoolYear && row.semester)
-      : [];
 
     const settingsResult = await pool.query(
       `
@@ -8031,7 +8067,7 @@ app.get("/api/archive/school-years", async (req, res) => {
     };
 
     const schoolYearSet = new Set(
-      [...archiveTerms, ...workbookTerms]
+      archiveTerms
         .map((term) => term.schoolYear)
         .filter(Boolean),
     );
@@ -8046,7 +8082,7 @@ app.get("/api/archive/school-years", async (req, res) => {
       .slice(0, 4);
 
     const semestersBySchoolYear = combinedYears.reduce((acc, schoolYear) => {
-      const semesters = [...archiveTerms, ...workbookTerms]
+      const semesters = [...archiveTerms]
         .filter((term) => term.schoolYear === schoolYear)
         .map((term) => term.semester);
 
@@ -8327,13 +8363,6 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
         error?.message || error,
       );
     });
-
-    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
-    const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
-      pool,
-      schoolYear,
-      semester,
-    );
     const violationCandidates = await getViolationCandidatesForInference(pool);
 
     // Query archived violations from the archive table for this semester/year, excluding unresolved
@@ -8388,19 +8417,9 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
       };
     });
 
-    const workbookViolations = workbookRecords
-      .filter(
-        (record) =>
-          normalizeSchoolYear(record.schoolYear) ===
-            normalizeSchoolYear(schoolYear) &&
-          normalizeSemester(record.semester) === normalizeSemester(semester) &&
-          !importedWorkbookKeys.has(buildWorkbookImportKey(record)),
-      )
-      .map((record, index) => mapWorkbookRecordToArchiveRow(record, index));
-
     return res.status(200).json({
       status: "ok",
-      violations: [...violations, ...workbookViolations],
+      violations,
     });
   } catch (error) {
     console.error("Error fetching archived violations:", error);
@@ -9038,151 +9057,44 @@ app.post("/api/archive/violations/:id/import", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
+    const recordToImport = await getWorkbookRecordByWorkbookId(id);
 
-    // Parse workbook ID: wb-YYYY-YYYY-SEMESTER-index
-    const chunks = id.split("-");
-    if (chunks.length < 5) {
-      return res.status(400).json({
-        status: "error",
-        message: "Invalid workbook record ID format.",
-      });
-    }
-
-    const indexString = chunks.pop();
-    const index = Number(indexString);
-    if (!Number.isFinite(index) || index < 0) {
-      return res.status(400).json({
-        status: "error",
-        message: "Invalid workbook record index.",
-      });
-    }
-
-    const schoolYear = `${chunks[1]}-${chunks[2]}`;
-    const semester = chunks.slice(3).join("-");
-
-    // Load workbook records to find the one to import
-    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
-    const filteredRecords = workbookRecords.filter(
-      (record) =>
-        normalizeSchoolYear(record.schoolYear) ===
-          normalizeSchoolYear(schoolYear) &&
-        normalizeSemester(record.semester) === normalizeSemester(semester),
-    );
-
-    if (index >= filteredRecords.length) {
+    if (!recordToImport) {
       return res.status(404).json({
         status: "error",
         message: "Workbook record not found.",
       });
     }
 
-    const recordToImport = filteredRecords[index];
-    const archivedAt =
-      toArchiveTimestamp(recordToImport.date) || new Date().toISOString();
-
-    let studentId = await resolveWorkbookStudentId(
-      pool,
-      recordToImport.studentName,
-    );
-    if (!studentId) {
-      studentId = await getOrCreateHistoricalWorkbookStudent(
-        pool,
-        recordToImport,
-      );
-    }
-
-    const { category, degree, label } = parseWorkbookTypeLabel(
-      recordToImport.typeLabel,
-    );
-    const sourceImportKey = buildWorkbookImportKey(recordToImport);
-
-    // Check for duplicates based on student name, violation label, school year, semester, and date.
-    const duplicateCheck = await pool.query(
-      `SELECT id FROM student_violation_archives 
-       WHERE student_id = $1 
-       AND violation_label = $2
-       AND school_year = $3
-       AND semester = $4
-       AND archived_at::date = $5::date
-       AND remarks = 'IMPORTED'
-       AND is_unresolved = FALSE
-       LIMIT 1`,
-      [
-        studentId,
-        recordToImport.violationLabel || "",
-        normalizeSchoolYear(recordToImport.schoolYear),
-        normalizeSemester(recordToImport.semester),
-        formatWorkbookComparisonDate(recordToImport.date),
-      ],
-    );
-
-    if (duplicateCheck.rows.length > 0) {
-      return res.status(409).json({
-        status: "error",
-        message:
-          "This record has already been imported. Duplicate records are not allowed.",
-      });
-    }
-
-    // Insert record into database (include parsed type fields)
-    const insertResult = await pool.query(
-      `INSERT INTO student_violation_archives 
-       (student_id, violation_catalog_id, violation_label, reported_by, remarks, source_import_key, 
-        signature_image, signature_updated_at, semester, school_year, is_unresolved,
-        archived_by_user_id, archived_by_name, original_created_at, original_updated_at,
-        violation_category, violation_degree, violation_type_label)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-       RETURNING id`,
-      [
-        studentId,
-        null, // violation_catalog_id - no linked violation
-        recordToImport.violationLabel || "",
-        "",
-        "IMPORTED", // remarks - mark as imported
-        sourceImportKey,
-        "", // signature_image - no signature for workbook records
-        null, // signature_updated_at
-        normalizeSemester(recordToImport.semester),
-        normalizeSchoolYear(recordToImport.schoolYear),
-        false, // is_unresolved - import as resolved, not unresolved
-        req.user?.id || null,
-        req.user?.full_name || "System",
-        archivedAt,
-        archivedAt,
-        category,
-        degree,
-        label,
-      ],
-    );
-
-    if (!insertResult.rows?.[0]) {
+    const syncResult = await upsertWorkbookArchiveRecord(pool, recordToImport, req.user || {});
+    if (!syncResult.violationId) {
       return res.status(500).json({
         status: "error",
-        message: "Failed to create database record.",
+        message: "Failed to create or locate database record.",
       });
     }
 
-    const importedRecordId = insertResult.rows[0].id;
+    if (syncResult.inserted) {
+      await logAuditEvent(req, {
+        action: "IMPORT_WORKBOOK_VIOLATION",
+        targetType: "StudentViolation",
+        targetId: syncResult.violationId,
+        details: `Imported workbook record for student: ${recordToImport.studentName || "Unknown"}, violation: ${recordToImport.violationLabel || "Unknown"}`,
+      });
+    }
 
-    // Keep workbook rows as the canonical source file; do not delete on import.
-
-    // Log audit event
-    await logAuditEvent(req, {
-      action: "IMPORT_WORKBOOK_VIOLATION",
-      targetType: "StudentViolation",
-      targetId: importedRecordId,
-      details: `Imported workbook record for student: ${recordToImport.studentName || "Unknown"}, violation: ${recordToImport.violationLabel || "Unknown"}`,
-    });
-
-    // Return the imported record with all details
     const importedRecord = await pool.query(
       `SELECT * FROM student_violation_archives WHERE id = $1`,
-      [importedRecordId],
+      [syncResult.violationId],
     );
 
-    return res.status(201).json({
+    const { category, degree } = parseWorkbookTypeLabel(recordToImport.typeLabel);
+
+    return res.status(syncResult.inserted ? 201 : 200).json({
       status: "ok",
-      message: "Record imported successfully.",
+      message: syncResult.inserted
+        ? "Record imported successfully."
+        : "Record already exists in the database archive.",
       violation: {
         ...importedRecord.rows[0],
         student_name: recordToImport.studentName || "",
@@ -9254,87 +9166,20 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
     let skippedCount = 0;
     for (let index = 0; index < workbookRecords.length; index += 1) {
       const record = workbookRecords[index];
-      const normalizedSemester = normalizeSemester(record.semester);
-      const normalizedSchoolYear = normalizeSchoolYear(record.schoolYear);
-
-      if (!normalizedSemester || !normalizedSchoolYear) {
-        continue;
-      }
-
-      const archivedAt =
-        toArchiveTimestamp(record.date) || new Date().toISOString();
-
-      const studentId =
-        (await resolveWorkbookStudentId(pool, record.studentName)) ||
-        (await getOrCreateHistoricalWorkbookStudent(pool, record));
-
-      // Skip inserting if a matching (non-unresolved) archive record already exists
-      const existing = await pool.query(
-        `SELECT id FROM student_violation_archives
-         WHERE student_id = $1
-           AND LOWER(TRIM(violation_label)) = LOWER(TRIM($2))
-           AND school_year = $3
-           AND semester = $4
-           AND archived_at::date = $5::date
-           AND is_unresolved = FALSE
-         LIMIT 1`,
-        [
-          studentId,
-          record.violationLabel || "",
-          normalizedSchoolYear,
-          normalizedSemester,
-          formatWorkbookComparisonDate(record.date),
-        ],
-      );
-
-      if (existing.rows && existing.rows.length > 0) {
+      const syncResult = await upsertWorkbookArchiveRecord(pool, record, req.user || {});
+      if (!syncResult.inserted) {
         skippedCount += 1;
         continue;
       }
 
-      const { category, degree, label } = parseWorkbookTypeLabel(record.typeLabel);
-      const sourceImportKey = buildWorkbookImportKey(record);
-
-      const insertResult = await pool.query(
-        `INSERT INTO student_violation_archives 
-         (student_id, violation_catalog_id, violation_label, reported_by, remarks, source_import_key, 
-          signature_image, signature_updated_at, semester, school_year, is_unresolved,
-          archived_by_user_id, archived_by_name, original_created_at, original_updated_at,
-          violation_category, violation_degree, violation_type_label)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-         RETURNING id`,
-        [
-          studentId,
-          null,
-          record.violationLabel || "",
-          "",
-          "IMPORTED",
-          sourceImportKey,
-          "",
-          null,
-          normalizedSemester,
-          normalizedSchoolYear,
-          false,
-          req.user?.id || null,
-          req.user?.full_name || "System",
-          archivedAt,
-          archivedAt,
-          category,
-          degree,
-          label,
-        ],
-      );
-
-      if (insertResult.rows?.[0]) {
-        importCount += 1;
-        importedRecords.push({
-          id: insertResult.rows[0].id,
-          studentName: record.studentName,
-          violationLabel: record.violationLabel,
-          semester: normalizedSemester,
-          schoolYear: normalizedSchoolYear,
-        });
-      }
+      importCount += 1;
+      importedRecords.push({
+        id: syncResult.violationId,
+        studentName: record.studentName,
+        violationLabel: record.violationLabel,
+        semester: normalizeSemester(record.semester),
+        schoolYear: normalizeSchoolYear(record.schoolYear),
+      });
     }
 
     // Log audit event (include skipped count)
@@ -9529,6 +9374,11 @@ async function startServer() {
           purgeExpiredNotifications();
         }, NOTIFICATION_CLEANUP_INTERVAL_MS);
 
+        await ensureArchiveColumnsExist(getDbPool());
+        void maybeRunArchiveMaintenance(getDbPool()).catch((error) => {
+          console.warn("Archive prewarm skipped/failed:", error?.message || error);
+        });
+
         await deactivateGraduatedStudentAccounts();
 
         if (seedAccounts.length === 0) {
@@ -9595,12 +9445,21 @@ if (!isServerlessRuntime) {
   startServer();
 } else if (hasDbConfig()) {
   // Warm schema on cold starts without creating long-running loops.
-  ensureAuthDatabaseReady().catch((error) => {
-    console.error(
-      "Failed to synchronize auth database on serverless cold start.",
-    );
-    console.error(error.message);
-  });
+  ensureAuthDatabaseReady()
+    .then(async () => {
+      const pool = getDbPool();
+      if (!pool) return;
+      await ensureArchiveColumnsExist(pool);
+      void maybeRunArchiveMaintenance(pool).catch((error) => {
+        console.warn("Archive prewarm skipped/failed:", error?.message || error);
+      });
+    })
+    .catch((error) => {
+      console.error(
+        "Failed to synchronize auth database on serverless cold start.",
+      );
+      console.error(error.message);
+    });
 }
 
 export default app;

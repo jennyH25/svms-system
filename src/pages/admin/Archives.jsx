@@ -15,6 +15,7 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import EditArchiveModal from "@/components/modals/EditArchiveModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
+import { invalidateFetchCache } from "@/lib/fetchHelper";
 import {
   addCenteredExcelHeaderImage,
   applyExcelPrintLayout,
@@ -332,6 +333,14 @@ const Archives = () => {
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [archiveMaintenance, setArchiveMaintenance] = useState({
+    running: false,
+    phase: "idle",
+    message: "",
+    percent: 0,
+    completed: 0,
+    total: 0,
+  });
   const [archivedUsers, setArchivedUsers] = useState([]);
   const [archivedViolations, setArchivedViolations] = useState([]);
   const [allArchivedViolations, setAllArchivedViolations] = useState([]); // For global search
@@ -342,6 +351,7 @@ const Archives = () => {
   const [unresolvedSchoolYears, setUnresolvedSchoolYears] = useState([]);
   const [selectedUnresolvedYear, setSelectedUnresolvedYear] = useState("");
   const globalSearchLoadIdRef = useRef(0);
+  const archiveBootstrapCompleteRef = useRef(false);
 
   // Restore preserved year-section mapping from localStorage to prevent lost history during navigation/refresh.
   useEffect(() => {
@@ -431,6 +441,46 @@ const Archives = () => {
     }
   }, []);
 
+  const loadArchivedUsers = useCallback(async () => {
+    try {
+      const response = await fetch("/api/archive/users", {
+        headers: { ...getAuditHeaders() },
+      });
+      const data = await response.json();
+
+      if (response.ok && data.status === "ok") {
+        setArchivedUsers(data.archivedUsers || []);
+        return data;
+      }
+
+      setError(data.message || "Failed to load archived users");
+      return null;
+    } catch (err) {
+      setError("Failed to load archived users: " + err.message);
+      return null;
+    }
+  }, []);
+
+  const fetchArchiveMaintenanceStatus = useCallback(async (start = true) => {
+    const response = await fetch(`/api/archive/maintenance-status?start=${start ? "1" : "0"}`, {
+      headers: { ...getAuditHeaders() },
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || data.status !== "ok") {
+      throw new Error(data.message || "Failed to load archive maintenance status");
+    }
+
+    return data.maintenance || {
+      running: false,
+      phase: "idle",
+      message: "",
+      percent: 100,
+      completed: 0,
+      total: 0,
+    };
+  }, []);
+
   // Import workbook records states
   const [isImportConfirmModalOpen, setIsImportConfirmModalOpen] = useState(false);
   const [recordToImport, setRecordToImport] = useState(null);
@@ -441,31 +491,55 @@ const Archives = () => {
   const [isCleanupReimporting, setIsCleanupReimporting] = useState(false);
   const [cleanupSecretKey, setCleanupSecretKey] = useState("");
 
-  // Load archived users on mount
   useEffect(() => {
-    const loadArchivedUsers = async () => {
+    let cancelled = false;
+
+    const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+    const bootstrapArchiveData = async () => {
       try {
         setIsLoading(true);
         setError("");
-        const response = await fetch("/api/archive/users", {
-          headers: { ...getAuditHeaders() },
-        });
-        const data = await response.json();
 
-        if (response.ok && data.status === "ok") {
-          setArchivedUsers(data.archivedUsers || []);
-        } else {
-          setError(data.message || "Failed to load archived users");
+        let maintenance = await fetchArchiveMaintenanceStatus(true);
+        if (cancelled) return;
+
+        setArchiveMaintenance(maintenance);
+
+        while (maintenance?.running) {
+          await sleep(700);
+          if (cancelled) return;
+          maintenance = await fetchArchiveMaintenanceStatus(false);
+          if (cancelled) return;
+          setArchiveMaintenance(maintenance);
         }
+
+        setArchiveMaintenance((prev) => ({
+          ...prev,
+          ...maintenance,
+          running: false,
+          percent: 100,
+        }));
+
+        await Promise.all([loadArchiveSchoolYears(), loadArchivedUsers()]);
+        archiveBootstrapCompleteRef.current = true;
       } catch (err) {
-        setError("Failed to load archived users: " + err.message);
+        if (!cancelled) {
+          setError(err.message || "Failed to initialize archive data");
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
-    loadArchivedUsers();
-  }, []);
+    bootstrapArchiveData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchArchiveMaintenanceStatus, loadArchiveSchoolYears, loadArchivedUsers]);
 
   // Listen for archive completion events from StudentViolation page
   useEffect(() => {
@@ -526,10 +600,8 @@ const Archives = () => {
     return false;
   };
 
-  // Load school years on mount and refresh on meaningful events only.
+  // Refresh school years on meaningful events; initial load is handled by bootstrap.
   useEffect(() => {
-    loadArchiveSchoolYears();
-
     const handleStorageChange = () => {
       loadArchiveSchoolYears();
     };
@@ -571,7 +643,7 @@ const Archives = () => {
     };
 
     loadUnresolvedSchoolYears();
-  }, [activeFolder]);
+  }, [activeFolder, loadArchivedUsers]);
 
   // Load violations when folder or semester changes
   useEffect(() => {
@@ -714,7 +786,7 @@ const Archives = () => {
   // Load archived users when users folder is clicked
   useEffect(() => {
     const loadArchivedUsersData = async () => {
-      if (activeFolder !== "users") {
+      if (activeFolder !== "users" || !archiveBootstrapCompleteRef.current) {
         return;
       }
 
@@ -723,17 +795,10 @@ const Archives = () => {
         setError("");
         console.log("Loading archived users...");
         
-        const response = await fetch("/api/archive/users", {
-          headers: { ...getAuditHeaders() },
-        });
-        const data = await response.json();
+        const data = await loadArchivedUsers();
 
-        if (response.ok && data.status === "ok") {
-          setArchivedUsers(data.archivedUsers || []);
+        if (data) {
           console.log(`✓ Loaded ${(data.archivedUsers || []).length} archived users`);
-        } else {
-          setError(data.message || "Failed to load archived users");
-          console.error("Error loading users:", data.message);
         }
       } catch (err) {
         setError("Failed to load archived users: " + err.message);
@@ -848,6 +913,15 @@ const Archives = () => {
       const data = await response.json();
       if (response.ok && data.status === "ok") {
         setArchivedUsers((prev) => prev.filter((u) => u.id !== userToRestore.id));
+        invalidateFetchCache("/api/students");
+        invalidateFetchCache("/api/archive/users");
+        window.dispatchEvent(
+          new CustomEvent("archivedUserRestored", {
+            detail: {
+              id: userToRestore.id,
+            },
+          }),
+        );
         setIsRestoreModalOpen(false);
         setUserToRestore(null);
         setError("");
@@ -2033,6 +2107,17 @@ const Archives = () => {
         ? `Unresolved Student Records - S.Y. ${selectedUnresolvedYear}`
         : "Unresolved Student Records - Select a Year"
     : `Archived Student Records - S.Y. ${activeFolder} (${activeSemester})`;
+  const archiveMaintenancePercent = Math.max(
+    0,
+    Math.min(100, Number(archiveMaintenance.percent || 0)),
+  );
+  const showArchiveMaintenance =
+    isLoading &&
+    (archiveMaintenance.running ||
+      archiveMaintenance.phase === "preparing" ||
+      archiveMaintenance.phase === "importing" ||
+      archiveMaintenance.phase === "reconciling" ||
+      archiveMaintenance.phase === "cleanup");
 
   const handleClearUnresolved = async (row) => {
     if (!row?.id) return;
@@ -3070,6 +3155,38 @@ const Archives = () => {
             </div>
           )}
 
+          {showArchiveMaintenance && (
+            <div className="mb-4 rounded-xl border border-sky-400/30 bg-slate-900/70 p-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sky-100">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-sm font-semibold">
+                    {archiveMaintenance.message || "Preparing archive data..."}
+                  </span>
+                </div>
+                <span className="text-sm font-bold tabular-nums text-sky-200">
+                  {archiveMaintenancePercent}%
+                </span>
+              </div>
+              <div className="h-3 overflow-hidden rounded-full bg-slate-700">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-sky-400 via-cyan-300 to-emerald-300 transition-[width] duration-500 ease-out"
+                  style={{ width: `${archiveMaintenancePercent}%` }}
+                />
+              </div>
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-300">
+                <span className="uppercase tracking-[0.18em] text-slate-400">
+                  {String(archiveMaintenance.phase || "loading").replace(/_/g, " ")}
+                </span>
+                <span className="tabular-nums">
+                  {archiveMaintenance.total > 0
+                    ? `${archiveMaintenance.completed}/${archiveMaintenance.total}`
+                    : "Finalizing"}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-between items-center mb-4">
             <div className="flex gap-2 items-center flex-wrap">
               {(activeFolder === "users" || isGlobalSearch) && (
@@ -3219,12 +3336,20 @@ const Archives = () => {
 
           {isLoading ? (
             <div className="text-center py-8 text-gray-400">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
-              <p className="mt-2">
-                {isGlobalSearch && searchQuery
-                  ? "Searching across all folders..."
-                  : "Loading data..."}
-              </p>
+              {showArchiveMaintenance ? (
+                <p className="mt-2 text-slate-300">
+                  Archive data will appear as soon as the workbook sync finishes.
+                </p>
+              ) : (
+                <>
+                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+                  <p className="mt-2">
+                    {isGlobalSearch && searchQuery
+                      ? "Searching across all folders..."
+                      : "Loading data..."}
+                  </p>
+                </>
+              )}
             </div>
           ) : filteredData.length === 0 ? (
             <div className="text-center py-8 text-gray-400">

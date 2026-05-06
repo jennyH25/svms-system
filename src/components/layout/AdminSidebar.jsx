@@ -2,10 +2,35 @@ import React, { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import logo from '../../assets/css_logo.png'
 import { useSettings } from '../../context/SettingsContext'
+import { getAuditHeaders } from '@/lib/auditHeaders'
+import { cachedFetchJSON } from '@/lib/fetchHelper'
 
 const Sidebar = ({ onRequestLogout }) => {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const { settings, loading } = useSettings()
+
+  const prefetchAdminViolations = () => {
+    void Promise.allSettled([
+      cachedFetchJSON('/api/student-violations', {
+        headers: { ...getAuditHeaders() },
+      }, {
+        ttlMs: 15000,
+        staleWhileRevalidate: true,
+      }),
+      cachedFetchJSON('/api/violation-analytics', {
+        headers: { ...getAuditHeaders() },
+      }, {
+        ttlMs: 15000,
+        staleWhileRevalidate: true,
+      }),
+      cachedFetchJSON('/api/archive/current-settings', {
+        headers: { ...getAuditHeaders() },
+      }, {
+        ttlMs: 30000,
+        staleWhileRevalidate: true,
+      }),
+    ])
+  }
   
   // Parse the display name to show first two words in bold
   const displayName = settings?.displayName || 'Student Violation Management System'
@@ -139,6 +164,8 @@ const Sidebar = ({ onRequestLogout }) => {
               <NavLink
                 to={item.path}
                 end={item.path === '/admin'}
+                onMouseEnter={item.path === '/admin/student-violation' ? prefetchAdminViolations : undefined}
+                onFocus={item.path === '/admin/student-violation' ? prefetchAdminViolations : undefined}
                 className={({ isActive }) =>
                   `flex items-center ${isCollapsed ? 'justify-center' : 'gap-3'} py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${
                     isActive

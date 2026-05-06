@@ -171,7 +171,7 @@ const UserManagement = () => {
     });
   }, []);
 
-  const fetchStudents = async (forceRefresh = false) => {
+  const fetchStudents = useCallback(async (forceRefresh = false) => {
     setIsLoading(true);
 
     const degreeRank = {
@@ -254,11 +254,23 @@ const UserManagement = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchStudents();
-  }, []);
+  }, [fetchStudents]);
+
+  useEffect(() => {
+    const handleArchivedUserRestored = () => {
+      invalidateFetchCache("/api/students");
+      fetchStudents(true);
+    };
+
+    window.addEventListener("archivedUserRestored", handleArchivedUserRestored);
+    return () => {
+      window.removeEventListener("archivedUserRestored", handleArchivedUserRestored);
+    };
+  }, [fetchStudents]);
 
   const loadCurrentSettings = useCallback(async (forceRefresh = false) => {
     try {
