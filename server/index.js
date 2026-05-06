@@ -46,6 +46,13 @@ const API_GET_CACHE_TTL_MS = Number(process.env.API_GET_CACHE_TTL_MS || 8000);
 const API_GET_CACHE_MAX_ENTRIES = Number(
   process.env.API_GET_CACHE_MAX_ENTRIES || 400,
 );
+const AUTH_RATE_LIMIT_WINDOW_MS = Number(
+  process.env.AUTH_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000,
+);
+const AUTH_RATE_LIMIT_MAX_ATTEMPTS = Number(
+  process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS || 8,
+);
+const AUTH_INPUT_MAX_LENGTH = 160;
 const HISTORICAL_VIOLATION_RECORDS_PATH = path.resolve(
   __dirname,
   "../ViolationRecords1.xlsx",
@@ -132,6 +139,7 @@ if (
 }
 
 const apiGetResponseCache = new Map();
+const authAttemptBuckets = new Map();
 
 function buildApiGetCacheKey(req) {
   const actorUserId = String(req.headers["x-actor-user-id"] || "");
@@ -1494,6 +1502,87 @@ function updateArchiveMaintenanceState(patch = {}) {
   }
 }
 
+function getClientIp(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "")
+    .split(",")[0]
+    .trim();
+  return forwarded || req.ip || req.socket?.remoteAddress || "unknown";
+}
+
+function normalizeBoundedText(value, maxLength = AUTH_INPUT_MAX_LENGTH) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function isLikelyEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ""));
+}
+
+function parsePositiveInteger(value) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  const text = String(value || "").trim();
+  if (!/^\d+$/.test(text)) {
+    return null;
+  }
+
+  const parsed = Number(text);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function trackRateLimit(bucketStore, bucketKey, windowMs, maxAttempts) {
+  const now = Date.now();
+  const existing = bucketStore.get(bucketKey);
+  const baseEntry =
+    existing && now < existing.resetAt
+      ? existing
+      : { count: 0, resetAt: now + windowMs };
+
+  baseEntry.count += 1;
+  bucketStore.set(bucketKey, baseEntry);
+
+  return {
+    limited: baseEntry.count > maxAttempts,
+    remaining: Math.max(0, maxAttempts - baseEntry.count),
+    retryAfterSeconds: Math.max(1, Math.ceil((baseEntry.resetAt - now) / 1000)),
+  };
+}
+
+function clearRateLimitBucket(bucketStore, bucketKey) {
+  bucketStore.delete(bucketKey);
+}
+
+function enforceAuthRateLimit(req, res, actionKey, identityHint = "") {
+  const bucketKey = `${actionKey}|${getClientIp(req)}|${String(identityHint || "").toLowerCase()}`;
+  const result = trackRateLimit(
+    authAttemptBuckets,
+    bucketKey,
+    AUTH_RATE_LIMIT_WINDOW_MS,
+    AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+  );
+
+  if (!result.limited) {
+    return { allowed: true, bucketKey };
+  }
+
+  res.setHeader("Retry-After", String(result.retryAfterSeconds));
+  res.status(429).json({
+    status: "error",
+    message: "Too many attempts. Please try again later.",
+    retryAfterSeconds: result.retryAfterSeconds,
+  });
+  return { allowed: false, bucketKey };
+}
+
+function sendSafeServerError(res, operationMessage, error, statusCode = 503) {
+  console.error(operationMessage, error);
+  return res.status(statusCode).json({
+    status: "error",
+    message: operationMessage,
+  });
+}
+
 function getArchiveMaintenanceSnapshot() {
   return {
     running: Boolean(archiveMaintenanceState.running),
@@ -2837,9 +2926,49 @@ const upload = multer({
   },
 });
 
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
+
 app.use(cors());
 // Increase JSON body size limit to allow base64 signature uploads
-app.use(express.json({ limit: '6mb' }));
+app.use(express.json({ limit: "6mb" }));
+app.use(express.urlencoded({ extended: false, limit: "32kb" }));
+
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  if (req.path.startsWith("/api/")) {
+    res.setHeader("Cache-Control", "no-store");
+  }
+  next();
+});
+
+app.param("id", (req, res, next, value) => {
+  const parsed = parsePositiveInteger(value);
+  if (!parsed) {
+    return res.status(400).json({
+      status: "error",
+      message: "Invalid record identifier.",
+    });
+  }
+  req.params.id = String(parsed);
+  return next();
+});
+
+app.param("userId", (req, res, next, value) => {
+  const parsed = parsePositiveInteger(value);
+  if (!parsed) {
+    return res.status(400).json({
+      status: "error",
+      message: "Invalid user identifier.",
+    });
+  }
+  req.params.userId = String(parsed);
+  return next();
+});
 
 // Lightweight response caching for GET /api requests to speed up tab switches.
 app.use((req, res, next) => {
@@ -2921,15 +3050,14 @@ app.get("/api/db-health", async (_req, res) => {
 
     return res.status(200).json({
       status: "ok",
-      database: process.env.PGDATABASE || "postgres",
-      host: process.env.PGHOST || "supabase",
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    return res.status(503).json({
-      status: "error",
-      message: `Database unavailable or sync failed: ${error.message}`,
-    });
+    return sendSafeServerError(
+      res,
+      "Database unavailable or sync failed.",
+      error,
+    );
   }
 });
 
@@ -2964,21 +3092,28 @@ app.get("/api/app-state/snapshot", async (req, res) => {
       serverTime: new Date().toISOString(),
     });
   } catch (error) {
-    return res.status(503).json({
-      status: "error",
-      message: `Unable to load app state snapshot (${error.message}).`,
-    });
+    return sendSafeServerError(
+      res,
+      "Unable to load app state snapshot.",
+      error,
+    );
   }
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const { username, password } = req.body ?? {};
+  const username = normalizeBoundedText(req.body?.username);
+  const password = String(req.body?.password || "");
 
   if (!username || !password) {
     return res.status(400).json({
       status: "error",
       message: "Username/email and password are required.",
     });
+  }
+
+  const rateLimit = enforceAuthRateLimit(req, res, "login", username);
+  if (!rateLimit.allowed) {
+    return;
   }
 
   if (!hasDbConfig()) {
@@ -3085,6 +3220,8 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
+    clearRateLimitBucket(authAttemptBuckets, rateLimit.bucketKey);
+
     const sessionToken = signSessionToken(user);
 
     return res.status(200).json({
@@ -3109,24 +3246,32 @@ app.post("/api/auth/login", async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(503).json({
-      status: "error",
-      message: `Login unavailable: database not ready (${error.message}).`,
-    });
+    return sendSafeServerError(
+      res,
+      "Login unavailable. Please try again shortly.",
+      error,
+    );
   }
 });
 
 app.post("/api/auth/forgot-password/request", async (req, res) => {
-  const { email } = req.body ?? {};
-  const normalizedEmail = String(email || "")
-    .trim()
-    .toLowerCase();
+  const normalizedEmail = normalizeBoundedText(req.body?.email).toLowerCase();
 
-  if (!normalizedEmail || !normalizedEmail.includes("@")) {
+  if (!normalizedEmail || !isLikelyEmail(normalizedEmail)) {
     return res.status(400).json({
       status: "error",
       message: "A valid email is required.",
     });
+  }
+
+  const rateLimit = enforceAuthRateLimit(
+    req,
+    res,
+    "forgot-password-request",
+    normalizedEmail,
+  );
+  if (!rateLimit.allowed) {
+    return;
   }
 
   if (!hasDbConfig()) {
@@ -3159,9 +3304,10 @@ app.post("/api/auth/forgot-password/request", async (req, res) => {
 
     const user = await findUserByEmail(pool, normalizedEmail);
     if (!user) {
-      return res.status(404).json({
-        status: "error",
-        message: "Email does not exist in the system.",
+      return res.status(200).json({
+        status: "ok",
+        message: "If the account exists, a verification code will be sent.",
+        retryAfterSeconds: Math.ceil(FORGOT_RESEND_COOLDOWN_MS / 1000),
       });
     }
 
@@ -3210,29 +3356,44 @@ app.post("/api/auth/forgot-password/request", async (req, res) => {
 
     return res.status(200).json({
       status: "ok",
-      message: "Verification code sent.",
+      message: "If the account exists, a verification code will be sent.",
       retryAfterSeconds: Math.ceil(FORGOT_RESEND_COOLDOWN_MS / 1000),
     });
   } catch (error) {
-    return res.status(503).json({
-      status: "error",
-      message: `Unable to process forgot password request (${error.message}).`,
-    });
+    return sendSafeServerError(
+      res,
+      "Unable to process forgot password request right now.",
+      error,
+    );
   }
 });
 
 app.post("/api/auth/forgot-password/verify", async (req, res) => {
-  const { email, code } = req.body ?? {};
-  const normalizedEmail = String(email || "")
-    .trim()
-    .toLowerCase();
-  const normalizedCode = String(code || "").trim();
+  const normalizedEmail = normalizeBoundedText(req.body?.email).toLowerCase();
+  const normalizedCode = normalizeBoundedText(req.body?.code, 12);
 
   if (!normalizedEmail || !normalizedCode) {
     return res.status(400).json({
       status: "error",
       message: "Email and verification code are required.",
     });
+  }
+
+  if (!isLikelyEmail(normalizedEmail) || !/^\d{6}$/.test(normalizedCode)) {
+    return res.status(400).json({
+      status: "error",
+      message: "Invalid email or verification code format.",
+    });
+  }
+
+  const rateLimit = enforceAuthRateLimit(
+    req,
+    res,
+    "forgot-password-verify",
+    normalizedEmail,
+  );
+  if (!rateLimit.allowed) {
+    return;
   }
 
   if (!hasDbConfig()) {
@@ -3292,24 +3453,42 @@ app.post("/api/auth/forgot-password/verify", async (req, res) => {
       resetToken,
     });
   } catch (error) {
-    return res.status(503).json({
-      status: "error",
-      message: `Unable to verify code (${error.message}).`,
-    });
+    return sendSafeServerError(
+      res,
+      "Unable to verify code right now.",
+      error,
+    );
   }
 });
 
 app.post("/api/auth/forgot-password/reset", async (req, res) => {
-  const { email, newPassword, confirmPassword, resetToken } = req.body ?? {};
-  const normalizedEmail = String(email || "")
-    .trim()
-    .toLowerCase();
+  const normalizedEmail = normalizeBoundedText(req.body?.email).toLowerCase();
+  const newPassword = String(req.body?.newPassword || "");
+  const confirmPassword = String(req.body?.confirmPassword || "");
+  const resetToken = normalizeBoundedText(req.body?.resetToken, 128);
 
   if (!normalizedEmail || !newPassword || !confirmPassword || !resetToken) {
     return res.status(400).json({
       status: "error",
       message: "Email, reset token, and new password fields are required.",
     });
+  }
+
+  if (!isLikelyEmail(normalizedEmail) || !/^[A-Fa-f0-9]{48}$/.test(resetToken)) {
+    return res.status(400).json({
+      status: "error",
+      message: "Invalid email or reset token format.",
+    });
+  }
+
+  const rateLimit = enforceAuthRateLimit(
+    req,
+    res,
+    "forgot-password-reset",
+    normalizedEmail,
+  );
+  if (!rateLimit.allowed) {
+    return;
   }
 
   if (String(newPassword) !== String(confirmPassword)) {
@@ -3386,10 +3565,11 @@ app.post("/api/auth/forgot-password/reset", async (req, res) => {
       message: "Password reset successful.",
     });
   } catch (error) {
-    return res.status(503).json({
-      status: "error",
-      message: `Unable to reset password (${error.message}).`,
-    });
+    return sendSafeServerError(
+      res,
+      "Unable to reset password right now.",
+      error,
+    );
   }
 });
 
@@ -3440,16 +3620,17 @@ app.get("/api/students/profile/:userId", async (req, res) => {
 
     return res.status(200).json({ status: "ok", student });
   } catch (error) {
-    return res.status(503).json({
-      status: "error",
-      message: `Unable to load student profile (${error.message}).`,
-    });
+    return sendSafeServerError(
+      res,
+      "Unable to load student profile right now.",
+      error,
+    );
   }
 });
 
 // Verify current password endpoint
 app.post("/api/verify-password", async (req, res) => {
-  const { password } = req.body ?? {};
+  const password = String(req.body?.password || "");
 
   if (!password) {
     return res.status(400).json({
@@ -3474,8 +3655,8 @@ app.post("/api/verify-password", async (req, res) => {
 
     // Get current user from request headers or session
     // For now, we'll get the user ID from the request - in production you'd get this from session/JWT
-    const userId = req.headers['x-user-id'];
-    
+    const userId = parsePositiveInteger(req.headers["x-user-id"]);
+
     if (!userId) {
       return res.status(401).json({
         status: "error",
@@ -3525,11 +3706,11 @@ app.post("/api/verify-password", async (req, res) => {
       });
     }
   } catch (error) {
-    console.error("Error verifying password:", error);
+    console.error("Unable to verify password right now.", error);
     return res.status(503).json({
       status: "error",
       isValid: false,
-      message: `Unable to verify password (${error.message}).`,
+      message: "Unable to verify password right now.",
     });
   }
 });

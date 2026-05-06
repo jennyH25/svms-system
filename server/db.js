@@ -11,6 +11,17 @@ const isEnvEnabled = (value) =>
   ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 const serverlessRuntimeDbSyncEnabled =
   !isServerlessRuntime || isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_DB_SYNC);
+const SAFE_APP_STATE_KEY_REGEX = /^[A-Za-z0-9:_-]{1,64}$/;
+const ALLOWED_APP_STATE_TRIGGER_TABLES = new Set([
+  '"Students"',
+  '"SystemSettings"',
+  "violations",
+  "student_violation_logs",
+  "student_violation_archives",
+  "notifications",
+  "audit_logs",
+]);
+const SAFE_SQL_IDENTIFIER_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function getConnectionUrl() {
   return process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || "";
@@ -30,6 +41,9 @@ function getConnectionString() {
 
 function getSqlOptions() {
   const useSsl = process.env.PGSSL !== "false";
+  const rejectUnauthorized = isEnvEnabled(
+    process.env.PGSSL_REJECT_UNAUTHORIZED,
+  );
 
   return {
     max: DEFAULT_DB_POOL_MAX,
@@ -37,7 +51,7 @@ function getSqlOptions() {
     idle_timeout: 30, // Reduced from 60 to 30 seconds to release connections faster
     max_lifetime: 60 * 60, // Reduced from 24 hours to 1 hour
     query_timeout: 60 * 1000, // Increased from 30s to 60s for sync operations
-    ssl: useSsl ? { rejectUnauthorized: false } : undefined,
+    ssl: useSsl ? { rejectUnauthorized } : undefined,
   };
 }
 
@@ -109,11 +123,19 @@ async function ensureAppStateSyncFunction(dbPool) {
 
 async function ensureAppStateTrigger(dbPool, { tableName, triggerName, keys }) {
   const safeKeys = Array.isArray(keys)
-    ? keys.filter((value) => String(value || "").trim())
+    ? keys.filter((value) => SAFE_APP_STATE_KEY_REGEX.test(String(value || "").trim()))
     : [];
 
   if (!tableName || !triggerName || safeKeys.length === 0) {
     return;
+  }
+
+  if (!ALLOWED_APP_STATE_TRIGGER_TABLES.has(tableName)) {
+    throw new Error(`Unsafe app state trigger table name: ${tableName}`);
+  }
+
+  if (!SAFE_SQL_IDENTIFIER_REGEX.test(String(triggerName || ""))) {
+    throw new Error(`Unsafe app state trigger name: ${triggerName}`);
   }
 
   const relationCheck = await dbPool.query(
