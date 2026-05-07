@@ -8,7 +8,9 @@ import multer from "multer";
 import path from "node:path";
 import { access, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import XLSX from "xlsx";
 import {
+  default as dbSql,
   closeDbPool,
   getAppStateSnapshot,
   getSeedAccountsFromEnv,
@@ -568,7 +570,7 @@ function splitMiddleInitialFromFirstName(firstName, middleInitial) {
 
   if (explicitMiddle) {
     return {
-      firstName: normalizedFirstName,
+      firstName: formatStudentNameSegment(normalizedFirstName),
       middleInitial: explicitMiddle.charAt(0).toUpperCase(),
     };
   }
@@ -577,16 +579,26 @@ function splitMiddleInitialFromFirstName(firstName, middleInitial) {
     const tail = String(parts[parts.length - 1] || "").replace(/\./g, "");
     if (/^[a-z]$/i.test(tail)) {
       return {
-        firstName: normalizedFirstName,
+        firstName: formatStudentNameSegment(normalizedFirstName),
         middleInitial: derivedMiddle || tail.toUpperCase(),
       };
     }
   }
 
   return {
-    firstName: normalizedFirstName,
+    firstName: formatStudentNameSegment(normalizedFirstName),
     middleInitial: "",
   };
+}
+
+function formatStudentNameSegment(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/(^|[\s'-])([a-z])/g, (_match, prefix, letter) => {
+      return `${prefix}${letter.toUpperCase()}`;
+    });
 }
 
 function formatWorkbookComparisonDate(value) {
@@ -2663,6 +2675,252 @@ function generateTemporaryPassword() {
   return crypto.randomBytes(6).toString("base64url");
 }
 
+function parseImportedStudentName(rawName) {
+  const normalized = String(rawName || "").trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return {
+      firstName: "",
+      middleInitial: "",
+      lastName: "",
+      fullName: "",
+    };
+  }
+
+  const [lastPartRaw, remainingRaw = ""] = normalized.split(",", 2);
+  const lastName = formatStudentNameSegment(lastPartRaw);
+  const remainingParts = String(remainingRaw || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  let middleInitial = "";
+  let firstNameParts = remainingParts;
+  if (remainingParts.length > 1) {
+    const lastToken = remainingParts.at(-1) || "";
+    const middleMatch = lastToken.match(/^([A-Za-z])[.]?$/);
+    if (middleMatch) {
+      middleInitial = middleMatch[1].toUpperCase();
+      firstNameParts = remainingParts.slice(0, -1);
+    }
+  }
+
+  const firstName = formatStudentNameSegment(firstNameParts.join(" "));
+  const fullName = [firstName, middleInitial ? `${middleInitial}.` : "", lastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  return {
+    firstName,
+    middleInitial,
+    lastName,
+    fullName,
+  };
+}
+
+function parseImportedProgramYearSection(rawValue) {
+  const normalized = String(rawValue || "").trim();
+  if (!normalized) {
+    return { program: "", yearSection: "", yearLevel: 1 };
+  }
+
+  const [programRaw = "", yearSectionRaw = ""] = normalized.split("-", 2);
+  const program = String(programRaw || "").trim().toUpperCase();
+  const yearSection = String(yearSectionRaw || normalized).trim().toUpperCase();
+  const yearMatch = yearSection.match(/^(\d+)/);
+  const yearLevel = yearMatch ? Number(yearMatch[1]) : 1;
+
+  return {
+    program,
+    yearSection,
+    yearLevel: Number.isFinite(yearLevel) && yearLevel >= 1 ? yearLevel : 1,
+  };
+}
+
+function normalizeImportedStudentStatus(value) {
+  return String(value || "").trim().toLowerCase() === "irregular"
+    ? "Irregular"
+    : "Regular";
+}
+
+function parseStudentWorkbook(buffer) {
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const firstSheetName = workbook.SheetNames?.[0];
+  if (!firstSheetName) {
+    throw new Error("The workbook does not contain any worksheets.");
+  }
+
+  const worksheet = workbook.Sheets[firstSheetName];
+  const rows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("The workbook does not contain any student rows.");
+  }
+
+  const students = [];
+  const seenSchoolIds = new Set();
+  const seenEmails = new Set();
+
+  rows.forEach((row, index) => {
+    const rowNumber = index + 2;
+    const schoolId = String(row["Student Id"] || row["Student ID"] || "")
+      .trim();
+    const name = String(row.Name || "").trim();
+    const email = String(row["Email "] || row.Email || "")
+      .trim()
+      .toLowerCase();
+    const programYearSection = String(
+      row["Program-Year/Section"] || row["Program / Year / Section"] || "",
+    ).trim();
+    const status = normalizeImportedStudentStatus(
+      row["Status(Regular or Irregular)"] || row.Status || "",
+    );
+
+    if (!schoolId && !name && !email && !programYearSection) {
+      return;
+    }
+
+    if (!schoolId || !name || !email || !programYearSection) {
+      throw new Error(
+        `Row ${rowNumber} is missing one or more required columns (Student Id, Name, Program-Year/Section, Email).`,
+      );
+    }
+
+    if (seenSchoolIds.has(schoolId.toLowerCase())) {
+      throw new Error(`Duplicate Student Id found in workbook at row ${rowNumber}.`);
+    }
+    if (seenEmails.has(email)) {
+      throw new Error(`Duplicate email found in workbook at row ${rowNumber}.`);
+    }
+
+    seenSchoolIds.add(schoolId.toLowerCase());
+    seenEmails.add(email);
+
+    const parsedName = parseImportedStudentName(name);
+    const parsedProgram = parseImportedProgramYearSection(programYearSection);
+    if (!parsedName.firstName || !parsedName.lastName) {
+      throw new Error(`Unable to parse the student name at row ${rowNumber}.`);
+    }
+    if (!parsedProgram.program || !parsedProgram.yearSection) {
+      throw new Error(
+        `Unable to parse Program-Year/Section at row ${rowNumber}.`,
+      );
+    }
+
+    students.push({
+      schoolId,
+      email,
+      status,
+      ...parsedName,
+      ...parsedProgram,
+    });
+  });
+
+  if (students.length === 0) {
+    throw new Error("No importable student rows were found in the workbook.");
+  }
+
+  return students;
+}
+
+async function buildStudentImportPreview(pool, importedStudents) {
+  const schoolIds = importedStudents.map((student) =>
+    String(student.schoolId || "").trim().toLowerCase(),
+  );
+  const emails = importedStudents.map((student) =>
+    String(student.email || "").trim().toLowerCase(),
+  );
+
+  const existingStudentsResult = await pool.query(
+    `
+    SELECT
+      s.id,
+      s.user_id,
+      s.school_id,
+      s.email,
+      s.full_name,
+      s.first_name,
+      s.middle_initial,
+      s.last_name,
+      s.program,
+      s.year_section,
+      s.year_level,
+      s.status,
+      s.is_archived,
+      u.username
+    FROM "Students" s
+    LEFT JOIN users u ON u.id = s.user_id
+    WHERE LOWER(s.school_id) = ANY($1::text[])
+       OR LOWER(s.email) = ANY($2::text[])
+    `,
+    [schoolIds, emails],
+  );
+
+  const existingBySchoolId = new Map();
+  const existingByEmail = new Map();
+
+  for (const existingStudent of existingStudentsResult.rows || []) {
+    existingBySchoolId.set(
+      String(existingStudent.school_id || "").trim().toLowerCase(),
+      existingStudent,
+    );
+    existingByEmail.set(
+      String(existingStudent.email || "").trim().toLowerCase(),
+      existingStudent,
+    );
+  }
+
+  const preparedRows = importedStudents.map((student) => {
+    const normalizedSchoolId = String(student.schoolId || "").trim().toLowerCase();
+    const normalizedEmail = String(student.email || "").trim().toLowerCase();
+    const schoolMatch = existingBySchoolId.get(normalizedSchoolId) || null;
+    const emailMatch = existingByEmail.get(normalizedEmail) || null;
+
+    if (schoolMatch && emailMatch && schoolMatch.id !== emailMatch.id) {
+      throw new Error(
+        `Conflicting existing student records were found for School ID ${student.schoolId} and email ${student.email}. Please resolve the duplicate records first.`,
+      );
+    }
+
+    const existingStudent = schoolMatch || emailMatch || null;
+    const duplicateReasons = [];
+
+    if (schoolMatch) duplicateReasons.push("schoolId");
+    if (emailMatch) duplicateReasons.push("email");
+
+    return {
+      student,
+      existingStudent,
+      isDuplicate: Boolean(existingStudent),
+      duplicateReasons,
+    };
+  });
+
+  const duplicateRows = preparedRows.filter((row) => row.isDuplicate);
+  const newRows = preparedRows.filter((row) => !row.isDuplicate);
+
+  return {
+    preparedRows,
+    duplicateRows,
+    newRows,
+    duplicateCount: duplicateRows.length,
+    importableCount: newRows.length,
+    duplicates: duplicateRows.map((row) => ({
+      schoolId: row.student.schoolId,
+      email: row.student.email,
+      fullName: row.student.fullName,
+      existingStudentId: row.existingStudent?.id || null,
+      existingName:
+        row.existingStudent?.full_name ||
+        [row.existingStudent?.first_name, row.existingStudent?.last_name]
+          .filter(Boolean)
+          .join(" ")
+          .trim(),
+      duplicateReasons: row.duplicateReasons,
+      isArchived: Boolean(row.existingStudent?.is_archived),
+    })),
+  };
+}
+
 const uploadsDir = path.join(path.dirname(__filename), "uploads");
 
 const upload = multer({
@@ -2677,6 +2935,31 @@ const upload = multer({
   },
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+});
+
+const studentWorkbookUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, cb) => {
+    const lowerName = String(file.originalname || "").toLowerCase();
+    const allowedMimeTypes = new Set([
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+      "application/octet-stream",
+    ]);
+    if (
+      lowerName.endsWith(".xlsx") ||
+      lowerName.endsWith(".xls") ||
+      allowedMimeTypes.has(String(file.mimetype || "").toLowerCase())
+    ) {
+      cb(null, true);
+      return;
+    }
+
+    cb(new Error("Only Excel files (.xlsx or .xls) are allowed."));
+  },
+  limits: {
+    fileSize: 10 * 1024 * 1024,
   },
 });
 
@@ -3597,9 +3880,13 @@ app.put("/api/profile/student", async (req, res) => {
       }
     }
 
-    const cleanedFirst = String(firstName || "").trim();
-    const cleanedMiddle = String(middleInitial || "").trim();
-    const cleanedLast = String(lastName || "").trim();
+    const cleanedFirst = formatStudentNameSegment(firstName);
+    const cleanedMiddle = String(middleInitial || "")
+      .trim()
+      .replace(/\./g, "")
+      .slice(0, 1)
+      .toUpperCase();
+    const cleanedLast = formatStudentNameSegment(lastName);
     const fullName = [cleanedFirst, cleanedMiddle ? `${cleanedMiddle}.` : "", cleanedLast]
       .filter(Boolean)
       .join(" ")
@@ -3774,6 +4061,249 @@ app.get("/api/students", async (req, res) => {
   }
 });
 
+app.post("/api/students/import", (req, res) => {
+  studentWorkbookUpload.single("file")(req, res, async (uploadError) => {
+    if (uploadError) {
+      return res.status(400).json({
+        status: "error",
+        message: uploadError.message || "Unable to read the uploaded workbook.",
+      });
+    }
+
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        status: "error",
+        message: "Please attach an Excel workbook first.",
+      });
+    }
+
+    if (!hasDbConfig()) {
+      return res.status(500).json({
+        status: "error",
+        message: "Database environment variables are missing.",
+        missing: getMissingDbVars(),
+      });
+    }
+
+    try {
+      await ensureAuthDatabaseReady();
+      const pool = getDbPool();
+      const importedStudents = parseStudentWorkbook(req.file.buffer);
+      const preview = await buildStudentImportPreview(pool, importedStudents);
+      const mode = String(req.body?.mode || "apply").trim().toLowerCase();
+      const overwriteExisting =
+        String(req.body?.overwriteExisting || "").trim().toLowerCase() === "true";
+
+      if (mode === "preview") {
+        return res.status(200).json({
+          status: "ok",
+          mode: "preview",
+          totalRows: importedStudents.length,
+          duplicateCount: preview.duplicateCount,
+          importableCount: preview.importableCount,
+          duplicates: preview.duplicates,
+        });
+      }
+
+      const createdCredentials = [];
+      let createdCount = 0;
+      let overwrittenCount = 0;
+      let skippedDuplicateCount = 0;
+
+      if (!dbSql) {
+        throw new Error("Database connection is not configured.");
+      }
+
+      try {
+        await dbSql.begin(async (tx) => {
+        for (const row of preview.preparedRows) {
+          const { student, existingStudent, isDuplicate } = row;
+
+          if (isDuplicate && !overwriteExisting) {
+            skippedDuplicateCount += 1;
+            continue;
+          }
+
+          if (isDuplicate && overwriteExisting) {
+            let username = String(existingStudent?.username || "").trim();
+
+            if (existingStudent?.user_id) {
+              const userUpdate = await tx.unsafe(
+                `
+                UPDATE users
+                SET
+                  first_name = $1,
+                  last_name = $2,
+                  is_active = TRUE
+                WHERE id = $3 AND role = 'student'
+                RETURNING username
+                `,
+                [student.firstName, student.lastName, existingStudent.user_id],
+              );
+
+              username = userUpdate?.[0]?.username || username || "";
+            }
+
+            await tx.unsafe(
+              `
+              UPDATE "Students"
+              SET
+                email = $1,
+                school_id = $2,
+                first_name = $3,
+                middle_initial = $4,
+                last_name = $5,
+                full_name = $6,
+                program = $7,
+                year_section = $8,
+                year_level = $9,
+                status = $10,
+                is_archived = FALSE,
+                archived_at = NULL,
+                archived_reason = NULL,
+                original_status = NULL,
+                is_unresolved_archive = FALSE
+              WHERE id = $11
+              `,
+              [
+                student.email,
+                student.schoolId,
+                student.firstName,
+                student.middleInitial || null,
+                student.lastName,
+                student.fullName,
+                student.program,
+                student.yearSection,
+                student.yearLevel,
+                student.status,
+                existingStudent.id,
+              ],
+            );
+
+            overwrittenCount += 1;
+            continue;
+          }
+
+          const generatedUsername = await generateStudentUsername(
+            {
+              query: async (text, params = []) => {
+                const rows =
+                  params.length > 0
+                    ? await tx.unsafe(text, params)
+                    : await tx.unsafe(text);
+                return { rows: Array.isArray(rows) ? rows : [] };
+              },
+            },
+            student.firstName,
+            student.lastName,
+          );
+          const generatedPassword = generateTemporaryPassword();
+          const passwordHash = await bcrypt.hash(generatedPassword, 10);
+
+          const userInsert = await tx.unsafe(
+            `
+            INSERT INTO users (username, password_hash, role, first_name, last_name, is_active)
+            VALUES ($1, $2, 'student', $3, $4, TRUE)
+            RETURNING id, username
+            `,
+            [
+              generatedUsername,
+              passwordHash,
+              student.firstName,
+              student.lastName,
+            ],
+          );
+
+          const userId = userInsert?.[0]?.id;
+          const username = userInsert?.[0]?.username || generatedUsername;
+
+          await tx.unsafe(
+            `
+            INSERT INTO "Students"
+              (user_id, email, school_id, first_name, middle_initial, last_name, full_name, program, year_section, year_level, status, violation_count)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0)
+            `,
+            [
+              userId,
+              student.email,
+              student.schoolId,
+              student.firstName,
+              student.middleInitial || null,
+              student.lastName,
+              student.fullName,
+              student.program,
+              student.yearSection,
+              student.yearLevel,
+              student.status,
+            ],
+          );
+
+          createdCredentials.push({
+            email: student.email,
+            firstName: student.firstName,
+            username,
+            password: generatedPassword,
+            schoolId: student.schoolId,
+          });
+          createdCount += 1;
+        }
+        });
+      } catch (transactionError) {
+        throw transactionError;
+      }
+
+      await logAuditEvent(req, {
+        action: "IMPORT_STUDENTS",
+        targetType: "student",
+        details: `Imported students from workbook ${req.file.originalname || "upload"}: created ${createdCount}, overwritten ${overwrittenCount}, skipped duplicates ${skippedDuplicateCount}.`,
+        metadata: {
+          createdCount,
+          overwrittenCount,
+          skippedDuplicateCount,
+          duplicateCount: preview.duplicateCount,
+          workbook: req.file.originalname || "",
+          overwriteExisting,
+        },
+      });
+
+      res.status(201).json({
+        status: "ok",
+        message: `Imported ${createdCount} new students successfully.`,
+        importedCount: createdCount,
+        overwrittenCount,
+        skippedDuplicateCount,
+        duplicateCount: preview.duplicateCount,
+        emailQueuedCount: createdCredentials.length,
+      });
+
+      Promise.allSettled(
+        createdCredentials.map((credential) =>
+          sendStudentCredentialEmail({
+            toEmail: credential.email,
+            firstName: credential.firstName,
+            username: credential.username,
+            password: credential.password,
+          }),
+        ),
+      ).then((results) => {
+        results.forEach((result, index) => {
+          if (result.status === "rejected") {
+            const failedEmail = createdCredentials[index]?.email || "unknown";
+            console.error(
+              `[Student Import] Failed to send credential email to ${failedEmail}: ${result.reason?.message || result.reason}`,
+            );
+          }
+        });
+      });
+    } catch (error) {
+      return res.status(503).json({
+        status: "error",
+        message: `Unable to import students (${error.message}).`,
+      });
+    }
+  });
+});
+
 app.post("/api/students", async (req, res) => {
   const { schoolId, email, firstName, lastName, program, yearSection, status } =
     req.body ?? {};
@@ -3783,8 +4313,8 @@ app.post("/api/students", async (req, res) => {
   const normalizedEmail = String(email || "")
     .trim()
     .toLowerCase();
-  const cleanedFirst = String(firstName || "").trim();
-  const cleanedLast = String(lastName || "").trim();
+    const cleanedFirst = formatStudentNameSegment(firstName);
+    const cleanedLast = formatStudentNameSegment(lastName);
   const normalizedProgram = String(program || "").trim();
   const normalizedYearSection = String(yearSection || "").trim();
 
@@ -4017,13 +4547,13 @@ app.put("/api/students/:id", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
-    const cleanedFirst = String(firstName || "").trim();
+    const cleanedFirst = formatStudentNameSegment(firstName);
     const cleanedMiddleInitial = String(middleInitial || "")
       .trim()
       .replace(/\./g, "")
       .slice(0, 1)
       .toUpperCase();
-    const cleanedLast = String(lastName || "").trim();
+    const cleanedLast = formatStudentNameSegment(lastName);
     const normalizedUsername = String(username || "").trim();
     const normalizedSchoolId = String(schoolId || "").trim();
     const normalizedEmail = String(email || "")
@@ -8471,7 +9001,7 @@ app.put("/api/archive/users/:id", async (req, res) => {
     );
     const cleanedFirstName = normalizedName.firstName;
     const cleanedMiddleInitial = normalizedName.middleInitial;
-    const cleanedLastName = String(lastName || "").trim();
+    const cleanedLastName = formatStudentNameSegment(lastName);
     const fullName =
       cleanedFirstName && cleanedLastName
         ? [
@@ -8918,7 +9448,7 @@ app.put("/api/archive/violations/:id", async (req, res) => {
     );
     const cleanedFirstName = normalizedName.firstName;
     const cleanedMiddleInitial = normalizedName.middleInitial;
-    const cleanedLastName = String(lastName || "").trim();
+    const cleanedLastName = formatStudentNameSegment(lastName);
     if (
       (cleanedFirstName || cleanedMiddleInitial || cleanedLastName) &&
       updatedViolation.student_id

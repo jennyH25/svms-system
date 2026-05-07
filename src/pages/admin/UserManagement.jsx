@@ -1,13 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   Archive,
   Download,
+  Upload,
   ChevronDown,
+  ChevronLeft,
   Edit,
   Trash2,
   Eye,
   CheckCircle,
+  Loader2,
   Minus,
   AlertCircle,
 } from "lucide-react";
@@ -122,6 +125,18 @@ const UserManagement = () => {
   const [exportFormat, setExportFormat] = useState("excel");
   const [exportAlertMessage, setExportAlertMessage] = useState("");
   const [isExporting, setIsExporting] = useState(false);
+  const [showImportUsersModal, setShowImportUsersModal] = useState(false);
+  const [selectedImportFile, setSelectedImportFile] = useState(null);
+  const [isImportingUsers, setIsImportingUsers] = useState(false);
+  const [showImportDuplicateModal, setShowImportDuplicateModal] = useState(false);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importSuccessModal, setImportSuccessModal] = useState({
+    isOpen: false,
+    title: "Import Complete",
+    summary: "",
+    details: [],
+  });
+  const importFileInputRef = useRef(null);
 
   const [studentData, setStudentData] = useState([]);
   const [showArchiveSchoolYearModal, setShowArchiveSchoolYearModal] = useState(false);
@@ -608,6 +623,167 @@ const UserManagement = () => {
       alert(error.message || "Unable to delete selected students.");
     } finally {
       setIsDeletingSelected(false);
+    }
+  };
+
+  const handleOpenImportUsersModal = () => {
+    if (isImportingUsers) {
+      return;
+    }
+    setShowImportUsersModal(true);
+  };
+
+  const handleSelectImportWorkbook = () => {
+    if (isImportingUsers) {
+      return;
+    }
+    importFileInputRef.current?.click();
+  };
+
+  const handleImportWorkbookChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    if (!file) {
+      return;
+    }
+
+    setSelectedImportFile(file);
+    setImportPreview(null);
+  };
+
+  const handleDownloadImportTemplate = async () => {
+    try {
+      const XLSX = await import("xlsx");
+      const templateRows = [
+        [
+          "Student Id",
+          "Name",
+          "Program-Year/Section",
+          "Email ",
+          "Status(Regular or Irregular)",
+          "",
+          "",
+          "",
+          "",
+        ],
+        [
+          "23-00001",
+          "DELA CRUZ, JUAN M.",
+          "BSIT-3B",
+          "delacruz_juan@plpasig.edu.ph",
+          "Regular",
+          "",
+          "",
+          "",
+          "",
+        ],
+      ];
+
+      const worksheet = XLSX.utils.aoa_to_sheet(templateRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+      XLSX.writeFile(workbook, "svms-user-import-template.xlsx");
+    } catch (error) {
+      alert(error.message || "Unable to download import template.");
+    }
+  };
+
+  const resetImportState = () => {
+    setShowImportUsersModal(false);
+    setShowImportDuplicateModal(false);
+    setSelectedImportFile(null);
+    setImportPreview(null);
+    if (importFileInputRef.current) {
+      importFileInputRef.current.value = "";
+    }
+  };
+
+  const executeImportUsers = async (overwriteExisting) => {
+    const formData = new FormData();
+    formData.append("file", selectedImportFile);
+    formData.append("mode", "apply");
+    formData.append("overwriteExisting", overwriteExisting ? "true" : "false");
+
+    const response = await fetch("/api/students/import", {
+      method: "POST",
+      headers: {
+        ...getAuditHeaders(),
+      },
+      body: formData,
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result?.message || "Failed to import students.");
+    }
+
+    await fetchStudents(true);
+    setSelectedUserIds(new Set());
+    resetImportState();
+
+    setImportSuccessModal({
+      isOpen: true,
+      title: "Import Successful",
+      summary: `${result?.importedCount || 0} new student${Number(result?.importedCount || 0) === 1 ? "" : "s"} imported.`,
+      details: [
+        `${result?.overwrittenCount || 0} existing record${Number(result?.overwrittenCount || 0) === 1 ? "" : "s"} overwritten`,
+        `${result?.skippedDuplicateCount || 0} duplicate${Number(result?.skippedDuplicateCount || 0) === 1 ? "" : "s"} skipped`,
+        `${result?.emailQueuedCount || 0} account email${Number(result?.emailQueuedCount || 0) === 1 ? "" : "s"} queued`,
+      ],
+    });
+  };
+
+  const handleConfirmImportUsers = async () => {
+    if (!selectedImportFile) {
+      alert("Please choose an Excel workbook first.");
+      return;
+    }
+
+    setIsImportingUsers(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedImportFile);
+      formData.append("mode", "preview");
+
+      const response = await fetch("/api/students/import", {
+        method: "POST",
+        headers: {
+          ...getAuditHeaders(),
+        },
+        body: formData,
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || "Failed to import students.");
+      }
+
+      setImportPreview(result);
+      if (Number(result?.duplicateCount || 0) > 0) {
+        setShowImportUsersModal(false);
+        setShowImportDuplicateModal(true);
+      } else {
+        await executeImportUsers(false);
+      }
+    } catch (error) {
+      alert(error.message || "Unable to import students.");
+    } finally {
+      setIsImportingUsers(false);
+    }
+  };
+
+  const handleImportWithDuplicateChoice = async (overwriteExisting) => {
+    if (!selectedImportFile) {
+      alert("Please choose an Excel workbook first.");
+      return;
+    }
+
+    setIsImportingUsers(true);
+    try {
+      await executeImportUsers(overwriteExisting);
+    } catch (error) {
+      alert(error.message || "Unable to import students.");
+    } finally {
+      setIsImportingUsers(false);
     }
   };
 
@@ -1531,12 +1707,29 @@ const UserManagement = () => {
 
   return (
     <div className="text-white relative">
+      <input
+        ref={importFileInputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        className="hidden"
+        onChange={handleImportWorkbookChange}
+      />
       <AnimatedContent>
         <div className="flex justify-between items-center mb-2">
           <h2 className="text-xl font-semibold tracking-wide">
             USER MANAGEMENT
           </h2>
           <div className="flex gap-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleOpenImportUsersModal}
+              disabled={isImportingUsers}
+              className="gap-2 bg-[#4A5568] hover:bg-[#3d4654] border-0"
+            >
+              <Upload className="w-4 h-4" />
+              {isImportingUsers ? "Importing..." : "Import"}
+            </Button>
             <Button
               variant="secondary"
               size="sm"
@@ -1981,6 +2174,226 @@ const UserManagement = () => {
             className="px-6 py-2.5"
           >
             {isDeletingSelected ? "Deleting..." : "Delete Selected"}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        isOpen={showImportUsersModal}
+        onClose={() => {
+          if (!isImportingUsers) {
+            resetImportState();
+          }
+        }}
+        title={<span className="font-black font-inter">Import Users From Excel</span>}
+        size="lg"
+        showCloseButton={!isImportingUsers}
+      >
+        <div className="mb-5">
+          <p className="text-sm text-gray-200 font-semibold">
+            Upload an Excel file or use the template below.
+          </p>
+          <p className="text-xs text-gray-400 mt-1">
+            Accepted: `.xlsx` and `.xls`
+          </p>
+        </div>
+
+        <div className="mb-5">
+          <div className="rounded-2xl border border-cyan-400/25 bg-gradient-to-br from-cyan-500/12 to-cyan-500/5 px-4 py-4">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-cyan-200/80 mb-2">
+              File Status
+            </p>
+            <p className="text-sm font-semibold text-white truncate">
+              {selectedImportFile?.name || "No file selected"}
+            </p>
+            <p className="text-xs text-cyan-100/70 mt-2">
+              Choose one workbook for import.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleSelectImportWorkbook}
+            disabled={isImportingUsers}
+            className="h-12 justify-center gap-2 bg-emerald-600/20 hover:bg-emerald-600/35 border-emerald-500/45 border text-white"
+          >
+            <Upload className="w-4 h-4" />
+            {selectedImportFile ? "Change Excel File" : "Choose Excel File"}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleDownloadImportTemplate}
+            disabled={isImportingUsers}
+            className="h-12 justify-center gap-2 bg-slate-500/30 hover:bg-slate-500/45 border border-white/10 text-white"
+          >
+            <Download className="w-4 h-4" />
+            Download Template
+          </Button>
+        </div>
+
+        <ModalFooter className="flex w-full items-center justify-end gap-3 border-t border-white/10 pt-5">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={resetImportState}
+            disabled={isImportingUsers}
+            className="min-w-[120px] py-2.5"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={handleConfirmImportUsers}
+            disabled={isImportingUsers || !selectedImportFile}
+            className="min-w-[150px] py-2.5"
+          >
+            {isImportingUsers ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Importing...
+              </>
+            ) : (
+              "Import Users"
+            )}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        isOpen={showImportDuplicateModal}
+        onClose={() => {
+          if (!isImportingUsers) {
+            setShowImportDuplicateModal(false);
+            setShowImportUsersModal(true);
+          }
+        }}
+        title={
+          <span className="flex items-center gap-2 font-black font-inter">
+            <AlertCircle className="w-5 h-5 text-amber-300" />
+            Duplicate Users Found
+          </span>
+        }
+        size="lg"
+        showCloseButton={!isImportingUsers}
+      >
+        <div className="rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 mb-4">
+          <p className="text-amber-100 text-sm font-medium mb-2">
+            {Number(importPreview?.duplicateCount || 0)} existing {pluralize("user", Number(importPreview?.duplicateCount || 0))} were found in the uploaded Excel file.
+          </p>
+          <p className="text-amber-50 text-xs leading-relaxed">
+            Do you want to overwrite those existing records? If you choose not to overwrite, only the new non-duplicate users will be imported.
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 mb-4">
+          <p className="text-xs text-gray-300">
+            New users ready to import: <span className="font-semibold text-white">{Number(importPreview?.importableCount || 0)}</span>
+          </p>
+          <p className="text-xs text-gray-300 mt-1">
+            Existing users detected: <span className="font-semibold text-white">{Number(importPreview?.duplicateCount || 0)}</span>
+          </p>
+        </div>
+
+        <ModalFooter className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-white/10 pt-5">
+          {!isImportingUsers ? (
+            <>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setShowImportDuplicateModal(false);
+                  setShowImportUsersModal(true);
+                }}
+                disabled={isImportingUsers}
+                className="w-full sm:w-auto min-w-[120px] py-2.5 gap-2 bg-white/10 hover:bg-white/15 border border-white/15 text-white"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Back
+              </Button>
+              <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => handleImportWithDuplicateChoice(false)}
+                  disabled={isImportingUsers}
+                  className="w-full sm:w-auto min-w-[140px] py-2.5 bg-[#4A5568] hover:bg-[#3d4654] border-0"
+                >
+                  Import New
+                </Button>
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={() => handleImportWithDuplicateChoice(true)}
+                  disabled={isImportingUsers}
+                  className="w-full sm:w-auto min-w-[140px] py-2.5"
+                >
+                  Overwrite
+                </Button>
+              </div>
+            </>
+          ) : (
+            <Button
+              type="button"
+              variant="primary"
+              disabled
+              className="w-full sm:ml-auto sm:w-auto min-w-[170px] py-2.5"
+            >
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Importing...
+            </Button>
+          )}
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        isOpen={importSuccessModal.isOpen}
+        onClose={() =>
+          setImportSuccessModal((prev) => ({
+            ...prev,
+            isOpen: false,
+          }))
+        }
+        title={
+          <span className="font-black font-inter flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-green-400" />
+            {importSuccessModal.title}
+          </span>
+        }
+        size="sm"
+        showCloseButton
+      >
+        <div className="rounded-xl border border-green-400/25 bg-green-500/10 px-4 py-4 mb-4">
+          <p className="text-base font-semibold text-green-200 mb-3">
+            {importSuccessModal.summary}
+          </p>
+          <div className="space-y-2 text-sm text-green-100/90">
+            {Array.isArray(importSuccessModal.details) &&
+              importSuccessModal.details.map((detail) => (
+                <div key={detail} className="flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-300 shrink-0" />
+                  <span>{detail}</span>
+                </div>
+              ))}
+          </div>
+        </div>
+        <ModalFooter className="flex justify-end border-t border-white/10 pt-4">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() =>
+              setImportSuccessModal((prev) => ({
+                ...prev,
+                isOpen: false,
+              }))
+            }
+            className="px-6 py-2.5 bg-[#4A5568] hover:bg-[#3d4654] border-0 text-white"
+          >
+            OK
           </Button>
         </ModalFooter>
       </Modal>
