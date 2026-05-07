@@ -6,6 +6,8 @@ import {
   syncStudentsDatabase,
   syncViolationsDatabase,
   syncNotificationsDatabase,
+  syncPasswordResetDatabase,
+  syncSuperAdminSecurityDatabase,
 } from "../server/db.js";
 
 async function setupAuthDatabase() {
@@ -16,6 +18,8 @@ async function setupAuthDatabase() {
     // also ensure the violations and notification tables exist when preparing the auth database
     await syncViolationsDatabase();
     await syncNotificationsDatabase();
+    await syncPasswordResetDatabase();
+    await syncSuperAdminSecurityDatabase();
 
     console.log("Auth database setup completed successfully.");
     if (result.accounts.length > 0) {

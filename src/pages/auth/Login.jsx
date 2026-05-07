@@ -1,18 +1,23 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Eye, EyeOff } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import logo from "../../assets/css_logo.png";
 import GradientText from "../../components/ui/GradientText";
 import AnimatedContent from "../../components/ui/AnimatedContent";
 import GlassInput from "../../components/ui/GlassInput";
 import PasswordRequirements from "../../components/ui/PasswordRequirements";
+import Modal, { ModalFooter } from "../../components/ui/Modal";
+import Button from "../../components/ui/Button";
 import { isPasswordValid, getPasswordErrorMessage } from "../../lib/passwordValidator";
+
+const SUPER_ADMIN_TRUSTED_DEVICE_KEY = "svms_super_admin_trusted_device";
 
 const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [forgotPasswordStep, setForgotPasswordStep] = useState(1);
   const [forgotPasswordError, setForgotPasswordError] = useState("");
@@ -30,31 +35,51 @@ const Login = () => {
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [showPasswordRequirements, setShowPasswordRequirements] = useState(false);
   const [passwordValidationError, setPasswordValidationError] = useState("");
+  const [isSuperAdminVerification, setIsSuperAdminVerification] = useState(false);
+  const [superAdminChallengeId, setSuperAdminChallengeId] = useState("");
+  const [superAdminCode, setSuperAdminCode] = useState("");
+  const [superAdminMessage, setSuperAdminMessage] = useState("");
+  const [superAdminResendTimer, setSuperAdminResendTimer] = useState(0);
+  const [isResendingSuperAdminCode, setIsResendingSuperAdminCode] = useState(false);
+  const [verifiedSuperAdminUser, setVerifiedSuperAdminUser] = useState(null);
+  const [showSuperAdminSuccessModal, setShowSuperAdminSuccessModal] = useState(false);
+  const [trustThisDevice, setTrustThisDevice] = useState(false);
+  const [isFinalizingSuperAdminLogin, setIsFinalizingSuperAdminLogin] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (resendTimer <= 0) {
-      return undefined;
+    if (resendTimer > 0 || superAdminResendTimer > 0) {
+      const timerId = setInterval(() => {
+        if (resendTimer > 0) {
+          setResendTimer((prev) => (prev <= 1 ? 0 : prev - 1));
+        }
+        if (superAdminResendTimer > 0) {
+          setSuperAdminResendTimer((prev) => (prev <= 1 ? 0 : prev - 1));
+        }
+      }, 1000);
+
+      return () => clearInterval(timerId);
     }
 
-    const timerId = setInterval(() => {
-      setResendTimer((prev) => (prev <= 1 ? 0 : prev - 1));
-    }, 1000);
-
-    return () => clearInterval(timerId);
-  }, [resendTimer]);
+    return undefined;
+  }, [resendTimer, superAdminResendTimer]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
+    setSuperAdminMessage("");
+    setIsLoading(true);
 
     try {
+      const trustedDeviceToken = localStorage.getItem(
+        SUPER_ADMIN_TRUSTED_DEVICE_KEY,
+      ) || "";
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, trustedDeviceToken }),
       });
 
       let result = {};
@@ -64,8 +89,22 @@ const Login = () => {
         result = {};
       }
 
+      if (response.status === 202 && result?.requiresVerification) {
+        setIsSuperAdminVerification(true);
+        setSuperAdminChallengeId(result?.challengeId || "");
+        setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 15);
+        setSuperAdminCode("");
+        setSuperAdminMessage(
+          result?.message ||
+            "A verification code was sent to your email. Enter it to continue.",
+        );
+        setIsLoading(false);
+        return;
+      }
+
       if (!response.ok) {
         setError(result?.message || `Login failed (${response.status})`);
+        setIsLoading(false);
         return;
       }
 
@@ -78,19 +117,27 @@ const Login = () => {
         return;
       }
 
+      if (userRole === "super_admin") {
+        navigate("/super-admin");
+        return;
+      }
+
       if (userRole === "student") {
         navigate("/student/dashboard");
         return;
       }
 
       setError("Account role is not recognized.");
+      setIsLoading(false);
     } catch (_error) {
       setError("Unable to connect to the login server.");
+      setIsLoading(false);
     }
   };
 
   const handleForgotPasswordReset = () => {
     setIsForgotPassword(false);
+    setIsSuperAdminVerification(false);
     setForgotPasswordStep(1);
     setForgotPasswordError("");
     setForgotPasswordSuccess("");
@@ -107,6 +154,16 @@ const Login = () => {
     setIsResettingPassword(false);
     setShowPasswordRequirements(false);
     setPasswordValidationError("");
+    setSuperAdminChallengeId("");
+    setSuperAdminCode("");
+    setSuperAdminMessage("");
+    setSuperAdminResendTimer(0);
+    setIsResendingSuperAdminCode(false);
+    setVerifiedSuperAdminUser(null);
+    setShowSuperAdminSuccessModal(false);
+    setTrustThisDevice(false);
+    setIsFinalizingSuperAdminLogin(false);
+    setIsLoading(false);
   };
 
   const requestForgotPasswordCode = async () => {
@@ -126,6 +183,140 @@ const Login = () => {
     }
 
     return result;
+  };
+
+  const handleSuperAdminVerifyCode = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuperAdminMessage("");
+
+    if (!superAdminCode.trim()) {
+      setError("Please enter the verification code");
+      return;
+    }
+
+    setIsVerifyingCode(true);
+    try {
+      const response = await fetch("/api/auth/super-admin/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          challengeId: superAdminChallengeId,
+          code: superAdminCode.trim(),
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || "Invalid verification code");
+      }
+
+      setVerifiedSuperAdminUser(result?.user || null);
+      setShowSuperAdminSuccessModal(true);
+      setTrustThisDevice(false);
+      setSuperAdminMessage("Verification successful.");
+    } catch (verifyError) {
+      setError(verifyError.message || "Unable to verify code.");
+    } finally {
+      setIsVerifyingCode(false);
+    }
+  };
+
+  const handleResendSuperAdminCode = async () => {
+    if (
+      superAdminResendTimer > 0 ||
+      isResendingSuperAdminCode ||
+      !superAdminChallengeId
+    ) {
+      return;
+    }
+
+    setError("");
+    setSuperAdminMessage("");
+    setIsResendingSuperAdminCode(true);
+
+    try {
+      const response = await fetch("/api/auth/super-admin/resend-code", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          challengeId: superAdminChallengeId,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          result?.message || "Unable to resend verification code.",
+        );
+      }
+
+      setSuperAdminMessage("A new verification code has been sent.");
+      setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 15);
+    } catch (requestError) {
+      setError(
+        requestError.message || "Unable to resend verification code.",
+      );
+    } finally {
+      setIsResendingSuperAdminCode(false);
+    }
+  };
+
+  const finalizeSuperAdminLogin = async () => {
+    if (!verifiedSuperAdminUser) {
+      return;
+    }
+
+    setIsFinalizingSuperAdminLogin(true);
+    setError("");
+
+    try {
+      let nextTrustedDeviceToken = "";
+
+      if (trustThisDevice) {
+        const trustResponse = await fetch("/api/auth/super-admin/trust-device", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            userId: verifiedSuperAdminUser.id,
+            sessionToken: verifiedSuperAdminUser.sessionToken,
+          }),
+        });
+
+        const trustResult = await trustResponse.json().catch(() => ({}));
+        if (!trustResponse.ok) {
+          throw new Error(
+            trustResult?.message || "Unable to trust this device.",
+          );
+        }
+
+        nextTrustedDeviceToken = trustResult?.trustedDeviceToken || "";
+      }
+
+      if (nextTrustedDeviceToken) {
+        localStorage.setItem(
+          SUPER_ADMIN_TRUSTED_DEVICE_KEY,
+          nextTrustedDeviceToken,
+        );
+      } else if (!trustThisDevice) {
+        localStorage.removeItem(SUPER_ADMIN_TRUSTED_DEVICE_KEY);
+      }
+
+      localStorage.setItem("svms_user", JSON.stringify(verifiedSuperAdminUser));
+      setShowSuperAdminSuccessModal(false);
+      navigate("/super-admin");
+    } catch (finalizeError) {
+      setError(finalizeError.message || "Unable to complete login.");
+      setShowSuperAdminSuccessModal(false);
+    } finally {
+      setIsFinalizingSuperAdminLogin(false);
+    }
   };
 
   const handleSendEmail = async (e) => {
@@ -339,20 +530,49 @@ const Login = () => {
         {/* Right Panel */}
         <div className="w-[55%] bg-[#0F1113]/30 p-12 relative overflow-y-auto">
           {!isForgotPassword ? (
-            // Login Form
             <div className="mt-10">
-              <AnimatedContent
-                distance={30}
-                direction="horizontal"
-                reverse
-                duration={0.6}
-                delay={0.2}
-              >
-                <h2 className="text-white text-4xl font-bold mb-12">Login</h2>
-              </AnimatedContent>
+              <div className="mb-12 flex items-center gap-3">
+                {isSuperAdminVerification && (
+                  <button
+                    type="button"
+                    onClick={handleBackToLogin}
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    <svg
+                      className="w-6 h-6"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 19l-7-7 7-7"
+                      />
+                    </svg>
+                  </button>
+                )}
+                <AnimatedContent
+                  distance={30}
+                  direction="horizontal"
+                  reverse
+                  duration={0.6}
+                  delay={0.2}
+                >
+                  <h2 className="text-white text-4xl font-bold">
+                    {isSuperAdminVerification ? "Verify Super Admin" : "Login"}
+                  </h2>
+                </AnimatedContent>
+              </div>
               {error && (
                 <div className="bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg mb-6 text-sm">
                   {error}
+                </div>
+              )}
+              {superAdminMessage && isSuperAdminVerification && (
+                <div className="bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 px-4 py-3 rounded-lg mb-6 text-sm">
+                  {superAdminMessage}
                 </div>
               )}
               <AnimatedContent
@@ -362,50 +582,96 @@ const Login = () => {
                 duration={0.6}
                 delay={0.3}
               >
-                <form onSubmit={handleLogin} className="space-y-8">
-                  <GlassInput
-                    label="USERNAME OR EMAIL"
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                  />
-                  <div>
+                {!isSuperAdminVerification ? (
+                  <form onSubmit={handleLogin} className="space-y-8">
                     <GlassInput
-                      label="PASSWORD"
-                      type={showPassword ? "text" : "password"}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      endIcon={
+                      label="USERNAME OR EMAIL"
+                      type="text"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                    />
+                    <div>
+                      <GlassInput
+                        label="PASSWORD"
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        endIcon={
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            aria-label={showPassword ? "Hide password" : "Show password"}
+                            className="flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+                          >
+                            {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                          </button>
+                        }
+                      />
+                      <div className="flex justify-end mt-3">
                         <button
                           type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          aria-label={showPassword ? "Hide password" : "Show password"}
-                          className="flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+                          onClick={() => setIsForgotPassword(true)}
+                          className="text-sm text-gray-400 hover:text-white transition-colors duration-200 
+               relative after:absolute after:bottom-0 after:left-0 after:right-0 
+               after:h-px after:bg-white after:scale-x-0 hover:after:scale-x-100 
+               after:transition-transform after:duration-300"
                         >
-                          {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                          Forgot Password?
                         </button>
-                      }
-                    />
-                    <div className="flex justify-end mt-3">
-                      <button
-                        type="button"
-                        onClick={() => setIsForgotPassword(true)}
-                        className="text-sm text-gray-400 hover:text-white transition-colors duration-200 
-             relative after:absolute after:bottom-0 after:left-0 after:right-0 
-             after:h-px after:bg-white after:scale-x-0 hover:after:scale-x-100 
-             after:transition-transform after:duration-300"
-                      >
-                        Forgot Password?
-                      </button>
+                      </div>
                     </div>
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest mt-6 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                    >
+                      {isLoading && (
+                        <div className="w-5 h-5 border-3 border-[#1a1a1a] border-t-transparent rounded-full animate-spin" />
+                      )}
+                      {isLoading ? "LOGGING IN..." : "LOGIN"}
+                    </button>
+                  </form>
+                ) : (
+                  <div>
+                    <p className="text-gray-400 text-sm mb-6">
+                      Enter the 6-digit verification code sent to your email to continue the super admin login.
+                    </p>
+                    <form onSubmit={handleSuperAdminVerifyCode} className="space-y-8">
+                      <GlassInput
+                        label="VERIFICATION CODE"
+                        type="text"
+                        value={superAdminCode}
+                        onChange={(e) =>
+                          setSuperAdminCode(
+                            e.target.value.replace(/\D/g, "").slice(0, 6),
+                          )
+                        }
+                        placeholder="000000"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleResendSuperAdminCode}
+                          disabled={superAdminResendTimer > 0 || isResendingSuperAdminCode}
+                          className="text-xs text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {superAdminResendTimer > 0
+                            ? `Resend code in ${superAdminResendTimer}s`
+                            : isResendingSuperAdminCode
+                              ? "Sending..."
+                              : "Resend code"}
+                        </button>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isVerifyingCode}
+                        className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98] disabled:opacity-60"
+                      >
+                        {isVerifyingCode ? "VERIFYING..." : "VERIFY CODE"}
+                      </button>
+                    </form>
                   </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest mt-6 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
-                  >
-                    LOGIN
-                  </button>
-                </form>
+                )}
               </AnimatedContent>
             </div>
           ) : (
@@ -715,6 +981,63 @@ const Login = () => {
           )}
         </div>
       </div>
+
+      <Modal
+        isOpen={showSuperAdminSuccessModal}
+        onClose={() => {}}
+        title={
+          <span className="font-black font-inter flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-green-400" />
+            Verification Successful
+          </span>
+        }
+        size="lg"
+        showCloseButton={false}
+      >
+        <div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-green-300">
+            Your super admin login has been verified successfully.
+          </p>
+        </div>
+
+        <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={trustThisDevice}
+            onChange={(e) => setTrustThisDevice(e.target.checked)}
+            disabled={isFinalizingSuperAdminLogin}
+            className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent text-cyan-300 focus:ring-cyan-300/30"
+          />
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-white">
+              <ShieldCheck className="w-4 h-4 text-cyan-300" />
+              Trust this device
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-gray-400">
+              Skip the 6-digit verification code on this device next time.
+            </p>
+          </div>
+        </label>
+
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={finalizeSuperAdminLogin}
+            disabled={isFinalizingSuperAdminLogin}
+            className="px-6 py-2.5"
+          >
+            {isFinalizingSuperAdminLogin ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Finishing...
+              </>
+            ) : (
+              "Continue"
+            )}
+          </Button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 };

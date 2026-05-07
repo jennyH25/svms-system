@@ -11,6 +11,8 @@ import {
 import { getAuditHeaders } from '@/lib/auditHeaders'
 import { invalidateFetchCache } from '@/lib/fetchHelper'
 
+const SUPER_ADMIN_TRUSTED_DEVICE_KEY = "svms_super_admin_trusted_device"
+
 const Navbar = ({ onRequestLogout }) => {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
@@ -22,7 +24,11 @@ const Navbar = ({ onRequestLogout }) => {
   const [showActions, setShowActions] = useState(false)
   const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState(false)
   const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}')
-  const welcomeRole = currentUser?.role === 'student' ? 'Student' : 'Admin'
+  const welcomeRole = currentUser?.role === 'student'
+    ? 'Student'
+    : currentUser?.role === 'super_admin'
+      ? 'Super Admin'
+      : 'Admin'
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -160,7 +166,7 @@ const Navbar = ({ onRequestLogout }) => {
 
       let savedUser = null
 
-      if (currentUser?.role === 'admin') {
+      if (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') {
         try {
           const response = await fetch('/api/profile/admin', {
             method: 'PUT',
@@ -175,6 +181,9 @@ const Navbar = ({ onRequestLogout }) => {
               firstName: formData.firstName,
               middleInitial: formData.middleInitial,
               lastName: formData.lastName,
+              currentPassword: formData.currentPassword,
+              newPassword: formData.newPassword,
+              confirmPassword: formData.confirmPassword,
             }),
           })
 
@@ -253,7 +262,11 @@ const Navbar = ({ onRequestLogout }) => {
       return
     }
     // Clear user session (customize as needed)
+    const trustedDeviceToken = localStorage.getItem(SUPER_ADMIN_TRUSTED_DEVICE_KEY)
     localStorage.clear();
+    if (trustedDeviceToken) {
+      localStorage.setItem(SUPER_ADMIN_TRUSTED_DEVICE_KEY, trustedDeviceToken)
+    }
     window.location.href = '/login';
   }
 

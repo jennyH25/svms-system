@@ -27,6 +27,7 @@ import {
   syncViolationsDatabase,
   syncNotificationsDatabase,
   syncPasswordResetDatabase,
+  syncSuperAdminSecurityDatabase,
   syncStudentViolationLogsDatabase,
 } from "./db.js";
 import { encryptImagePath, decryptImagePath } from "./encryption.js";
@@ -38,6 +39,10 @@ const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, "../dist");
 const FORGOT_CODE_EXPIRY_MS = 10 * 60 * 1000;
 const FORGOT_RESEND_COOLDOWN_MS = 15 * 1000;
+const SUPER_ADMIN_LOGIN_CODE_EXPIRY_MS = 10 * 60 * 1000;
+const SUPER_ADMIN_LOGIN_RESEND_COOLDOWN_MS = 15 * 1000;
+const SUPER_ADMIN_TRUSTED_DEVICE_TTL_MS =
+  90 * 24 * 60 * 60 * 1000;
 const AUDIT_LOG_RETENTION_DAYS = 15;
 const AUDIT_LOG_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const NOTIFICATION_RETENTION_DAYS = Number(
@@ -64,6 +69,18 @@ const isServerlessRuntime =
   process.env.VERCEL === "1" ||
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
   process.env.NODE_ENV === "serverless";
+
+function assertHistoricalWorkbookWritable() {
+  if (!isServerlessRuntime) {
+    return;
+  }
+
+  const error = new Error(
+    "Historical workbook records are read-only in the serverless deployment. Import them into the database to edit or delete them.",
+  );
+  error.code = "SERVERLESS_WORKBOOK_READONLY";
+  throw error;
+}
 
 // Pusher client (optional) - configured via env vars
 let pusherClient = null;
@@ -1483,6 +1500,8 @@ function enrichArchiveViolationRow(row, violationMatch) {
 }
 
 async function deleteHistoricalWorkbookRecordById(workbookId) {
+  assertHistoricalWorkbookWritable();
+
   if (typeof workbookId !== "string" || !workbookId.startsWith("wb-")) {
     return false;
   }
@@ -1624,6 +1643,8 @@ async function ensureArchiveColumnsExist(pool) {
 }
 
 async function deleteHistoricalWorkbookRecordsBySchoolYear(schoolYear) {
+  assertHistoricalWorkbookWritable();
+
   try {
     const excelModule = await import("exceljs");
     const ExcelJS = excelModule.default || excelModule;
@@ -1699,6 +1720,9 @@ async function deleteHistoricalWorkbookRecordsBySchoolYear(schoolYear) {
     return deletedCount;
   } catch (error) {
     if (isWorkbookBusyError(error)) {
+      throw error;
+    }
+    if (error?.code === "SERVERLESS_WORKBOOK_READONLY") {
       throw error;
     }
     console.error(
@@ -2173,6 +2197,266 @@ async function removePasswordResetSession(pool, email) {
   ]);
 }
 
+async function getSuperAdminLoginChallenge(pool, challengeId) {
+  const lookup = await pool.query(
+    `
+    SELECT
+      challenge_id,
+      user_id,
+      email,
+      code_hash,
+      expires_at,
+      resend_available_at
+    FROM super_admin_login_challenges
+    WHERE challenge_id = $1
+    LIMIT 1
+    `,
+    [challengeId],
+  );
+
+  return lookup.rows?.[0] || null;
+}
+
+async function getSuperAdminLoginChallengeByUserId(pool, userId) {
+  const lookup = await pool.query(
+    `
+    SELECT
+      challenge_id,
+      user_id,
+      email,
+      code_hash,
+      expires_at,
+      resend_available_at
+    FROM super_admin_login_challenges
+    WHERE user_id = $1
+    ORDER BY updated_at DESC
+    LIMIT 1
+    `,
+    [userId],
+  );
+
+  return lookup.rows?.[0] || null;
+}
+
+async function upsertSuperAdminLoginChallenge(
+  pool,
+  { challengeId, userId, email, codeHash, expiresAtIso, resendAvailableAtIso },
+) {
+  await pool.query(
+    `
+    INSERT INTO super_admin_login_challenges (
+      challenge_id,
+      user_id,
+      email,
+      code_hash,
+      expires_at,
+      resend_available_at
+    )
+    VALUES ($1, $2, $3, $4, $5::timestamptz, $6::timestamptz)
+    ON CONFLICT (challenge_id)
+    DO UPDATE SET
+      user_id = EXCLUDED.user_id,
+      email = EXCLUDED.email,
+      code_hash = EXCLUDED.code_hash,
+      expires_at = EXCLUDED.expires_at,
+      resend_available_at = EXCLUDED.resend_available_at
+    `,
+    [
+      challengeId,
+      userId,
+      email,
+      codeHash,
+      expiresAtIso,
+      resendAvailableAtIso,
+    ],
+  );
+}
+
+async function removeSuperAdminLoginChallenge(pool, challengeId) {
+  await pool.query(
+    `DELETE FROM super_admin_login_challenges WHERE challenge_id = $1`,
+    [challengeId],
+  );
+}
+
+async function trustSuperAdminDevice(
+  pool,
+  { userId, deviceTokenHash, label = null, expiresAtIso },
+) {
+  await pool.query(
+    `
+    INSERT INTO super_admin_trusted_devices (
+      device_token_hash,
+      user_id,
+      label,
+      expires_at,
+      last_used_at
+    )
+    VALUES ($1, $2, $3, $4::timestamptz, NOW())
+    ON CONFLICT (device_token_hash)
+    DO UPDATE SET
+      user_id = EXCLUDED.user_id,
+      label = EXCLUDED.label,
+      expires_at = EXCLUDED.expires_at,
+      last_used_at = NOW()
+    `,
+    [deviceTokenHash, userId, label, expiresAtIso],
+  );
+}
+
+async function verifyTrustedSuperAdminDevice(pool, userId, deviceToken) {
+  const deviceTokenHash = hashSecret(deviceToken);
+  const lookup = await pool.query(
+    `
+    SELECT device_token_hash
+    FROM super_admin_trusted_devices
+    WHERE user_id = $1
+      AND device_token_hash = $2
+      AND expires_at > NOW()
+    LIMIT 1
+    `,
+    [userId, deviceTokenHash],
+  );
+
+  if (!lookup.rows?.[0]) {
+    return false;
+  }
+
+  await pool.query(
+    `
+    UPDATE super_admin_trusted_devices
+    SET last_used_at = NOW()
+    WHERE device_token_hash = $1
+    `,
+    [deviceTokenHash],
+  );
+
+  return true;
+}
+
+const DEFAULT_SUPER_ADMIN_ACCOUNT = {
+  firstName: "Jenny",
+  lastName: "Hernandez",
+  email: "jennypatanag@gmail.com",
+};
+
+async function ensureDefaultSuperAdminAccount() {
+  if (!hasDbConfig()) {
+    return;
+  }
+
+  const pool = getDbPool();
+  if (!pool) {
+    return;
+  }
+
+  const cleanedFirst = formatStudentNameSegment(
+    DEFAULT_SUPER_ADMIN_ACCOUNT.firstName,
+  );
+  const cleanedLast = formatStudentNameSegment(
+    DEFAULT_SUPER_ADMIN_ACCOUNT.lastName,
+  );
+  const normalizedEmail = DEFAULT_SUPER_ADMIN_ACCOUNT.email.toLowerCase();
+  const fullName = `${cleanedFirst} ${cleanedLast}`.trim();
+
+  const existingResult = await pool.query(
+    `
+    SELECT
+      u.id,
+      u.username,
+      u.role
+    FROM users u
+    INNER JOIN "Admins" a ON a.user_id = u.id
+    WHERE LOWER(a.email) = $1
+    LIMIT 1
+    `,
+    [normalizedEmail],
+  );
+
+  const existingUser = existingResult.rows?.[0] || null;
+
+  if (existingUser) {
+    await pool.query(
+      `
+      UPDATE users
+      SET
+        role = 'super_admin',
+        first_name = $1,
+        last_name = $2,
+        is_active = TRUE
+      WHERE id = $3
+      `,
+      [cleanedFirst, cleanedLast, existingUser.id],
+    );
+
+    await pool.query(
+      `
+      INSERT INTO "Admins" (user_id, email, first_name, last_name, full_name)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (user_id) DO UPDATE SET
+        email = EXCLUDED.email,
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        full_name = EXCLUDED.full_name
+      `,
+      [existingUser.id, normalizedEmail, cleanedFirst, cleanedLast, fullName],
+    );
+
+    return;
+  }
+
+  const generatedUsername = await generateAdminUsername(
+    pool,
+    cleanedFirst,
+    cleanedLast,
+  );
+  const generatedPassword = generateTemporaryPassword();
+  const passwordHash = await bcrypt.hash(generatedPassword, 10);
+
+  const userInsert = await pool.query(
+    `
+    INSERT INTO users (username, password_hash, role, first_name, last_name, is_active)
+    VALUES ($1, $2, 'super_admin', $3, $4, TRUE)
+    RETURNING id, username
+    `,
+    [generatedUsername, passwordHash, cleanedFirst, cleanedLast],
+  );
+
+  const createdUser = userInsert.rows?.[0] || null;
+  if (!createdUser) {
+    return;
+  }
+
+  await pool.query(
+    `
+    INSERT INTO "Admins" (user_id, email, first_name, last_name, full_name)
+    VALUES ($1, $2, $3, $4, $5)
+    `,
+    [createdUser.id, normalizedEmail, cleanedFirst, cleanedLast, fullName],
+  );
+
+  try {
+    const delivery = await sendAdminCredentialEmail({
+      toEmail: normalizedEmail,
+      firstName: cleanedFirst,
+      username: createdUser.username,
+      password: generatedPassword,
+      role: "super_admin",
+    });
+
+    if (!delivery.sent) {
+      console.warn(
+        `Default super admin account created, but credential email was not sent: ${delivery.reason}`,
+      );
+    }
+  } catch (error) {
+    console.error(
+      "Failed to send default super admin credential email:",
+      error?.message || error,
+    );
+  }
+}
+
 function getAuditActor(req) {
   const actorUserIdRaw = req.get("x-actor-user-id");
   const actorUserId = Number(actorUserIdRaw);
@@ -2295,13 +2579,18 @@ async function purgeExpiredNotifications() {
   }
 }
 
-function buildCredentialEmailTemplate({ firstName, username, password }) {
+function buildCredentialEmailTemplate({
+  firstName,
+  username,
+  password,
+  accountLabel = "Student",
+}) {
   return `
     <div style="background:linear-gradient(180deg,#eaf6fb 0%,#f4f8fc 45%,#f8fafc 100%);padding:36px 18px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
       <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 12px 36px rgba(2,6,23,0.08);">
         <div style="padding:22px 26px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);border-bottom:1px solid rgba(255,255,255,0.12);">
           <p style="margin:0 0 8px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">SVMS Account Created</p>
-          <h2 style="margin:0;color:#f8fafc;font-size:22px;font-weight:800;line-height:1.3;">Your Student Account Credentials</h2>
+          <h2 style="margin:0;color:#f8fafc;font-size:22px;font-weight:800;line-height:1.3;">Your ${escapeHtml(accountLabel)} Account Credentials</h2>
         </div>
         <div style="padding:24px 26px;background:#ffffff;">
           <p style="margin:0 0 14px 0;color:#1f2937;font-size:14px;line-height:1.6;">Hello ${escapeHtml(firstName || "Student")},</p>
@@ -2371,6 +2660,26 @@ function buildForgotPasswordEmailTemplate({ code }) {
     `,
     footerNote:
       "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+  });
+}
+
+function buildSuperAdminLoginCodeEmailTemplate({ code }) {
+  const safeCode = escapeHtml(code);
+  return buildSystemEmailShell({
+    eyebrow: "SVMS Security",
+    heading: "Super Admin Login Verification",
+    lead: "Use this one-time 6-digit verification code to finish signing in to your super admin account.",
+    contentHtml: `
+      <div style="background:linear-gradient(180deg,#eff8ff 0%,#f8fbff 100%);border:1px solid #cfe9ff;border-radius:14px;padding:18px;">
+        <p style="margin:0 0 10px 0;color:#0f172a;font-size:14px;line-height:1.6;">Enter this code in the login page:</p>
+        <p style="margin:0;padding:12px 10px;text-align:center;border-radius:12px;background:#0f172a;color:#f8fafc;font-size:34px;font-weight:800;letter-spacing:0.18em;">${safeCode}</p>
+      </div>
+      <div style="margin-top:14px;padding:12px 14px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;">
+        <p style="margin:0;color:#334155;font-size:13px;line-height:1.6;">This code expires in 10 minutes. If this login attempt was not made by you, change your password immediately.</p>
+      </div>
+    `,
+    footerNote:
+      "This is an automated security message from Student Violation Management System. Please do not reply to this email.",
   });
 }
 
@@ -2540,7 +2849,45 @@ async function sendStudentCredentialEmail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: toEmail,
     subject: "Your SVMS Student Account Credentials",
-    html: buildCredentialEmailTemplate({ firstName, username, password }),
+    html: buildCredentialEmailTemplate({
+      firstName,
+      username,
+      password,
+      accountLabel: "Student",
+    }),
+  });
+
+  return { sent: true };
+}
+
+async function sendAdminCredentialEmail({
+  toEmail,
+  firstName,
+  username,
+  password,
+  role,
+}) {
+  const transporter = getMailTransporter();
+  if (!transporter) {
+    return {
+      sent: false,
+      reason: "SMTP_USER/SMTP_PASS not configured.",
+    };
+  }
+
+  const accountLabel =
+    role === "super_admin" ? "Super Admin" : "Admin";
+
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: toEmail,
+    subject: `Your SVMS ${accountLabel} Account Credentials`,
+    html: buildCredentialEmailTemplate({
+      firstName,
+      username,
+      password,
+      accountLabel,
+    }),
   });
 
   return { sent: true };
@@ -2560,6 +2907,25 @@ async function sendForgotPasswordCodeEmail({ toEmail, code }) {
     to: toEmail,
     subject: "SVMS Password Reset Verification Code",
     html: buildForgotPasswordEmailTemplate({ code }),
+  });
+
+  return { sent: true };
+}
+
+async function sendSuperAdminLoginCodeEmail({ toEmail, code }) {
+  const transporter = getMailTransporter();
+  if (!transporter) {
+    return {
+      sent: false,
+      reason: "SMTP_USER/SMTP_PASS not configured.",
+    };
+  }
+
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: toEmail,
+    subject: "SVMS Super Admin Verification Code",
+    html: buildSuperAdminLoginCodeEmailTemplate({ code }),
   });
 
   return { sent: true };
@@ -2671,8 +3037,81 @@ async function generateStudentUsername(pool, firstName, lastName) {
   }
 }
 
+async function generateAdminUsername(pool, firstName, lastName) {
+  const first = normalizeNamePart(firstName);
+  const last = normalizeNamePart(lastName);
+  const baseRaw = `${first || "admin"}.${last || "user"}`.replace(/\.+/g, ".");
+  const base = baseRaw.slice(0, 20);
+
+  let candidate = base;
+  let suffix = 1;
+
+  while (true) {
+    const exists = await pool.query(
+      `SELECT id FROM users WHERE username = $1 LIMIT 1`,
+      [candidate],
+    );
+
+    if (!exists.rows?.[0]) {
+      return candidate;
+    }
+
+    suffix += 1;
+    candidate = `${base}${suffix}`.slice(0, 24);
+  }
+}
+
+async function issueSuperAdminLoginChallenge(pool, user) {
+  const challengeId = crypto.randomBytes(24).toString("hex");
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const codeHash = hashSecret(code);
+  const now = Date.now();
+  const expiresAtIso = new Date(
+    now + SUPER_ADMIN_LOGIN_CODE_EXPIRY_MS,
+  ).toISOString();
+  const resendAvailableAtIso = new Date(
+    now + SUPER_ADMIN_LOGIN_RESEND_COOLDOWN_MS,
+  ).toISOString();
+
+  const delivery = await sendSuperAdminLoginCodeEmail({
+    toEmail: user.email,
+    code,
+  });
+
+  if (!delivery.sent) {
+    return delivery;
+  }
+
+  await upsertSuperAdminLoginChallenge(pool, {
+    challengeId,
+    userId: user.id,
+    email: user.email,
+    codeHash,
+    expiresAtIso,
+    resendAvailableAtIso,
+  });
+
+  return {
+    sent: true,
+    challengeId,
+    retryAfterSeconds: Math.ceil(
+      SUPER_ADMIN_LOGIN_RESEND_COOLDOWN_MS / 1000,
+    ),
+  };
+}
+
 function generateTemporaryPassword() {
   return crypto.randomBytes(6).toString("base64url");
+}
+
+function normalizeAdminRole(value) {
+  return String(value || "").trim().toLowerCase() === "super_admin"
+    ? "super_admin"
+    : "admin";
+}
+
+function formatRoleLabel(role) {
+  return role === "super_admin" ? "Super Admin" : "Admin";
 }
 
 function parseImportedStudentName(rawName) {
@@ -3098,7 +3537,7 @@ app.get("/api/app-state/snapshot", async (req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const { username, password } = req.body ?? {};
+  const { username, password, trustedDeviceToken } = req.body ?? {};
 
   if (!username || !password) {
     return res.status(400).json({
@@ -3137,7 +3576,8 @@ app.post("/api/auth/login", async (req, res) => {
             u.is_active
           FROM users u
           INNER JOIN "Admins" a ON a.user_id = u.id
-          WHERE a.email = $1
+          WHERE LOWER(a.email) = LOWER($1)
+            AND u.role IN ('admin', 'super_admin')
           LIMIT 1
           `,
           [username],
@@ -3184,7 +3624,7 @@ app.post("/api/auth/login", async (req, res) => {
           s.program,
           s.year_section
         FROM users u
-        LEFT JOIN "Admins" a ON a.user_id = u.id AND u.role = 'admin'
+        LEFT JOIN "Admins" a ON a.user_id = u.id AND u.role IN ('admin', 'super_admin')
         LEFT JOIN "Students" s ON s.user_id = u.id AND u.role = 'student'
         WHERE u.username = $1
         LIMIT 1
@@ -3209,6 +3649,59 @@ app.post("/api/auth/login", async (req, res) => {
         status: "error",
         message: "Invalid username/email or password.",
       });
+    }
+
+    if (user.role === "super_admin") {
+      const trusted = trustedDeviceToken
+        ? await verifyTrustedSuperAdminDevice(
+            pool,
+            user.id,
+            trustedDeviceToken,
+          )
+        : false;
+
+      if (!trusted) {
+        const existingChallenge = await getSuperAdminLoginChallengeByUserId(
+          pool,
+          user.id,
+        );
+        const now = Date.now();
+        const existingResendAt = existingChallenge?.resend_available_at
+          ? new Date(existingChallenge.resend_available_at).getTime()
+          : 0;
+
+        if (
+          existingChallenge &&
+          Number.isFinite(existingResendAt) &&
+          existingResendAt > now
+        ) {
+          return res.status(202).json({
+            status: "pending_verification",
+            requiresVerification: true,
+            challengeId: existingChallenge.challenge_id,
+            retryAfterSeconds: Math.ceil((existingResendAt - now) / 1000),
+            message:
+              "A verification code was already sent to your email. Please enter it to continue.",
+          });
+        }
+
+        const challenge = await issueSuperAdminLoginChallenge(pool, user);
+        if (!challenge.sent) {
+          return res.status(503).json({
+            status: "error",
+            message: `Unable to send super admin verification code (${challenge.reason || "unknown reason"}).`,
+          });
+        }
+
+        return res.status(202).json({
+          status: "pending_verification",
+          requiresVerification: true,
+          challengeId: challenge.challengeId,
+          retryAfterSeconds: challenge.retryAfterSeconds,
+          message:
+            "A 6-digit verification code was sent to your email. Enter it to finish signing in.",
+        });
+      }
     }
 
     const sessionToken = signSessionToken(user);
@@ -3238,6 +3731,278 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Login unavailable: database not ready (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/auth/super-admin/verify", async (req, res) => {
+  const { challengeId, code, trustDevice } = req.body ?? {};
+  const normalizedChallengeId = String(challengeId || "").trim();
+  const normalizedCode = String(code || "").trim();
+
+  if (!normalizedChallengeId || !normalizedCode) {
+    return res.status(400).json({
+      status: "error",
+      message: "Challenge id and verification code are required.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const challenge = await getSuperAdminLoginChallenge(
+      pool,
+      normalizedChallengeId,
+    );
+
+    if (!challenge) {
+      return res.status(400).json({
+        status: "error",
+        message: "No super admin verification request was found.",
+      });
+    }
+
+    const expiresAt = new Date(challenge.expires_at).getTime();
+    if (!Number.isFinite(expiresAt) || expiresAt < Date.now()) {
+      await removeSuperAdminLoginChallenge(pool, normalizedChallengeId);
+      return res.status(400).json({
+        status: "error",
+        message: "Verification code expired. Please sign in again.",
+      });
+    }
+
+    const incomingCodeHash = hashSecret(normalizedCode);
+    if (incomingCodeHash !== challenge.code_hash) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid verification code.",
+      });
+    }
+
+    const userResult = await pool.query(
+      `
+      SELECT
+        u.id,
+        u.username,
+        u.password_hash,
+        u.role,
+        u.is_active,
+        a.email,
+        a.first_name,
+        a.middle_initial,
+        a.last_name
+      FROM users u
+      INNER JOIN "Admins" a ON a.user_id = u.id
+      WHERE u.id = $1
+        AND u.role = 'super_admin'
+      LIMIT 1
+      `,
+      [challenge.user_id],
+    );
+
+    const user = userResult.rows?.[0] || null;
+    if (!user || !user.is_active) {
+      await removeSuperAdminLoginChallenge(pool, normalizedChallengeId);
+      return res.status(404).json({
+        status: "error",
+        message: "Super admin account not found.",
+      });
+    }
+
+    let nextTrustedDeviceToken = "";
+    if (trustDevice === true) {
+      nextTrustedDeviceToken = crypto.randomBytes(32).toString("hex");
+      await trustSuperAdminDevice(pool, {
+        userId: user.id,
+        deviceTokenHash: hashSecret(nextTrustedDeviceToken),
+        label: "Trusted browser",
+        expiresAtIso: new Date(
+          Date.now() + SUPER_ADMIN_TRUSTED_DEVICE_TTL_MS,
+        ).toISOString(),
+      });
+    }
+
+    await removeSuperAdminLoginChallenge(pool, normalizedChallengeId);
+    const sessionToken = signSessionToken(user);
+
+    return res.status(200).json({
+      status: "ok",
+      trustedDeviceToken: nextTrustedDeviceToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: user.role,
+        firstName: user.first_name || "",
+        middleInitial: user.middle_initial || "",
+        lastName: user.last_name || "",
+        fullName: [
+          user.first_name,
+          user.middle_initial ? `${user.middle_initial}.` : "",
+          user.last_name,
+        ].filter(Boolean).join(" "),
+        sessionToken,
+      },
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to verify super admin login (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/auth/super-admin/resend-code", async (req, res) => {
+  const { challengeId } = req.body ?? {};
+  const normalizedChallengeId = String(challengeId || "").trim();
+
+  if (!normalizedChallengeId) {
+    return res.status(400).json({
+      status: "error",
+      message: "Challenge id is required.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const existingChallenge = await getSuperAdminLoginChallenge(
+      pool,
+      normalizedChallengeId,
+    );
+
+    if (!existingChallenge) {
+      return res.status(400).json({
+        status: "error",
+        message: "No super admin verification request was found.",
+      });
+    }
+
+    const now = Date.now();
+    const resendAvailableAt = new Date(
+      existingChallenge.resend_available_at,
+    ).getTime();
+    if (
+      Number.isFinite(resendAvailableAt) &&
+      resendAvailableAt > now
+    ) {
+      return res.status(429).json({
+        status: "error",
+        message: "Please wait before requesting another code.",
+        retryAfterSeconds: Math.ceil((resendAvailableAt - now) / 1000),
+      });
+    }
+
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const codeHash = hashSecret(code);
+    const expiresAtIso = new Date(
+      now + SUPER_ADMIN_LOGIN_CODE_EXPIRY_MS,
+    ).toISOString();
+    const resendAvailableAtIso = new Date(
+      now + SUPER_ADMIN_LOGIN_RESEND_COOLDOWN_MS,
+    ).toISOString();
+
+    const delivery = await sendSuperAdminLoginCodeEmail({
+      toEmail: existingChallenge.email,
+      code,
+    });
+
+    if (!delivery.sent) {
+      return res.status(503).json({
+        status: "error",
+        message: `Unable to resend verification code (${delivery.reason || "unknown reason"}).`,
+      });
+    }
+
+    await upsertSuperAdminLoginChallenge(pool, {
+      challengeId: normalizedChallengeId,
+      userId: existingChallenge.user_id,
+      email: existingChallenge.email,
+      codeHash,
+      expiresAtIso,
+      resendAvailableAtIso,
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Verification code sent.",
+      retryAfterSeconds: Math.ceil(
+        SUPER_ADMIN_LOGIN_RESEND_COOLDOWN_MS / 1000,
+      ),
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to resend super admin verification code (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/auth/super-admin/trust-device", async (req, res) => {
+  const { userId, sessionToken } = req.body ?? {};
+  const normalizedUserId = Number(userId);
+  const normalizedSessionToken = String(sessionToken || "").trim();
+
+  if (!Number.isFinite(normalizedUserId) || !normalizedSessionToken) {
+    return res.status(400).json({
+      status: "error",
+      message: "User id and session token are required.",
+    });
+  }
+
+  if (!verifySessionToken(normalizedSessionToken, normalizedUserId, "super_admin")) {
+    return res.status(401).json({
+      status: "error",
+      message: "Invalid session token.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const trustedDeviceToken = crypto.randomBytes(32).toString("hex");
+
+    await trustSuperAdminDevice(pool, {
+      userId: normalizedUserId,
+      deviceTokenHash: hashSecret(trustedDeviceToken),
+      label: "Trusted browser",
+      expiresAtIso: new Date(
+        Date.now() + SUPER_ADMIN_TRUSTED_DEVICE_TTL_MS,
+      ).toISOString(),
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      trustedDeviceToken,
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to trust this device (${error.message}).`,
     });
   }
 });
@@ -3661,7 +4426,17 @@ app.post("/api/verify-password", async (req, res) => {
 });
 
 app.put("/api/profile/admin", async (req, res) => {
-  const { id, username, email, firstName, middleInitial, lastName } = req.body ?? {};
+  const {
+    id,
+    username,
+    email,
+    firstName,
+    middleInitial,
+    lastName,
+    currentPassword,
+    newPassword,
+    confirmPassword,
+  } = req.body ?? {};
 
   if (!id) {
     return res.status(400).json({
@@ -3682,21 +4457,116 @@ app.put("/api/profile/admin", async (req, res) => {
     await ensureAuthDatabaseReady();
 
     const pool = getDbPool();
+    const existingUserResult = await pool.query(
+      `
+      SELECT id, username, password_hash, role
+      FROM users
+      WHERE id = $1
+        AND role IN ('admin', 'super_admin')
+      LIMIT 1
+      `,
+      [id],
+    );
+
+    const existingUser = existingUserResult.rows?.[0] || null;
+
+    if (!existingUser) {
+      return res.status(404).json({
+        status: "error",
+        message: "Admin profile not found.",
+      });
+    }
+
+    const wantsPasswordChange = Boolean(newPassword || confirmPassword);
+
+    if (wantsPasswordChange) {
+      if (!currentPassword) {
+        return res.status(400).json({
+          status: "error",
+          message: "Current password is required to change password.",
+        });
+      }
+
+      if (!newPassword) {
+        return res.status(400).json({
+          status: "error",
+          message: "New password is required.",
+        });
+      }
+
+      if (!confirmPassword) {
+        return res.status(400).json({
+          status: "error",
+          message: "Confirm password is required.",
+        });
+      }
+
+      if (String(newPassword) !== String(confirmPassword)) {
+        return res.status(400).json({
+          status: "error",
+          message: "New password and confirm password do not match.",
+        });
+      }
+
+      if (!isPasswordStrong(newPassword)) {
+        return res.status(400).json({
+          status: "error",
+          message: getPasswordValidationError(newPassword),
+        });
+      }
+
+      const isCurrentPasswordValid = await bcrypt.compare(
+        String(currentPassword),
+        existingUser.password_hash,
+      );
+
+      if (!isCurrentPasswordValid) {
+        return res.status(401).json({
+          status: "error",
+          message: "Current password is incorrect.",
+        });
+      }
+    }
+
+    const cleanedFirst = formatStudentNameSegment(firstName);
+    const cleanedMiddle = String(middleInitial || "")
+      .trim()
+      .replace(/\./g, "")
+      .slice(0, 1)
+      .toUpperCase();
+    const cleanedLast = formatStudentNameSegment(lastName);
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
+    const fullName = [
+      cleanedFirst || "Admin",
+      cleanedMiddle ? `${cleanedMiddle}.` : "",
+      cleanedLast || "User",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    const hashedNewPassword = wantsPasswordChange
+      ? await bcrypt.hash(String(newPassword), 12)
+      : null;
 
     const userUpdate = await pool.query(
       `
       UPDATE users
       SET
         username = COALESCE(NULLIF($1, ''), username),
-        first_name = $2,
-        last_name = $3
-      WHERE id = $4 AND role = 'admin'
+        first_name = COALESCE(NULLIF($2, ''), first_name),
+        last_name = COALESCE(NULLIF($3, ''), last_name),
+        password_hash = COALESCE($4, password_hash)
+      WHERE id = $5
+        AND role IN ('admin', 'super_admin')
       RETURNING id, username, role, first_name, last_name
       `,
       [
         username || null,
-        firstName?.trim() || null,
-        lastName?.trim() || null,
+        cleanedFirst || null,
+        cleanedLast || null,
+        hashedNewPassword,
         id,
       ],
     );
@@ -3712,11 +4582,6 @@ app.put("/api/profile/admin", async (req, res) => {
       });
     }
 
-    const adminFirst = firstName?.trim() || "Admin";
-    const adminMiddle = middleInitial?.trim() ? `${middleInitial.trim()}.` : "";
-    const adminLast = lastName?.trim() || "User";
-    const fullName = [adminFirst, adminMiddle, adminLast].filter(Boolean).join(" ").trim();
-
     const adminUpdate = await pool.query(
       `
       INSERT INTO "Admins" (user_id, email, first_name, middle_initial, last_name, full_name)
@@ -3730,7 +4595,14 @@ app.put("/api/profile/admin", async (req, res) => {
         full_name = EXCLUDED.full_name
       RETURNING user_id, email, first_name, middle_initial, last_name, full_name
       `,
-      [updatedUser.id, email, adminFirst, middleInitial?.trim() || "", adminLast, fullName],
+      [
+        updatedUser.id,
+        normalizedEmail,
+        cleanedFirst || "Admin",
+        cleanedMiddle,
+        cleanedLast || "User",
+        fullName,
+      ],
     );
 
     const updatedAdmin = adminUpdate.rows?.[0] || null;
@@ -3750,6 +4622,7 @@ app.put("/api/profile/admin", async (req, res) => {
       metadata: {
         username: updatedUser.username,
         email: updatedAdmin.email,
+        role: updatedUser.role,
       },
     });
 
@@ -3980,6 +4853,413 @@ app.put("/api/profile/student", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Unable to save student profile (${error.message}).`,
+    });
+  }
+});
+
+app.get("/api/admin-accounts", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const result = await pool.query(
+      `
+      SELECT
+        u.id,
+        u.username,
+        u.role,
+        u.is_active,
+        u.created_at,
+        u.updated_at,
+        a.email,
+        a.first_name,
+        a.middle_initial,
+        a.last_name,
+        a.full_name
+      FROM users u
+      INNER JOIN "Admins" a ON a.user_id = u.id
+      WHERE u.role IN ('admin', 'super_admin')
+      ORDER BY
+        CASE WHEN u.role = 'super_admin' THEN 0 ELSE 1 END,
+        LOWER(a.last_name) ASC,
+        LOWER(a.first_name) ASC,
+        u.id ASC
+      `,
+    );
+
+    return res.status(200).json({
+      status: "ok",
+      accounts: result.rows || [],
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to load admin accounts (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/admin-accounts", async (req, res) => {
+  const { firstName, lastName, email, role } = req.body ?? {};
+  const cleanedFirst = formatStudentNameSegment(firstName);
+  const cleanedLast = formatStudentNameSegment(lastName);
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+  const normalizedRole = normalizeAdminRole(role);
+
+  if (!cleanedFirst || !cleanedLast || !normalizedEmail) {
+    return res.status(400).json({
+      status: "error",
+      message: "firstName, lastName, role, and email are required.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    const existingEmail = await pool.query(
+      `
+      SELECT u.id
+      FROM users u
+      INNER JOIN "Admins" a ON a.user_id = u.id
+      WHERE LOWER(a.email) = $1
+      LIMIT 1
+      `,
+      [normalizedEmail],
+    );
+
+    if (existingEmail.rows?.[0]) {
+      return res.status(409).json({
+        status: "error",
+        message: "Email already exists. Please use a different email.",
+      });
+    }
+
+    const generatedUsername = await generateAdminUsername(
+      pool,
+      cleanedFirst,
+      cleanedLast,
+    );
+    const generatedPassword = generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(generatedPassword, 10);
+    const fullName = `${cleanedFirst} ${cleanedLast}`.trim();
+
+    const userInsert = await pool.query(
+      `
+      INSERT INTO users (username, password_hash, role, first_name, last_name, is_active)
+      VALUES ($1, $2, $3, $4, $5, TRUE)
+      RETURNING id, username, role
+      `,
+      [
+        generatedUsername,
+        passwordHash,
+        normalizedRole,
+        cleanedFirst,
+        cleanedLast,
+      ],
+    );
+
+    const createdUser = userInsert.rows?.[0] || null;
+
+    const adminInsert = await pool.query(
+      `
+      INSERT INTO "Admins" (user_id, email, first_name, last_name, full_name)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING user_id, email, first_name, middle_initial, last_name, full_name
+      `,
+      [createdUser.id, normalizedEmail, cleanedFirst, cleanedLast, fullName],
+    );
+
+    const createdAccount = {
+      ...(adminInsert.rows?.[0] || {}),
+      id: createdUser.id,
+      username: createdUser.username,
+      role: createdUser.role,
+      is_active: true,
+    };
+
+    await logAuditEvent(req, {
+      action: "CREATE_ADMIN_ACCOUNT",
+      targetType: "admin_account",
+      targetId: createdUser.id,
+      details: `Added ${formatRoleLabel(normalizedRole)} account for ${fullName}.`,
+      metadata: {
+        email: normalizedEmail,
+        role: normalizedRole,
+        emailQueued: true,
+      },
+    });
+
+    res.status(201).json({
+      status: "ok",
+      account: createdAccount,
+      emailQueued: true,
+    });
+
+    setImmediate(() => {
+      sendAdminCredentialEmail({
+        toEmail: normalizedEmail,
+        firstName: cleanedFirst,
+        username: createdUser.username,
+        password: generatedPassword,
+        role: normalizedRole,
+      }).then((delivery) => {
+        if (!delivery.sent) {
+          console.error(
+            `[Admin Create] Failed to send credential email to ${normalizedEmail}: ${delivery.reason || "unknown reason"}`,
+          );
+        }
+      }).catch((emailError) => {
+        console.error(
+          `[Admin Create] Failed to send credential email to ${normalizedEmail}: ${emailError?.message || emailError}`,
+        );
+      });
+    });
+
+    return;
+  } catch (error) {
+    if (String(error?.code || "") === "23505") {
+      const detail = String(error?.detail || "").toLowerCase();
+      const constraint = String(error?.constraint || "").toLowerCase();
+
+      if (detail.includes("email") || constraint.includes("email")) {
+        return res.status(409).json({
+          status: "error",
+          message: "Email already exists. Please use a different email.",
+        });
+      }
+
+      if (detail.includes("username") || constraint.includes("username")) {
+        return res.status(409).json({
+          status: "error",
+          message: "Username already exists. Please try again.",
+        });
+      }
+    }
+
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to create admin account (${error.message}).`,
+    });
+  }
+});
+
+app.put("/api/admin-accounts/:id", async (req, res) => {
+  const { id } = req.params;
+  const { firstName, lastName, email, role, isActive } = req.body ?? {};
+  const cleanedFirst = formatStudentNameSegment(firstName);
+  const cleanedLast = formatStudentNameSegment(lastName);
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+  const normalizedRole = normalizeAdminRole(role);
+
+  if (!id || !cleanedFirst || !cleanedLast || !normalizedEmail) {
+    return res.status(400).json({
+      status: "error",
+      message: "id, firstName, lastName, role, and email are required.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const fullName = `${cleanedFirst} ${cleanedLast}`.trim();
+
+    const emailConflict = await pool.query(
+      `
+      SELECT u.id
+      FROM users u
+      INNER JOIN "Admins" a ON a.user_id = u.id
+      WHERE LOWER(a.email) = $1
+        AND u.id <> $2
+      LIMIT 1
+      `,
+      [normalizedEmail, id],
+    );
+
+    if (emailConflict.rows?.[0]) {
+      return res.status(409).json({
+        status: "error",
+        message: "Email already exists. Please use a different email.",
+      });
+    }
+
+    const userUpdate = await pool.query(
+      `
+      UPDATE users
+      SET
+        role = $1,
+        first_name = $2,
+        last_name = $3,
+        is_active = COALESCE($4, is_active)
+      WHERE id = $5
+        AND role IN ('admin', 'super_admin')
+      RETURNING id, username, role, is_active
+      `,
+      [
+        normalizedRole,
+        cleanedFirst,
+        cleanedLast,
+        typeof isActive === "boolean" ? isActive : null,
+        id,
+      ],
+    );
+
+    const updatedUser = userUpdate.rows?.[0] || null;
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        status: "error",
+        message: "Admin account not found.",
+      });
+    }
+
+    const adminUpdate = await pool.query(
+      `
+      UPDATE "Admins"
+      SET
+        email = $1,
+        first_name = $2,
+        last_name = $3,
+        full_name = $4
+      WHERE user_id = $5
+      RETURNING user_id, email, first_name, middle_initial, last_name, full_name
+      `,
+      [normalizedEmail, cleanedFirst, cleanedLast, fullName, id],
+    );
+
+    const updatedAccount = {
+      ...(adminUpdate.rows?.[0] || {}),
+      id: updatedUser.id,
+      username: updatedUser.username,
+      role: updatedUser.role,
+      is_active: updatedUser.is_active,
+    };
+
+    await logAuditEvent(req, {
+      action: "UPDATE_ADMIN_ACCOUNT",
+      targetType: "admin_account",
+      targetId: updatedUser.id,
+      details: `Updated ${formatRoleLabel(updatedUser.role)} account for ${fullName}.`,
+      metadata: {
+        email: normalizedEmail,
+        role: updatedUser.role,
+        isActive: updatedUser.is_active,
+      },
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      account: updatedAccount,
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to update admin account (${error.message}).`,
+    });
+  }
+});
+
+app.delete("/api/admin-accounts/:id", async (req, res) => {
+  const { id } = req.params;
+
+  if (!id) {
+    return res.status(400).json({
+      status: "error",
+      message: "Admin account id is required.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    const accountLookup = await pool.query(
+      `
+      SELECT
+        u.id,
+        u.role,
+        u.username,
+        a.email,
+        a.full_name
+      FROM users u
+      INNER JOIN "Admins" a ON a.user_id = u.id
+      WHERE u.id = $1
+        AND u.role IN ('admin', 'super_admin')
+      LIMIT 1
+      `,
+      [id],
+    );
+
+    const account = accountLookup.rows?.[0] || null;
+
+    if (!account) {
+      return res.status(404).json({
+        status: "error",
+        message: "Admin account not found.",
+      });
+    }
+
+    await pool.query(`DELETE FROM "Admins" WHERE user_id = $1`, [id]);
+    await pool.query(
+      `DELETE FROM users WHERE id = $1 AND role IN ('admin', 'super_admin')`,
+      [id],
+    );
+
+    await logAuditEvent(req, {
+      action: "DELETE_ADMIN_ACCOUNT",
+      targetType: "admin_account",
+      targetId: id,
+      details: `Deleted ${formatRoleLabel(account.role)} account for ${account.full_name || account.username}.`,
+      metadata: {
+        email: account.email,
+        role: account.role,
+        username: account.username,
+      },
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Admin account deleted successfully.",
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to delete admin account (${error.message}).`,
     });
   }
 });
@@ -9934,6 +11214,15 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
 // DELETE archived violation
 app.delete("/api/archive/violations/:id", async (req, res) => {
   const { id } = req.params;
+  const isWorkbookRecord = typeof id === "string" && id.startsWith("wb-");
+
+  if (isWorkbookRecord && isServerlessRuntime) {
+    return res.status(409).json({
+      status: "error",
+      message:
+        "Historical workbook records are read-only in the serverless deployment. Import them into the database to edit or delete them.",
+    });
+  }
 
   if (!hasDbConfig()) {
     return res.status(500).json({
@@ -9948,7 +11237,7 @@ app.delete("/api/archive/violations/:id", async (req, res) => {
     let deleted = false;
     const pool = getDbPool();
 
-    if (typeof id === "string" && id.startsWith("wb-")) {
+    if (isWorkbookRecord) {
       deleted = await deleteHistoricalWorkbookRecordById(id);
     } else {
       const result = await pool.query(
@@ -9982,6 +11271,12 @@ app.delete("/api/archive/violations/:id", async (req, res) => {
         status: "error",
         message:
           "ViolationRecords1.xlsx is currently in use. Close the file and try deleting again.",
+      });
+    }
+    if (error?.code === "SERVERLESS_WORKBOOK_READONLY") {
+      return res.status(409).json({
+        status: "error",
+        message: error.message,
       });
     }
     console.error("Error deleting archived violation:", error);
@@ -10026,6 +11321,7 @@ async function ensureAuthDatabaseReady() {
       await syncStudentsFromUsers();
       await syncNotificationsDatabase();
       await syncPasswordResetDatabase();
+      await syncSuperAdminSecurityDatabase();
       await syncStudentViolationLogsDatabase();
       await syncAppStateDatabase();
     };
@@ -10045,6 +11341,7 @@ async function ensureAuthDatabaseReady() {
           await syncStudentsFromUsers();
           await syncNotificationsDatabase();
           await syncPasswordResetDatabase();
+          await syncSuperAdminSecurityDatabase();
           await syncStudentViolationLogsDatabase();
           // Defer app state sync in dev mode - it creates triggers on all tables
           if (!isDev) {
@@ -10083,6 +11380,7 @@ async function startServer() {
 
     ensureAuthDatabaseReady()
       .then(async () => {
+        await ensureDefaultSuperAdminAccount();
         console.log("Auth database synchronized.");
 
         purgeExpiredAuditLogs();
@@ -10161,12 +11459,14 @@ if (!isServerlessRuntime) {
   startServer();
 } else if (hasDbConfig()) {
   // Warm schema on cold starts without creating long-running loops.
-  ensureAuthDatabaseReady().catch((error) => {
-    console.error(
-      "Failed to synchronize auth database on serverless cold start.",
-    );
-    console.error(error.message);
-  });
+  ensureAuthDatabaseReady()
+    .then(() => ensureDefaultSuperAdminAccount())
+    .catch((error) => {
+      console.error(
+        "Failed to synchronize auth database on serverless cold start.",
+      );
+      console.error(error.message);
+    });
 }
 
 export default app;

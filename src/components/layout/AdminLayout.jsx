@@ -5,6 +5,8 @@ import { Outlet } from 'react-router-dom';
 import Modal, { ModalFooter } from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 
+const SUPER_ADMIN_TRUSTED_DEVICE_KEY = "svms_super_admin_trusted_device";
+
 const AdminLayout = () => {
   const [isLogoutModalOpen, setIsLogoutModalOpen] = React.useState(false);
 
@@ -12,7 +14,16 @@ const AdminLayout = () => {
   const closeLogoutModal = () => setIsLogoutModalOpen(false);
 
   const confirmLogout = () => {
+    const trustedDeviceToken = localStorage.getItem(
+      SUPER_ADMIN_TRUSTED_DEVICE_KEY,
+    );
     localStorage.clear();
+    if (trustedDeviceToken) {
+      localStorage.setItem(
+        SUPER_ADMIN_TRUSTED_DEVICE_KEY,
+        trustedDeviceToken,
+      );
+    }
     window.location.href = '/login';
   };
 

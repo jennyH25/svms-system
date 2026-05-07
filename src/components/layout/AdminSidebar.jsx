@@ -8,6 +8,8 @@ import { cachedFetchJSON } from '@/lib/fetchHelper'
 const Sidebar = ({ onRequestLogout }) => {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const { settings, loading } = useSettings()
+  const currentUser = JSON.parse(localStorage.getItem('svms_user') || '{}')
+  const isSuperAdmin = currentUser?.role === 'super_admin'
 
   const prefetchAdminViolations = () => {
     void Promise.allSettled([
@@ -39,7 +41,7 @@ const Sidebar = ({ onRequestLogout }) => {
   const secondLine = nameParts[2] || ''
   const thirdLine = nameParts[3] || ''
 
-  const menuItems = [
+  const adminMenuItems = [
     { 
       path: '/admin', 
       label: 'Dashboard',
@@ -87,8 +89,22 @@ const Sidebar = ({ onRequestLogout }) => {
     },
   ]
 
+  const superAdminMenuItems = [
+    {
+      path: '/super-admin',
+      label: 'Admin Accounts',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 11V7a5 5 0 00-10 0v4M5 11h14v8a2 2 0 01-2 2H7a2 2 0 01-2-2v-8zm7 4h.01" />
+        </svg>
+      )
+    },
+  ]
+
+  const menuItems = isSuperAdmin ? superAdminMenuItems : adminMenuItems
+
   const settingsItem = {
-    path: '/admin/settings',
+    path: isSuperAdmin ? '/super-admin/settings' : '/admin/settings',
     label: 'Settings',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

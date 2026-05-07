@@ -10,6 +10,7 @@ import StudentViolation from "../pages/admin/StudentViolation";
 import Violations from "../pages/admin/Violations";
 import Archives from "../pages/admin/Archives";
 import Settings from "../pages/admin/Settings";
+import SuperAdminDashboard from "../pages/superAdmin/SuperAdminDashboard";
 
 import StudentDashboard from "../pages/student/StudentDashboard";
 import StudentViolations from "../pages/student/StudentViolations";
@@ -28,6 +29,12 @@ const AppRoutes = () => {
       {/* AUTH */}
       <Route path="/login" element={<Login />} />
       <Route path="/student/login" element={<Login />} />
+
+      {/* ================= SUPER ADMIN ROUTES ================= */}
+      <Route path="/super-admin" element={<AdminLayout />}>
+        <Route index element={<SuperAdminDashboard />} />
+        <Route path="settings" element={<Settings />} />
+      </Route>
 
       {/* ================= ADMIN ROUTES ================= */}
       <Route path="/admin" element={<AdminLayout />}>
