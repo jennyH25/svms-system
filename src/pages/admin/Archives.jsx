@@ -15,7 +15,6 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import EditArchiveModal from "@/components/modals/EditArchiveModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
-import { invalidateFetchCache } from "@/lib/fetchHelper";
 import {
   addCenteredExcelHeaderImage,
   applyExcelPrintLayout,
@@ -316,6 +315,13 @@ const isImportedArchiveRecord = (record) =>
   String(record?.remarks || "").trim().toUpperCase() === "IMPORTED" &&
   String(record?.sourceType || "").trim().toLowerCase() !== "workbook";
 
+const isImportedUserRecord = (user) => {
+  return (
+    String(user?.archived_reason || "").trim().toUpperCase() === "IMPORTED" ||
+    String(user?.status || "").trim().toUpperCase() === "IMPORTED"
+  );
+};
+
 const getArchiveSignatureStatus = (record) => {
   if (record?.signatureImage) return "SIGNED";
   if (isImportedArchiveRecord(record)) return "SIGNED";
@@ -333,14 +339,6 @@ const Archives = () => {
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [archiveMaintenance, setArchiveMaintenance] = useState({
-    running: false,
-    phase: "idle",
-    message: "",
-    percent: 0,
-    completed: 0,
-    total: 0,
-  });
   const [archivedUsers, setArchivedUsers] = useState([]);
   const [archivedViolations, setArchivedViolations] = useState([]);
   const [allArchivedViolations, setAllArchivedViolations] = useState([]); // For global search
@@ -351,7 +349,6 @@ const Archives = () => {
   const [unresolvedSchoolYears, setUnresolvedSchoolYears] = useState([]);
   const [selectedUnresolvedYear, setSelectedUnresolvedYear] = useState("");
   const globalSearchLoadIdRef = useRef(0);
-  const archiveBootstrapCompleteRef = useRef(false);
 
   // Restore preserved year-section mapping from localStorage to prevent lost history during navigation/refresh.
   useEffect(() => {
@@ -441,105 +438,41 @@ const Archives = () => {
     }
   }, []);
 
-  const loadArchivedUsers = useCallback(async () => {
-    try {
-      const response = await fetch("/api/archive/users", {
-        headers: { ...getAuditHeaders() },
-      });
-      const data = await response.json();
-
-      if (response.ok && data.status === "ok") {
-        setArchivedUsers(data.archivedUsers || []);
-        return data;
-      }
-
-      setError(data.message || "Failed to load archived users");
-      return null;
-    } catch (err) {
-      setError("Failed to load archived users: " + err.message);
-      return null;
-    }
-  }, []);
-
-  const fetchArchiveMaintenanceStatus = useCallback(async (start = true) => {
-    const response = await fetch(`/api/archive/maintenance-status?start=${start ? "1" : "0"}`, {
-      headers: { ...getAuditHeaders() },
-    });
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok || data.status !== "ok") {
-      throw new Error(data.message || "Failed to load archive maintenance status");
-    }
-
-    return data.maintenance || {
-      running: false,
-      phase: "idle",
-      message: "",
-      percent: 100,
-      completed: 0,
-      total: 0,
-    };
-  }, []);
-
   // Import workbook records states
   const [isImportConfirmModalOpen, setIsImportConfirmModalOpen] = useState(false);
   const [recordToImport, setRecordToImport] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
 
-  // Legacy cleanup modal state kept only so unreachable JSX remains harmless.
+  // Cleanup and Re-import workbook records states
   const [isCleanupReimportModalOpen, setIsCleanupReimportModalOpen] = useState(false);
   const [isCleanupReimporting, setIsCleanupReimporting] = useState(false);
   const [cleanupSecretKey, setCleanupSecretKey] = useState("");
 
+  // Load archived users on mount
   useEffect(() => {
-    let cancelled = false;
-
-    const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-    const bootstrapArchiveData = async () => {
+    const loadArchivedUsers = async () => {
       try {
         setIsLoading(true);
         setError("");
+        const response = await fetch("/api/archive/users", {
+          headers: { ...getAuditHeaders() },
+        });
+        const data = await response.json();
 
-        let maintenance = await fetchArchiveMaintenanceStatus(true);
-        if (cancelled) return;
-
-        setArchiveMaintenance(maintenance);
-
-        while (maintenance?.running) {
-          await sleep(700);
-          if (cancelled) return;
-          maintenance = await fetchArchiveMaintenanceStatus(false);
-          if (cancelled) return;
-          setArchiveMaintenance(maintenance);
+        if (response.ok && data.status === "ok") {
+          setArchivedUsers(data.archivedUsers || []);
+        } else {
+          setError(data.message || "Failed to load archived users");
         }
-
-        setArchiveMaintenance((prev) => ({
-          ...prev,
-          ...maintenance,
-          running: false,
-          percent: 100,
-        }));
-
-        await Promise.all([loadArchiveSchoolYears(), loadArchivedUsers()]);
-        archiveBootstrapCompleteRef.current = true;
       } catch (err) {
-        if (!cancelled) {
-          setError(err.message || "Failed to initialize archive data");
-        }
+        setError("Failed to load archived users: " + err.message);
       } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+        setIsLoading(false);
       }
     };
 
-    bootstrapArchiveData();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchArchiveMaintenanceStatus, loadArchiveSchoolYears, loadArchivedUsers]);
+    loadArchivedUsers();
+  }, []);
 
   // Listen for archive completion events from StudentViolation page
   useEffect(() => {
@@ -600,8 +533,10 @@ const Archives = () => {
     return false;
   };
 
-  // Refresh school years on meaningful events; initial load is handled by bootstrap.
+  // Load school years on mount and refresh on meaningful events only.
   useEffect(() => {
+    loadArchiveSchoolYears();
+
     const handleStorageChange = () => {
       loadArchiveSchoolYears();
     };
@@ -643,7 +578,7 @@ const Archives = () => {
     };
 
     loadUnresolvedSchoolYears();
-  }, [activeFolder, loadArchivedUsers]);
+  }, [activeFolder]);
 
   // Load violations when folder or semester changes
   useEffect(() => {
@@ -653,7 +588,7 @@ const Archives = () => {
         return;
       }
 
-      if (activeFolder === "unresolved" && !selectedUnresolvedYear) {
+      if (activeFolder === "unresolved" && (!selectedUnresolvedYear || selectedUnresolvedYear === "users")) {
         setArchivedViolations([]);
         return;
       }
@@ -786,7 +721,7 @@ const Archives = () => {
   // Load archived users when users folder is clicked
   useEffect(() => {
     const loadArchivedUsersData = async () => {
-      if (activeFolder !== "users" || !archiveBootstrapCompleteRef.current) {
+      if (activeFolder !== "users") {
         return;
       }
 
@@ -795,10 +730,17 @@ const Archives = () => {
         setError("");
         console.log("Loading archived users...");
         
-        const data = await loadArchivedUsers();
+        const response = await fetch("/api/archive/users", {
+          headers: { ...getAuditHeaders() },
+        });
+        const data = await response.json();
 
-        if (data) {
+        if (response.ok && data.status === "ok") {
+          setArchivedUsers(data.archivedUsers || []);
           console.log(`✓ Loaded ${(data.archivedUsers || []).length} archived users`);
+        } else {
+          setError(data.message || "Failed to load archived users");
+          console.error("Error loading users:", data.message);
         }
       } catch (err) {
         setError("Failed to load archived users: " + err.message);
@@ -913,15 +855,6 @@ const Archives = () => {
       const data = await response.json();
       if (response.ok && data.status === "ok") {
         setArchivedUsers((prev) => prev.filter((u) => u.id !== userToRestore.id));
-        invalidateFetchCache("/api/students");
-        invalidateFetchCache("/api/archive/users");
-        window.dispatchEvent(
-          new CustomEvent("archivedUserRestored", {
-            detail: {
-              id: userToRestore.id,
-            },
-          }),
-        );
         setIsRestoreModalOpen(false);
         setUserToRestore(null);
         setError("");
@@ -1103,7 +1036,7 @@ const Archives = () => {
       // Current folder-only search
       if (activeFolder === "users") {
         return archivedUsers
-          .filter((user) => !user.is_unresolved_archive)
+          .filter((user) => !user.is_unresolved_archive && !isImportedUserRecord(user))
           .map((user) => {
           const normalizedName = splitMiddleInitialFromFirstName(
             user.first_name,
@@ -2107,17 +2040,6 @@ const Archives = () => {
         ? `Unresolved Student Records - S.Y. ${selectedUnresolvedYear}`
         : "Unresolved Student Records - Select a Year"
     : `Archived Student Records - S.Y. ${activeFolder} (${activeSemester})`;
-  const archiveMaintenancePercent = Math.max(
-    0,
-    Math.min(100, Number(archiveMaintenance.percent || 0)),
-  );
-  const showArchiveMaintenance =
-    isLoading &&
-    (archiveMaintenance.running ||
-      archiveMaintenance.phase === "preparing" ||
-      archiveMaintenance.phase === "importing" ||
-      archiveMaintenance.phase === "reconciling" ||
-      archiveMaintenance.phase === "cleanup");
 
   const handleClearUnresolved = async (row) => {
     if (!row?.id) return;
@@ -3044,10 +2966,10 @@ const Archives = () => {
                 </div>
                 <div className="text-xs text-gray-400">Archived users with violations</div>
               </button>
-              {schoolYears.length === 0 ? (
-                <div className="text-gray-300 col-span-full">No school year yet.</div>
+              {unresolvedSchoolYears.length === 0 ? (
+                <div className="text-gray-300 col-span-full">No unresolved school year yet.</div>
               ) : (
-                schoolYears
+                unresolvedSchoolYears
                   .filter((year) =>
                     searchQuery
                       ? String(year).toLowerCase().includes(searchQuery.toLowerCase())
@@ -3069,8 +2991,8 @@ const Archives = () => {
                     </button>
                   ))
               )}
-              {schoolYears.length > 0 &&
-                !schoolYears.some((year) =>
+              {unresolvedSchoolYears.length > 0 &&
+                !unresolvedSchoolYears.some((year) =>
                   searchQuery
                     ? String(year).toLowerCase().includes(searchQuery.toLowerCase())
                     : true,
@@ -3109,36 +3031,46 @@ const Archives = () => {
         </AnimatedContent>
       )}
 
-      {activeFolder !== "users" && !isGlobalSearch && activeFolder !== "unresolved" && (
+      {activeFolder !== "users" && !isGlobalSearch &&
+        (activeFolder !== "unresolved" || (selectedUnresolvedYear && selectedUnresolvedYear !== "users")) && (
         <AnimatedContent delay={0.25}>
-          <TableTabs
-            tabs={semesterTabs}
-            activeTab={activeSemester}
-            onTabChange={setActiveSemester}
-            renderTabAction={(tab) =>
-              (semestersBySchoolYear[activeFolder] || []).includes(tab.key) ? (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleDeleteSemesterClick(activeFolder, tab.key);
-                  }}
-                  disabled={isSemesterActionLoading}
-                  className="absolute right-1 top-1 z-10 flex h-4 w-5 items-center justify-center text-slate-400 transition-colors hover:text-white disabled:opacity-50"
-                  title={`Delete ${tab.label} for S.Y. ${activeFolder}`}
-                >
-                  {isSemesterActionLoading &&
-                  semesterToDelete?.schoolYear === activeFolder &&
-                  semesterToDelete?.semester === tab.key ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3 w-3" />
-                  )}
-                </button>
-              ) : null
-            }
-            className="mb-4"
-          />
+          {activeFolder !== "unresolved" ? (
+            <TableTabs
+              tabs={semesterTabs}
+              activeTab={activeSemester}
+              onTabChange={setActiveSemester}
+              renderTabAction={(tab) =>
+                (semestersBySchoolYear[activeFolder] || []).includes(tab.key) ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleDeleteSemesterClick(activeFolder, tab.key);
+                    }}
+                    disabled={isSemesterActionLoading}
+                    className="absolute right-1 top-1 z-10 flex h-4 w-5 items-center justify-center text-slate-400 transition-colors hover:text-white disabled:opacity-50"
+                    title={`Delete ${tab.label} for S.Y. ${activeFolder}`}
+                  >
+                    {isSemesterActionLoading &&
+                    semesterToDelete?.schoolYear === activeFolder &&
+                    semesterToDelete?.semester === tab.key ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3 w-3" />
+                    )}
+                  </button>
+                ) : null
+              }
+              className="mb-4"
+            />
+          ) : (
+            <TableTabs
+              tabs={semesterTabs}
+              activeTab={activeSemester}
+              onTabChange={setActiveSemester}
+              className="mb-4"
+            />
+          )}
         </AnimatedContent>
       )}
 
@@ -3152,38 +3084,6 @@ const Archives = () => {
           {archiveSuccessMessage && (
             <div className="mb-3 px-3 py-2 text-sm border border-emerald-300 bg-emerald-50 text-emerald-700 rounded">
               {archiveSuccessMessage}
-            </div>
-          )}
-
-          {showArchiveMaintenance && (
-            <div className="mb-4 rounded-xl border border-sky-400/30 bg-slate-900/70 p-4">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-sky-100">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span className="text-sm font-semibold">
-                    {archiveMaintenance.message || "Preparing archive data..."}
-                  </span>
-                </div>
-                <span className="text-sm font-bold tabular-nums text-sky-200">
-                  {archiveMaintenancePercent}%
-                </span>
-              </div>
-              <div className="h-3 overflow-hidden rounded-full bg-slate-700">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-sky-400 via-cyan-300 to-emerald-300 transition-[width] duration-500 ease-out"
-                  style={{ width: `${archiveMaintenancePercent}%` }}
-                />
-              </div>
-              <div className="mt-2 flex items-center justify-between text-xs text-slate-300">
-                <span className="uppercase tracking-[0.18em] text-slate-400">
-                  {String(archiveMaintenance.phase || "loading").replace(/_/g, " ")}
-                </span>
-                <span className="tabular-nums">
-                  {archiveMaintenance.total > 0
-                    ? `${archiveMaintenance.completed}/${archiveMaintenance.total}`
-                    : "Finalizing"}
-                </span>
-              </div>
             </div>
           )}
 
@@ -3317,26 +3217,31 @@ const Archives = () => {
               >
                 <Download className="w-4 h-4" /> Export
               </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="p-2 bg-blue-600 hover:bg-blue-700 text-white border-0"
+                onClick={() => {
+                  setCleanupSecretKey("");
+                  setIsCleanupReimportModalOpen(true);
+                }}
+                title="Cleanup & Re-Import Workbook"
+                aria-label="Cleanup and Re-Import Workbook"
+              >
+                <Upload className="w-4 h-4" />
+              </Button>
             </div>
 
           </div>
 
           {isLoading ? (
             <div className="text-center py-8 text-gray-400">
-              {showArchiveMaintenance ? (
-                <p className="mt-2 text-slate-300">
-                  Archive data will appear as soon as the archive sync finishes.
-                </p>
-              ) : (
-                <>
-                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
-                  <p className="mt-2">
-                    {isGlobalSearch && searchQuery
-                      ? "Searching across all folders..."
-                      : "Loading data..."}
-                  </p>
-                </>
-              )}
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+              <p className="mt-2">
+                {isGlobalSearch && searchQuery
+                  ? "Searching across all folders..."
+                  : "Loading data..."}
+              </p>
             </div>
           ) : filteredData.length === 0 ? (
             <div className="text-center py-8 text-gray-400">

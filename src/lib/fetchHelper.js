@@ -2,7 +2,7 @@ import { getAuditHeaders } from "./auditHeaders";
 
 const responseCache = new Map();
 const inFlightRequests = new Map();
-const DEFAULT_TTL_MS = 15000;
+const DEFAULT_TTL_MS = 30000;
 const MAX_CACHE_ENTRIES = 300;
 
 function stableSerialize(value) {

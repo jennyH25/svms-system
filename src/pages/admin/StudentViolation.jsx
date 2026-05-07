@@ -387,6 +387,10 @@ const StudentViolation = () => {
         throw new Error(result?.message || "Unable to delete record.");
       }
       setRecords((prev) => prev.filter((r) => r.id !== row.id));
+      invalidateFetchCache("/api/students");
+      window.dispatchEvent(new CustomEvent("studentViolationUpdated", {
+        detail: { studentId: Number(row.student_id || row.studentId || 0) },
+      }));
     } catch (error) {
       alert(error.message || "Unable to delete record.");
     }
@@ -417,6 +421,10 @@ const StudentViolation = () => {
         isOpen: true,
         message: `The violation for ${row.full_name || "this student"} has been marked as cleared.`,
       });
+      invalidateFetchCache("/api/students");
+      window.dispatchEvent(new CustomEvent("studentViolationUpdated", {
+        detail: { studentId: Number(row.student_id || row.studentId || 0) },
+      }));
     } catch (error) {
       const message = error?.message || "Unable to clear record.";
       if (message.toLowerCase().includes("signature is required")) {
@@ -467,6 +475,8 @@ const StudentViolation = () => {
         deletedIds.forEach((id) => next.delete(id));
         return next;
       });
+      invalidateFetchCache("/api/students");
+      window.dispatchEvent(new CustomEvent("studentViolationUpdated"));
     }
 
     if (failedIds.length > 0) {
@@ -511,6 +521,10 @@ const StudentViolation = () => {
         throw new Error(result?.message || "Unable to unclear record.");
       }
       mergeRecord(result.record);
+      invalidateFetchCache("/api/students");
+      window.dispatchEvent(new CustomEvent("studentViolationUpdated", {
+        detail: { studentId: Number(result.record?.student_id || result.record?.studentId || 0) },
+      }));
     } catch (error) {
       alert(error.message || "Unable to unclear record.");
     }
@@ -1888,6 +1902,10 @@ const StudentViolation = () => {
 
           // Ensure UI state exactly matches persisted DB state after logging.
           invalidateFetchCache("/api/student-violations");
+          invalidateFetchCache("/api/students");
+          window.dispatchEvent(new CustomEvent("studentViolationUpdated", {
+            detail: { studentId: Number(record?.student_id || record?.studentId || 0) },
+          }));
           await fetchStudentViolations({ silent: true, forceRefresh: true });
         }}
       />

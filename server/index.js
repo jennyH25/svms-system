@@ -46,13 +46,6 @@ const API_GET_CACHE_TTL_MS = Number(process.env.API_GET_CACHE_TTL_MS || 8000);
 const API_GET_CACHE_MAX_ENTRIES = Number(
   process.env.API_GET_CACHE_MAX_ENTRIES || 400,
 );
-const AUTH_RATE_LIMIT_WINDOW_MS = Number(
-  process.env.AUTH_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000,
-);
-const AUTH_RATE_LIMIT_MAX_ATTEMPTS = Number(
-  process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS || 8,
-);
-const AUTH_INPUT_MAX_LENGTH = 160;
 const HISTORICAL_VIOLATION_RECORDS_PATH = path.resolve(
   __dirname,
   "../ViolationRecords1.xlsx",
@@ -69,52 +62,6 @@ const isServerlessRuntime =
   process.env.VERCEL === "1" ||
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
   process.env.NODE_ENV === "serverless";
-const isEnvEnabled = (value) =>
-  ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
-const serverlessRuntimeDbSyncEnabled =
-  !isServerlessRuntime || isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_DB_SYNC);
-const serverlessArchiveMaintenanceEnabled =
-  !isServerlessRuntime || isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_ARCHIVE_MAINTENANCE);
-const serverlessArchiveMaintenanceAutostartEnabled =
-  !isServerlessRuntime ||
-  isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_ARCHIVE_AUTOSTART);
-const serverlessLegacyWorkbookImportEnabled =
-  isEnvEnabled(process.env.SVMS_ENABLE_SERVERLESS_LEGACY_WORKBOOK_IMPORT);
-const legacyWorkbookSourceEnabled =
-  !isServerlessRuntime || serverlessLegacyWorkbookImportEnabled;
-
-function getServerlessDbSyncGuidance() {
-  return "Run the API once in a non-serverless environment to apply schema updates, or temporarily set SVMS_ENABLE_SERVERLESS_DB_SYNC=true for a one-time deployment sync.";
-}
-
-function getServerlessArchiveGuidance() {
-  return "Enable SVMS_ENABLE_SERVERLESS_ARCHIVE_MAINTENANCE=true to allow workbook archive maintenance on Vercel, and optionally SVMS_ENABLE_SERVERLESS_ARCHIVE_AUTOSTART=true to run it automatically.";
-}
-
-function getLegacyWorkbookGuidance() {
-  return "This deployment runs archive data from Postgres only. If you still need a one-time workbook import, run it outside serverless or temporarily set SVMS_ENABLE_SERVERLESS_LEGACY_WORKBOOK_IMPORT=true.";
-}
-
-async function getLegacyWorkbookAvailability() {
-  if (!legacyWorkbookSourceEnabled) {
-    return {
-      available: false,
-      reason: "disabled",
-      message: getLegacyWorkbookGuidance(),
-    };
-  }
-
-  try {
-    await access(HISTORICAL_VIOLATION_RECORDS_PATH);
-    return { available: true, reason: "available", message: "" };
-  } catch {
-    return {
-      available: false,
-      reason: "missing",
-      message: "ViolationRecords1.xlsx is not available on this deployment.",
-    };
-  }
-}
 
 // Pusher client (optional) - configured via env vars
 let pusherClient = null;
@@ -139,7 +86,6 @@ if (
 }
 
 const apiGetResponseCache = new Map();
-const authAttemptBuckets = new Map();
 
 function buildApiGetCacheKey(req) {
   const actorUserId = String(req.headers["x-actor-user-id"] || "");
@@ -666,6 +612,29 @@ function buildWorkbookImportKey(record) {
   return [personKey, labelKey, semester, schoolYear, dateKey].join("|");
 }
 
+function buildWorkbookImportKeyVariants(record, studentId = null) {
+  const personKey = normalizeWorkbookPersonKey(record.studentName || record.student_name);
+  const labelKey = normalizeWorkbookComparisonText(
+    record.violationLabel || record.violation_label,
+  );
+  const semester = normalizeSemester(record.semester);
+  const schoolYear = normalizeSchoolYear(record.schoolYear || record.school_year);
+  const dateKey = formatWorkbookComparisonDate(
+    record.date || record.original_created_at || record.archived_at,
+  );
+  const keys = [];
+
+  if (studentId != null && studentId !== "") {
+    keys.push(`student:${studentId}|${labelKey}|${semester}|${schoolYear}|${dateKey}`);
+  }
+
+  if (personKey) {
+    keys.push(`name:${personKey}|${labelKey}|${semester}|${schoolYear}|${dateKey}`);
+  }
+
+  return keys;
+}
+
 async function resolveWorkbookStudentId(pool, studentName) {
   const normalizedStudentName = normalizeWorkbookText(studentName);
   if (!normalizedStudentName) {
@@ -972,9 +941,42 @@ function parseWorkbookTypeLabel(value) {
   };
 }
 
+function mapWorkbookRecordToArchiveRow(record, index) {
+  const archivedAt = toArchiveTimestamp(record.date);
+  const { category, degree, label } = parseWorkbookTypeLabel(record.typeLabel);
+
+  return {
+    id: `wb-${record.schoolYear}-${record.semester}-${index}`,
+    student_id: null,
+    violation_catalog_id: null,
+    violation_label: record.violationLabel || "",
+    reported_by: "",
+    remarks: "IMPORTED",
+    signature_image: "",
+    signature_updated_at: null,
+    semester: record.semester,
+    school_year: record.schoolYear,
+    archived_at: archivedAt,
+    archived_by_name: "Historical Import",
+    original_created_at: archivedAt,
+    original_updated_at: archivedAt,
+    student_name: record.studentName || "",
+    school_id: record.schoolId || "",
+    program: record.program || "",
+    year_section: record.yearSection || "",
+    violation_category: category,
+    violation_degree: degree,
+    violation_name: record.violationLabel || "",
+    violation_type_label: label,
+    isHistoricalWorkbook: true,
+    sourceType: "workbook",
+  };
+}
+
 async function loadHistoricalViolationRecordsFromWorkbook() {
-  const workbookAvailability = await getLegacyWorkbookAvailability();
-  if (!workbookAvailability.available) {
+  try {
+    await access(HISTORICAL_VIOLATION_RECORDS_PATH);
+  } catch {
     return [];
   }
 
@@ -1090,216 +1092,33 @@ async function loadHistoricalViolationRecordsFromWorkbook() {
   }
 }
 
-async function getWorkbookRecordByWorkbookId(workbookId) {
-  if (typeof workbookId !== "string" || !workbookId.startsWith("wb-")) {
-    return null;
-  }
-
-  const chunks = workbookId.split("-");
-  if (chunks.length < 5) {
-    return null;
-  }
-
-  const indexString = chunks.pop();
-  const index = Number(indexString);
-  if (!Number.isFinite(index) || index < 0) {
-    return null;
-  }
-
-  const schoolYear = `${chunks[1]}-${chunks[2]}`;
-  const semester = chunks.slice(3).join("-");
-  const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
-  const filteredRecords = workbookRecords.filter(
-    (record) =>
-      normalizeSchoolYear(record.schoolYear) === normalizeSchoolYear(schoolYear) &&
-      normalizeSemester(record.semester) === normalizeSemester(semester),
+async function getImportedWorkbookRecordKeys(pool, schoolYear, semester) {
+  const result = await pool.query(
+    `SELECT
+       sva.student_id,
+       sva.violation_label,
+       sva.reported_by,
+       sva.semester,
+       sva.school_year,
+       sva.original_created_at,
+       sva.archived_at,
+       sva.source_import_key,
+       s.full_name AS student_name
+     FROM student_violation_archives sva
+     LEFT JOIN "Students" s ON sva.student_id = s.id
+     WHERE sva.remarks = 'IMPORTED'
+       AND sva.school_year = $1
+       AND sva.semester = $2`,
+    [normalizeSchoolYear(schoolYear), normalizeSemester(semester)],
   );
 
-  return filteredRecords[index] || null;
-}
-
-async function upsertWorkbookArchiveRecord(
-  pool,
-  record,
-  actor = {},
-  options = {},
-) {
-  const normalizedSemester = normalizeSemester(record.semester);
-  const normalizedSchoolYear = normalizeSchoolYear(record.schoolYear);
-
-  if (!normalizedSemester || !normalizedSchoolYear) {
-    return {
-      status: "skipped",
-      inserted: false,
-      violationId: null,
-      sourceImportKey: "",
-    };
-  }
-
-  const {
-    existingImportedKeys = null,
-    studentIdCache = null,
-  } = options;
-  const sourceImportKey = buildWorkbookImportKey(record);
-
-  if (existingImportedKeys?.has(sourceImportKey)) {
-    return {
-      status: "existing",
-      inserted: false,
-      violationId: null,
-      sourceImportKey,
-    };
-  }
-
-  const studentCacheKey = normalizeWorkbookPersonKey(record.studentName);
-  let studentId = studentIdCache?.get(studentCacheKey) || null;
-  if (!studentId) {
-    studentId = await resolveWorkbookStudentId(pool, record.studentName);
-    if (!studentId) {
-      studentId = await getOrCreateHistoricalWorkbookStudent(pool, record);
-    }
-    if (studentIdCache && studentCacheKey) {
-      studentIdCache.set(studentCacheKey, studentId);
-    }
-  }
-
-  const archivedAt = toArchiveTimestamp(record.date) || new Date().toISOString();
-  const { category, degree, label } = parseWorkbookTypeLabel(record.typeLabel);
-
-  const existing = await pool.query(
-    `SELECT id
-     FROM student_violation_archives
-     WHERE remarks = 'IMPORTED'
-       AND (
-         source_import_key = $1
-         OR (
-           student_id = $2
-           AND violation_label = $3
-           AND school_year = $4
-           AND semester = $5
-           AND archived_at::date = $6::date
-         )
-       )
-     LIMIT 1`,
-    [
-      sourceImportKey,
-      studentId,
-      record.violationLabel || "",
-      normalizedSchoolYear,
-      normalizedSemester,
-      formatWorkbookComparisonDate(record.date),
-    ],
+  return new Set(
+    (result.rows || []).flatMap((row) => {
+      const fallbackKey = String(row.source_import_key || "").trim();
+      const keys = buildWorkbookImportKeyVariants(row, row.student_id);
+      return fallbackKey ? [fallbackKey, ...keys] : keys;
+    }),
   );
-
-  if (existing.rows?.[0]?.id) {
-    if (existingImportedKeys) {
-      existingImportedKeys.add(sourceImportKey);
-    }
-    return {
-      status: "existing",
-      inserted: false,
-      violationId: existing.rows[0].id,
-      sourceImportKey,
-    };
-  }
-
-  const insertResult = await pool.query(
-    `INSERT INTO student_violation_archives
-     (student_id, violation_catalog_id, violation_label, reported_by, remarks, source_import_key,
-      signature_image, signature_updated_at, semester, school_year, is_unresolved,
-      archived_by_user_id, archived_by_name, original_created_at, original_updated_at,
-      violation_category, violation_degree, violation_type_label)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-     RETURNING id`,
-    [
-      studentId,
-      null,
-      record.violationLabel || "",
-      "",
-      "IMPORTED",
-      sourceImportKey,
-      "",
-      null,
-      normalizedSemester,
-      normalizedSchoolYear,
-      false,
-      actor.id || null,
-      actor.full_name || "System",
-      archivedAt,
-      archivedAt,
-      category,
-      degree,
-      label,
-    ],
-  );
-
-  return {
-    status: "inserted",
-    inserted: true,
-    violationId: insertResult.rows?.[0]?.id || null,
-    sourceImportKey,
-  };
-}
-
-async function syncHistoricalWorkbookArchiveRecordsToDatabase(pool) {
-  const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
-  if (!Array.isArray(workbookRecords) || workbookRecords.length === 0) {
-    return { syncedCount: 0, scannedCount: 0 };
-  }
-
-  updateArchiveMaintenanceState({
-    phase: "importing",
-    message: "Importing workbook archive records into the database...",
-    percent: 8,
-    total: workbookRecords.length,
-    completed: 0,
-  });
-
-  const existingResult = await pool.query(
-    `SELECT source_import_key
-     FROM student_violation_archives
-     WHERE remarks = 'IMPORTED'
-       AND source_import_key IS NOT NULL
-       AND source_import_key <> ''`,
-  );
-  const existingImportedKeys = new Set(
-    (existingResult.rows || [])
-      .map((row) => String(row.source_import_key || "").trim())
-      .filter(Boolean),
-  );
-  const studentIdCache = new Map();
-  let syncedCount = 0;
-  let completed = 0;
-
-  for (const record of workbookRecords) {
-    const result = await upsertWorkbookArchiveRecord(pool, record, {}, {
-      existingImportedKeys,
-      studentIdCache,
-    });
-    if (result.inserted) {
-      syncedCount += 1;
-      existingImportedKeys.add(result.sourceImportKey);
-    }
-
-    completed += 1;
-    if (
-      completed === workbookRecords.length ||
-      completed % 10 === 0
-    ) {
-      updateArchiveMaintenanceState({
-        phase: "importing",
-        message: "Importing workbook archive records into the database...",
-        percent: 8 + (completed / workbookRecords.length) * 62,
-        total: workbookRecords.length,
-        completed,
-      });
-    }
-  }
-
-  return {
-    syncedCount,
-    scannedCount: workbookRecords.length,
-  };
 }
 
 async function reconcileImportedWorkbookArchiveRecords(pool) {
@@ -1307,12 +1126,6 @@ async function reconcileImportedWorkbookArchiveRecords(pool) {
   if (!Array.isArray(workbookRecords) || workbookRecords.length === 0) {
     return { correctedCount: 0, scannedCount: 0, unmatchedCount: 0, unresolvedFixedCount: 0 };
   }
-
-  updateArchiveMaintenanceState({
-    phase: "reconciling",
-    message: "Reconciling imported archive records with workbook data...",
-    percent: 72,
-  });
 
   const workbookRecordsByKey = new Map();
   workbookRecords.forEach((record) => {
@@ -1351,10 +1164,8 @@ async function reconcileImportedWorkbookArchiveRecords(pool) {
   let correctedCount = 0;
   let unmatchedCount = 0;
   let unresolvedFixedCount = 0;
-  let processed = 0;
 
   for (const row of importedRows) {
-    processed += 1;
     const key = buildWorkbookImportKey(row);
     const candidates = workbookRecordsByKey.get(key);
 
@@ -1369,18 +1180,6 @@ async function reconcileImportedWorkbookArchiveRecords(pool) {
           [row.id],
         );
         unresolvedFixedCount += 1;
-      }
-      if (processed === importedRows.length || processed % 20 === 0) {
-        updateArchiveMaintenanceState({
-          phase: "reconciling",
-          message: "Reconciling imported archive records with workbook data...",
-          percent:
-            importedRows.length > 0
-              ? 72 + (processed / importedRows.length) * 20
-              : 92,
-          total: importedRows.length,
-          completed: processed,
-        });
       }
       continue;
     }
@@ -1446,19 +1245,6 @@ async function reconcileImportedWorkbookArchiveRecords(pool) {
     if (row.is_unresolved) {
       unresolvedFixedCount += 1;
     }
-
-    if (processed === importedRows.length || processed % 20 === 0) {
-      updateArchiveMaintenanceState({
-        phase: "reconciling",
-        message: "Reconciling imported archive records with workbook data...",
-        percent:
-          importedRows.length > 0
-            ? 72 + (processed / importedRows.length) * 20
-            : 92,
-        total: importedRows.length,
-        completed: processed,
-      });
-    }
   }
 
   return {
@@ -1474,17 +1260,6 @@ let lastArchiveMaintenanceAt = 0;
 let archiveMaintenanceInFlight = null;
 let archiveColumnsEnsured = false;
 let archiveColumnsEnsureInFlight = null;
-const archiveMaintenanceState = {
-  running: false,
-  phase: "idle",
-  message: "Archive maintenance idle.",
-  percent: 100,
-  completed: 0,
-  total: 0,
-  startedAt: null,
-  finishedAt: null,
-  stats: {},
-};
 
 const VIOLATION_INFERENCE_CACHE_TTL_MS = 5 * 60 * 1000;
 let violationInferenceCache = {
@@ -1492,109 +1267,40 @@ let violationInferenceCache = {
   rows: [],
 };
 
-function updateArchiveMaintenanceState(patch = {}) {
-  Object.assign(archiveMaintenanceState, patch);
-  if (typeof archiveMaintenanceState.percent === "number") {
-    archiveMaintenanceState.percent = Math.max(
-      0,
-      Math.min(100, Math.round(archiveMaintenanceState.percent)),
+const isWorkbookBusyError = (error) => {
+  const code = String(error?.code || "").toUpperCase();
+  return code === "EBUSY" || Number(error?.errno) === -4082;
+};
+
+const delayMs = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+async function runWithWorkbookRetry(task, { attempts = 5, waitMs = 250 } = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (!isWorkbookBusyError(error) || attempt === attempts) {
+        break;
+      }
+      await delayMs(waitMs * attempt);
+    }
+  }
+
+  if (isWorkbookBusyError(lastError)) {
+    const lockedError = new Error(
+      "ViolationRecords1.xlsx is currently busy or locked. Close the file and try again.",
     );
-  }
-}
-
-function getClientIp(req) {
-  const forwarded = String(req.headers["x-forwarded-for"] || "")
-    .split(",")[0]
-    .trim();
-  return forwarded || req.ip || req.socket?.remoteAddress || "unknown";
-}
-
-function normalizeBoundedText(value, maxLength = AUTH_INPUT_MAX_LENGTH) {
-  return String(value || "").trim().slice(0, maxLength);
-}
-
-function isLikelyEmail(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ""));
-}
-
-function parsePositiveInteger(value) {
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
-    return value;
+    lockedError.code = "EBUSY";
+    throw lockedError;
   }
 
-  const text = String(value || "").trim();
-  if (!/^\d+$/.test(text)) {
-    return null;
-  }
-
-  const parsed = Number(text);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function trackRateLimit(bucketStore, bucketKey, windowMs, maxAttempts) {
-  const now = Date.now();
-  const existing = bucketStore.get(bucketKey);
-  const baseEntry =
-    existing && now < existing.resetAt
-      ? existing
-      : { count: 0, resetAt: now + windowMs };
-
-  baseEntry.count += 1;
-  bucketStore.set(bucketKey, baseEntry);
-
-  return {
-    limited: baseEntry.count > maxAttempts,
-    remaining: Math.max(0, maxAttempts - baseEntry.count),
-    retryAfterSeconds: Math.max(1, Math.ceil((baseEntry.resetAt - now) / 1000)),
-  };
-}
-
-function clearRateLimitBucket(bucketStore, bucketKey) {
-  bucketStore.delete(bucketKey);
-}
-
-function enforceAuthRateLimit(req, res, actionKey, identityHint = "") {
-  const bucketKey = `${actionKey}|${getClientIp(req)}|${String(identityHint || "").toLowerCase()}`;
-  const result = trackRateLimit(
-    authAttemptBuckets,
-    bucketKey,
-    AUTH_RATE_LIMIT_WINDOW_MS,
-    AUTH_RATE_LIMIT_MAX_ATTEMPTS,
-  );
-
-  if (!result.limited) {
-    return { allowed: true, bucketKey };
-  }
-
-  res.setHeader("Retry-After", String(result.retryAfterSeconds));
-  res.status(429).json({
-    status: "error",
-    message: "Too many attempts. Please try again later.",
-    retryAfterSeconds: result.retryAfterSeconds,
-  });
-  return { allowed: false, bucketKey };
-}
-
-function sendSafeServerError(res, operationMessage, error, statusCode = 503) {
-  console.error(operationMessage, error);
-  return res.status(statusCode).json({
-    status: "error",
-    message: operationMessage,
-  });
-}
-
-function getArchiveMaintenanceSnapshot() {
-  return {
-    running: Boolean(archiveMaintenanceState.running),
-    phase: archiveMaintenanceState.phase,
-    message: archiveMaintenanceState.message,
-    percent: Number(archiveMaintenanceState.percent || 0),
-    completed: Number(archiveMaintenanceState.completed || 0),
-    total: Number(archiveMaintenanceState.total || 0),
-    startedAt: archiveMaintenanceState.startedAt,
-    finishedAt: archiveMaintenanceState.finishedAt,
-    stats: archiveMaintenanceState.stats || {},
-  };
+  throw lastError;
 }
 
 async function cleanupDuplicateArchivedViolations(pool) {
@@ -1644,58 +1350,21 @@ async function maybeRunArchiveMaintenance(pool) {
 
   archiveMaintenanceInFlight = (async () => {
     console.log("Running archive workbook maintenance...");
-    updateArchiveMaintenanceState({
-      running: true,
-      phase: "preparing",
-      message: "Preparing archive workbook maintenance...",
-      percent: 2,
-      total: 0,
-      completed: 0,
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-      stats: {},
-    });
-
-    const syncResult = await syncHistoricalWorkbookArchiveRecordsToDatabase(pool);
-    const reconcileResult = await reconcileImportedWorkbookArchiveRecords(pool);
-    updateArchiveMaintenanceState({
-      phase: "cleanup",
-      message: "Finalizing archive records and removing duplicates...",
-      percent: 94,
-      total: 0,
-      completed: 0,
-    });
-    const duplicateRemovedCount = await cleanupDuplicateArchivedViolations(pool);
+    const [reconcileResult, duplicateRemovedCount] = await Promise.all([
+      reconcileImportedWorkbookArchiveRecords(pool),
+      cleanupDuplicateArchivedViolations(pool),
+    ]);
 
     lastArchiveMaintenanceAt = Date.now();
 
     console.log("Archive workbook maintenance completed:", {
-      syncedCount: Number(syncResult?.syncedCount || 0),
       correctedCount: Number(reconcileResult?.correctedCount || 0),
       unresolvedFixedCount: Number(reconcileResult?.unresolvedFixedCount || 0),
       duplicateRemovedCount,
     });
 
-    updateArchiveMaintenanceState({
-      running: false,
-      phase: "completed",
-      message: "Archive workbook maintenance completed.",
-      percent: 100,
-      completed: Number(syncResult?.scannedCount || 0),
-      total: Number(syncResult?.scannedCount || 0),
-      finishedAt: new Date().toISOString(),
-      stats: {
-        syncedCount: Number(syncResult?.syncedCount || 0),
-        scannedCount: Number(syncResult?.scannedCount || 0),
-        correctedCount: Number(reconcileResult?.correctedCount || 0),
-        unresolvedFixedCount: Number(reconcileResult?.unresolvedFixedCount || 0),
-        duplicateRemovedCount: Number(duplicateRemovedCount || 0),
-      },
-    });
-
     return {
       skipped: false,
-      syncedCount: Number(syncResult?.syncedCount || 0),
       correctedCount: Number(reconcileResult?.correctedCount || 0),
       duplicateRemovedCount,
       unresolvedFixedCount: Number(reconcileResult?.unresolvedFixedCount || 0),
@@ -1705,49 +1374,6 @@ async function maybeRunArchiveMaintenance(pool) {
   });
 
   return archiveMaintenanceInFlight;
-}
-
-async function requestArchiveMaintenance(
-  pool,
-  { trigger = "request", forceStart = false } = {},
-) {
-  if (!pool) {
-    return { skipped: true, reason: "missing_pool" };
-  }
-
-  const workbookAvailability = await getLegacyWorkbookAvailability();
-  if (!workbookAvailability.available) {
-    updateArchiveMaintenanceState({
-      running: false,
-      phase: "idle",
-      message: "Archive maintenance disabled: archive data is served from Postgres.",
-      percent: 100,
-      completed: 0,
-      total: 0,
-      finishedAt: new Date().toISOString(),
-    });
-    return {
-      skipped: true,
-      reason: `legacy_workbook_${workbookAvailability.reason}`,
-    };
-  }
-
-  if (isServerlessRuntime && !serverlessArchiveMaintenanceEnabled) {
-    console.log(
-      `Skipping archive maintenance for ${trigger} in serverless mode. ${getServerlessArchiveGuidance()}`,
-    );
-    return { skipped: true, reason: "serverless_archive_maintenance_disabled" };
-  }
-
-  if (
-    isServerlessRuntime &&
-    !forceStart &&
-    !serverlessArchiveMaintenanceAutostartEnabled
-  ) {
-    return { skipped: true, reason: "serverless_archive_autostart_disabled" };
-  }
-
-  return maybeRunArchiveMaintenance(pool);
 }
 
 async function getViolationCandidatesForInference(pool) {
@@ -1845,29 +1471,117 @@ function enrichArchiveViolationRow(row, violationMatch) {
 }
 
 async function deleteHistoricalWorkbookRecordById(workbookId) {
-  const record = await getWorkbookRecordByWorkbookId(workbookId);
-  if (!record) {
+  if (typeof workbookId !== "string" || !workbookId.startsWith("wb-")) {
     return false;
   }
 
+  const chunks = workbookId.split("-");
+  if (chunks.length < 5) {
+    return false;
+  }
+
+  const indexString = chunks.pop();
+  const index = Number(indexString);
+  if (!Number.isFinite(index) || index < 0) {
+    return false;
+  }
+
+  const schoolYear = `${chunks[1]}-${chunks[2]}`;
+  const semester = chunks.slice(3).join("-");
+
   try {
-    const pool = getDbPool();
-    if (!pool) {
+    const excelModule = await import("exceljs");
+    const ExcelJS = excelModule.default || excelModule;
+
+    const { workbook, worksheet } = await runWithWorkbookRetry(async () => {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+      return { workbook: wb, worksheet: wb.worksheets?.[0] };
+    });
+
+    if (!worksheet) {
       return false;
     }
 
-    const sourceImportKey = buildWorkbookImportKey(record);
-    const deleteResult = await pool.query(
-      `DELETE FROM student_violation_archives
-       WHERE remarks = 'IMPORTED'
-         AND source_import_key = $1
-       RETURNING id`,
-      [sourceImportKey],
-    );
+    const headerRow = worksheet.getRow(1);
+    const headerMap = {};
+    headerRow.eachCell((cell, colNumber) => {
+      const headerText = String(cell.value || "")
+        .trim()
+        .toUpperCase();
+      if (headerText) {
+        headerMap[headerText] = colNumber;
+      }
+    });
 
-    return Boolean(deleteResult.rows?.[0]?.id);
+    const dateColumn = headerMap.DATE;
+    const nameColumn = headerMap.NAME;
+
+    if (!dateColumn) {
+      return false;
+    }
+
+    let currentSemester = "";
+    let currentSchoolYear = "";
+    let workbookIndex = 0;
+    let deleteRowNumber = null;
+
+    for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+      const row = worksheet.getRow(rowNumber);
+      const rowValues = row.values;
+      const termHeader = parseWorkbookTermHeader(rowValues);
+      if (termHeader) {
+        currentSemester = termHeader.semester;
+        currentSchoolYear = termHeader.schoolYear;
+        continue;
+      }
+
+      const nameValue = normalizeWorkbookText(
+        nameColumn ? row.getCell(nameColumn).value || "" : "",
+      );
+      const dateValue = parseCellDate(row.getCell(dateColumn).value);
+
+      if (!dateValue || !nameValue) {
+        continue;
+      }
+
+      const normalizedSemester = normalizeSemester(currentSemester);
+      const normalizedSchoolYear = normalizeSchoolYear(currentSchoolYear);
+      if (!normalizedSemester || !normalizedSchoolYear) {
+        continue;
+      }
+
+      if (
+        normalizeSchoolYear(schoolYear) === normalizedSchoolYear &&
+        normalizeSemester(semester) === normalizedSemester
+      ) {
+        if (workbookIndex === index) {
+          deleteRowNumber = rowNumber;
+          break;
+        }
+        workbookIndex += 1;
+      }
+    }
+
+    if (deleteRowNumber === null) {
+      return false;
+    }
+
+    worksheet.spliceRows(deleteRowNumber, 1);
+    await runWithWorkbookRetry(async () => {
+      await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+    });
+    HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
+    HISTORICAL_VIOLATION_CACHE.records = [];
+    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs = 0;
+    HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.counts = new Map();
+
+    return true;
   } catch (error) {
-    console.error("Failed to delete imported workbook archive record:", error);
+    if (isWorkbookBusyError(error)) {
+      throw error;
+    }
+    console.error("Failed to delete historical workbook record:", error);
     return false;
   }
 }
@@ -1883,64 +1597,104 @@ async function ensureArchiveColumnsExist(pool) {
 
   archiveColumnsEnsureInFlight = (async () => {
     try {
-      if (isServerlessRuntime && !serverlessRuntimeDbSyncEnabled) {
-        const columnResult = await pool.query(
-          `SELECT column_name
-             FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'student_violation_archives'
-              AND column_name = ANY($1::text[])`,
-          [[
-            "violation_category",
-            "violation_degree",
-            "violation_type_label",
-          ]],
-        );
-        const availableColumns = new Set(
-          (columnResult.rows || []).map((row) => String(row.column_name || "")),
-        );
-        const requiredColumns = [
-          "violation_category",
-          "violation_degree",
-          "violation_type_label",
-        ];
-        const missingColumns = requiredColumns.filter(
-          (column) => !availableColumns.has(column),
-        );
-
-        if (missingColumns.length > 0) {
-          throw new Error(
-            `Archive schema is not ready for serverless runtime. Missing column(s): ${missingColumns.join(", ")}. ${getServerlessDbSyncGuidance()}`,
-          );
-        }
-
-        archiveColumnsEnsured = true;
-        return;
-      }
-
       await pool.query(`ALTER TABLE student_violation_archives ADD COLUMN IF NOT EXISTS violation_category text`);
       await pool.query(`ALTER TABLE student_violation_archives ADD COLUMN IF NOT EXISTS violation_degree text`);
       await pool.query(`ALTER TABLE student_violation_archives ADD COLUMN IF NOT EXISTS violation_type_label text`);
-      await pool.query(`
-        CREATE INDEX IF NOT EXISTS student_violation_archives_resolved_term_idx
-        ON student_violation_archives (school_year, semester, archived_at DESC)
-        WHERE is_unresolved = FALSE
-      `);
-      await pool.query(`
-        CREATE INDEX IF NOT EXISTS student_violation_archives_imported_source_idx
-        ON student_violation_archives (source_import_key)
-        WHERE remarks = 'IMPORTED'
-      `);
       archiveColumnsEnsured = true;
     } catch (err) {
       console.warn('Could not ensure archive columns exist:', err.message || err);
-      throw err;
     } finally {
       archiveColumnsEnsureInFlight = null;
     }
   })();
 
   return archiveColumnsEnsureInFlight;
+}
+
+async function deleteHistoricalWorkbookRecordsBySchoolYear(schoolYear) {
+  try {
+    const excelModule = await import("exceljs");
+    const ExcelJS = excelModule.default || excelModule;
+    const { workbook, worksheet } = await runWithWorkbookRetry(async () => {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+      return { workbook: wb, worksheet: wb.worksheets?.[0] };
+    });
+
+    if (!worksheet) {
+      return 0; // No workbook records
+    }
+
+    const headerRow = worksheet.getRow(1);
+    const headerMap = {};
+    headerRow.eachCell((cell, colNumber) => {
+      const headerText = String(cell.value || "")
+        .trim()
+        .toUpperCase();
+      if (headerText) {
+        headerMap[headerText] = colNumber;
+      }
+    });
+
+    const dateColumn = headerMap.DATE;
+    if (!dateColumn) {
+      return 0;
+    }
+
+    let currentSemester = "";
+    let currentSchoolYear = "";
+    let deletedCount = 0;
+    const rowsToDelete = [];
+
+    // Collect all rows to delete for this school year
+    for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+      const row = worksheet.getRow(rowNumber);
+      const rowValues = row.values;
+      const termHeader = parseWorkbookTermHeader(rowValues);
+      if (termHeader) {
+        currentSemester = termHeader.semester;
+        currentSchoolYear = termHeader.schoolYear;
+        continue;
+      }
+
+      const dateValue = parseCellDate(row.getCell(dateColumn).value);
+      if (!dateValue) {
+        continue;
+      }
+
+      const normalizedSchoolYear = normalizeSchoolYear(currentSchoolYear);
+      if (normalizeSchoolYear(schoolYear) === normalizedSchoolYear) {
+        rowsToDelete.push(rowNumber);
+      }
+    }
+
+    // Delete rows in reverse order to maintain row numbers
+    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+      worksheet.spliceRows(rowsToDelete[i], 1);
+      deletedCount++;
+    }
+
+    if (deletedCount > 0) {
+      await runWithWorkbookRetry(async () => {
+        await workbook.xlsx.writeFile(HISTORICAL_VIOLATION_RECORDS_PATH);
+      });
+      HISTORICAL_VIOLATION_CACHE.mtimeMs = 0;
+      HISTORICAL_VIOLATION_CACHE.records = [];
+      HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.mtimeMs = 0;
+      HISTORICAL_STUDENT_VIOLATION_COUNT_CACHE.counts = new Map();
+    }
+
+    return deletedCount;
+  } catch (error) {
+    if (isWorkbookBusyError(error)) {
+      throw error;
+    }
+    console.error(
+      "Failed to delete historical workbook records by school year:",
+      error,
+    );
+    return 0;
+  }
 }
 
 function buildAnalyticsFromRecords({
@@ -2926,49 +2680,9 @@ const upload = multer({
   },
 });
 
-app.disable("x-powered-by");
-app.set("trust proxy", 1);
-
 app.use(cors());
 // Increase JSON body size limit to allow base64 signature uploads
-app.use(express.json({ limit: "6mb" }));
-app.use(express.urlencoded({ extended: false, limit: "32kb" }));
-
-app.use((req, res, next) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-  if (req.path.startsWith("/api/")) {
-    res.setHeader("Cache-Control", "no-store");
-  }
-  next();
-});
-
-app.param("id", (req, res, next, value) => {
-  const parsed = parsePositiveInteger(value);
-  if (!parsed) {
-    return res.status(400).json({
-      status: "error",
-      message: "Invalid record identifier.",
-    });
-  }
-  req.params.id = String(parsed);
-  return next();
-});
-
-app.param("userId", (req, res, next, value) => {
-  const parsed = parsePositiveInteger(value);
-  if (!parsed) {
-    return res.status(400).json({
-      status: "error",
-      message: "Invalid user identifier.",
-    });
-  }
-  req.params.userId = String(parsed);
-  return next();
-});
+app.use(express.json({ limit: '6mb' }));
 
 // Lightweight response caching for GET /api requests to speed up tab switches.
 app.use((req, res, next) => {
@@ -3050,14 +2764,15 @@ app.get("/api/db-health", async (_req, res) => {
 
     return res.status(200).json({
       status: "ok",
+      database: process.env.PGDATABASE || "postgres",
+      host: process.env.PGHOST || "supabase",
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    return sendSafeServerError(
-      res,
-      "Database unavailable or sync failed.",
-      error,
-    );
+    return res.status(503).json({
+      status: "error",
+      message: `Database unavailable or sync failed: ${error.message}`,
+    });
   }
 });
 
@@ -3092,28 +2807,21 @@ app.get("/api/app-state/snapshot", async (req, res) => {
       serverTime: new Date().toISOString(),
     });
   } catch (error) {
-    return sendSafeServerError(
-      res,
-      "Unable to load app state snapshot.",
-      error,
-    );
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to load app state snapshot (${error.message}).`,
+    });
   }
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const username = normalizeBoundedText(req.body?.username);
-  const password = String(req.body?.password || "");
+  const { username, password } = req.body ?? {};
 
   if (!username || !password) {
     return res.status(400).json({
       status: "error",
       message: "Username/email and password are required.",
     });
-  }
-
-  const rateLimit = enforceAuthRateLimit(req, res, "login", username);
-  if (!rateLimit.allowed) {
-    return;
   }
 
   if (!hasDbConfig()) {
@@ -3220,8 +2928,6 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    clearRateLimitBucket(authAttemptBuckets, rateLimit.bucketKey);
-
     const sessionToken = signSessionToken(user);
 
     return res.status(200).json({
@@ -3246,32 +2952,24 @@ app.post("/api/auth/login", async (req, res) => {
       },
     });
   } catch (error) {
-    return sendSafeServerError(
-      res,
-      "Login unavailable. Please try again shortly.",
-      error,
-    );
+    return res.status(503).json({
+      status: "error",
+      message: `Login unavailable: database not ready (${error.message}).`,
+    });
   }
 });
 
 app.post("/api/auth/forgot-password/request", async (req, res) => {
-  const normalizedEmail = normalizeBoundedText(req.body?.email).toLowerCase();
+  const { email } = req.body ?? {};
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
 
-  if (!normalizedEmail || !isLikelyEmail(normalizedEmail)) {
+  if (!normalizedEmail || !normalizedEmail.includes("@")) {
     return res.status(400).json({
       status: "error",
       message: "A valid email is required.",
     });
-  }
-
-  const rateLimit = enforceAuthRateLimit(
-    req,
-    res,
-    "forgot-password-request",
-    normalizedEmail,
-  );
-  if (!rateLimit.allowed) {
-    return;
   }
 
   if (!hasDbConfig()) {
@@ -3304,10 +3002,9 @@ app.post("/api/auth/forgot-password/request", async (req, res) => {
 
     const user = await findUserByEmail(pool, normalizedEmail);
     if (!user) {
-      return res.status(200).json({
-        status: "ok",
-        message: "If the account exists, a verification code will be sent.",
-        retryAfterSeconds: Math.ceil(FORGOT_RESEND_COOLDOWN_MS / 1000),
+      return res.status(404).json({
+        status: "error",
+        message: "Email does not exist in the system.",
       });
     }
 
@@ -3356,44 +3053,29 @@ app.post("/api/auth/forgot-password/request", async (req, res) => {
 
     return res.status(200).json({
       status: "ok",
-      message: "If the account exists, a verification code will be sent.",
+      message: "Verification code sent.",
       retryAfterSeconds: Math.ceil(FORGOT_RESEND_COOLDOWN_MS / 1000),
     });
   } catch (error) {
-    return sendSafeServerError(
-      res,
-      "Unable to process forgot password request right now.",
-      error,
-    );
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to process forgot password request (${error.message}).`,
+    });
   }
 });
 
 app.post("/api/auth/forgot-password/verify", async (req, res) => {
-  const normalizedEmail = normalizeBoundedText(req.body?.email).toLowerCase();
-  const normalizedCode = normalizeBoundedText(req.body?.code, 12);
+  const { email, code } = req.body ?? {};
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+  const normalizedCode = String(code || "").trim();
 
   if (!normalizedEmail || !normalizedCode) {
     return res.status(400).json({
       status: "error",
       message: "Email and verification code are required.",
     });
-  }
-
-  if (!isLikelyEmail(normalizedEmail) || !/^\d{6}$/.test(normalizedCode)) {
-    return res.status(400).json({
-      status: "error",
-      message: "Invalid email or verification code format.",
-    });
-  }
-
-  const rateLimit = enforceAuthRateLimit(
-    req,
-    res,
-    "forgot-password-verify",
-    normalizedEmail,
-  );
-  if (!rateLimit.allowed) {
-    return;
   }
 
   if (!hasDbConfig()) {
@@ -3453,42 +3135,24 @@ app.post("/api/auth/forgot-password/verify", async (req, res) => {
       resetToken,
     });
   } catch (error) {
-    return sendSafeServerError(
-      res,
-      "Unable to verify code right now.",
-      error,
-    );
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to verify code (${error.message}).`,
+    });
   }
 });
 
 app.post("/api/auth/forgot-password/reset", async (req, res) => {
-  const normalizedEmail = normalizeBoundedText(req.body?.email).toLowerCase();
-  const newPassword = String(req.body?.newPassword || "");
-  const confirmPassword = String(req.body?.confirmPassword || "");
-  const resetToken = normalizeBoundedText(req.body?.resetToken, 128);
+  const { email, newPassword, confirmPassword, resetToken } = req.body ?? {};
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
 
   if (!normalizedEmail || !newPassword || !confirmPassword || !resetToken) {
     return res.status(400).json({
       status: "error",
       message: "Email, reset token, and new password fields are required.",
     });
-  }
-
-  if (!isLikelyEmail(normalizedEmail) || !/^[A-Fa-f0-9]{48}$/.test(resetToken)) {
-    return res.status(400).json({
-      status: "error",
-      message: "Invalid email or reset token format.",
-    });
-  }
-
-  const rateLimit = enforceAuthRateLimit(
-    req,
-    res,
-    "forgot-password-reset",
-    normalizedEmail,
-  );
-  if (!rateLimit.allowed) {
-    return;
   }
 
   if (String(newPassword) !== String(confirmPassword)) {
@@ -3565,11 +3229,10 @@ app.post("/api/auth/forgot-password/reset", async (req, res) => {
       message: "Password reset successful.",
     });
   } catch (error) {
-    return sendSafeServerError(
-      res,
-      "Unable to reset password right now.",
-      error,
-    );
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to reset password (${error.message}).`,
+    });
   }
 });
 
@@ -3620,17 +3283,16 @@ app.get("/api/students/profile/:userId", async (req, res) => {
 
     return res.status(200).json({ status: "ok", student });
   } catch (error) {
-    return sendSafeServerError(
-      res,
-      "Unable to load student profile right now.",
-      error,
-    );
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to load student profile (${error.message}).`,
+    });
   }
 });
 
 // Verify current password endpoint
 app.post("/api/verify-password", async (req, res) => {
-  const password = String(req.body?.password || "");
+  const { password } = req.body ?? {};
 
   if (!password) {
     return res.status(400).json({
@@ -3655,8 +3317,8 @@ app.post("/api/verify-password", async (req, res) => {
 
     // Get current user from request headers or session
     // For now, we'll get the user ID from the request - in production you'd get this from session/JWT
-    const userId = parsePositiveInteger(req.headers["x-user-id"]);
-
+    const userId = req.headers['x-user-id'];
+    
     if (!userId) {
       return res.status(401).json({
         status: "error",
@@ -3706,11 +3368,11 @@ app.post("/api/verify-password", async (req, res) => {
       });
     }
   } catch (error) {
-    console.error("Unable to verify password right now.", error);
+    console.error("Error verifying password:", error);
     return res.status(503).json({
       status: "error",
       isValid: false,
-      message: "Unable to verify password right now.",
+      message: `Unable to verify password (${error.message}).`,
     });
   }
 });
@@ -4064,13 +3726,36 @@ app.get("/api/students", async (req, res) => {
         s.program,
         s.year_section,
         s.status,
-        s.violation_count,
+        COALESCE(
+          CASE
+            WHEN s.is_archived = true THEN COALESCE(archived_total_count, 0)
+            ELSE COALESCE(active_unresolved_count, 0) + COALESCE(archive_unresolved_count, 0)
+          END,
+          0
+        ) AS violation_count,
         s.is_archived,
         s.archived_at,
         s.archived_reason,
         s.original_status
       FROM "Students" s
       LEFT JOIN users u ON u.id = s.user_id
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS active_unresolved_count
+        FROM student_violation_logs svl
+        WHERE svl.student_id = s.id AND svl.cleared_at IS NULL
+      ) active_count ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS archive_unresolved_count
+        FROM student_violation_archives sva
+        WHERE sva.student_id = s.id AND sva.is_unresolved = TRUE
+      ) archive_count ON true
+      LEFT JOIN LATERAL (
+        SELECT (
+          SELECT COUNT(*)::int FROM student_violation_logs svl WHERE svl.student_id = s.id
+        ) + (
+          SELECT COUNT(*)::int FROM student_violation_archives sva WHERE sva.student_id = s.id
+        ) AS archived_total_count
+      ) full_archived_count ON true
       WHERE s.is_archived = $1
       ORDER BY s.id ASC
     `,
@@ -4921,6 +4606,10 @@ async function refreshStudentViolationCount(pool, studentId) {
           SELECT COUNT(*)::int
           FROM student_violation_logs svl
           WHERE svl.student_id = $1 AND svl.cleared_at IS NULL
+        ) + (
+          SELECT COUNT(*)::int
+          FROM student_violation_archives sva
+          WHERE sva.student_id = $1 AND sva.is_unresolved = TRUE
         )
       END as total_count
     FROM "Students" s
@@ -4981,12 +4670,15 @@ app.get("/api/violation-analytics", async (req, res) => {
   const requestedSemester = req.query.semester
     ? normalizeSemester(String(req.query.semester).trim())
     : null;
+  let workbookRecords = [];
   let databaseRecords = [];
   let archivedRecords = [];
   let currentSemester = "";
   let currentSchoolYear = "";
 
   try {
+    workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+
     if (hasDbConfig()) {
       await ensureAuthDatabaseReady();
       const pool = getDbPool();
@@ -5077,11 +4769,6 @@ app.get("/api/violation-analytics", async (req, res) => {
           };
         });
       } else {
-        await ensureArchiveColumnsExist(pool);
-        await requestArchiveMaintenance(pool, {
-          trigger: "GET /api/archive/analytics",
-        });
-
         const archivedResult = await pool.query(
           `
           SELECT
@@ -5104,6 +4791,12 @@ app.get("/api/violation-analytics", async (req, res) => {
           ORDER BY sva.created_at ASC, sva.id ASC
           `,
           [targetSchoolYear, targetSemester],
+        );
+
+        const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
+          pool,
+          targetSchoolYear,
+          targetSemester,
         );
 
         const archiveDatabaseRecords = (archivedResult.rows || []).map(
@@ -5136,17 +4829,50 @@ app.get("/api/violation-analytics", async (req, res) => {
             };
           },
         );
-        archivedRecords = [...archiveDatabaseRecords];
+
+        const archiveWorkbookRecords = workbookRecords
+          .filter(
+            (record) =>
+              normalizeSchoolYear(record.schoolYear) === targetSchoolYear &&
+              normalizeSemester(record.semester) === targetSemester &&
+              !importedWorkbookKeys.has(buildWorkbookImportKey(record)),
+          )
+          .map((record, index) => {
+            const archivedRow = mapWorkbookRecordToArchiveRow(record, index);
+            const createdAt = new Date(
+              archivedRow.original_created_at || archivedRow.archived_at,
+            );
+
+            return {
+              source: archivedRow.sourceType || "workbook",
+              studentKey: archivedRow.student_id
+                ? `student:${Number(archivedRow.student_id)}`
+                : archivedRow.student_name
+                  ? `name:${String(archivedRow.student_name).toLowerCase()}`
+                  : `workbook-row:${index}`,
+              studentName: String(archivedRow.student_name || "").trim(),
+              program: String(archivedRow.program || "").trim(),
+              yearSection: String(archivedRow.year_section || "").trim(),
+              violationLabel: String(archivedRow.violation_label || "").trim(),
+              degreeRank: parseDegreeRank(archivedRow.violation_degree),
+              date: createdAt,
+              monthLabel: toMonthLabel(createdAt),
+              semester: normalizeSemester(archivedRow.semester),
+              schoolYear: normalizeSchoolYear(archivedRow.school_year),
+            };
+          });
+
+        archivedRecords = [
+          ...archiveDatabaseRecords,
+          ...archiveWorkbookRecords,
+        ];
         databaseRecords = [...archivedRecords];
       }
-    } else {
-      return res.status(500).json({
-        status: "error",
-        message: "Database is not configured.",
-      });
     }
 
-    const mergedRecords = databaseRecords.filter((record) => {
+    const selectedRecordsSource =
+      databaseRecords.length > 0 ? databaseRecords : workbookRecords;
+    const mergedRecords = selectedRecordsSource.filter((record) => {
       const semester = normalizeSemester(record.semester);
       const schoolYear = normalizeSchoolYear(record.schoolYear);
       const hasTerm = semester && schoolYear;
@@ -5191,7 +4917,7 @@ app.get("/api/violation-analytics", async (req, res) => {
       ongoingSemesters,
       targetSchoolYear,
       metadata: {
-        historicalRecordCount: 0,
+        historicalRecordCount: workbookRecords.length,
         databaseRecordCount: databaseRecords.length,
         archivedRecordCount: archivedRecords.length,
         currentRecordCount: databaseRecords.length - archivedRecords.length,
@@ -8159,9 +7885,7 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
 
-    void requestArchiveMaintenance(pool, {
-      trigger: "GET /api/archive/unresolved",
-    }).catch((error) => {
+    void maybeRunArchiveMaintenance(pool).catch((error) => {
       console.warn(
         "Archive maintenance skipped/failed:",
         error?.message || error,
@@ -8244,27 +7968,27 @@ app.get("/api/archive/users", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
-    void requestArchiveMaintenance(pool, {
-      trigger: "GET /api/archive/users",
-    }).catch((error) => {
-      console.warn(
-        "Archive maintenance skipped/failed:",
-        error?.message || error,
-      );
-    });
 
     const result = await pool.query(
       `SELECT 
         s.id, s.user_id, s.email, s.school_id, s.full_name, s.first_name, s.middle_initial, s.last_name, 
         s.program, s.year_section, s.status, s.is_archived, s.archived_at, s.archived_reason, s.original_status, s.is_unresolved_archive,
         COALESCE(
-          (SELECT COUNT(*) FROM student_violation_logs WHERE student_id = s.id) +
-          (SELECT COUNT(*) FROM student_violation_archives WHERE student_id = s.id),
+          COALESCE(active_count.active_total_count, 0) + COALESCE(archive_count.archive_total_count, 0),
           0
         )::int AS violation_count
        FROM "Students" s
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS active_total_count
+         FROM student_violation_logs svl
+         WHERE svl.student_id = s.id
+       ) active_count ON true
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS archive_total_count
+         FROM student_violation_archives sva
+         WHERE sva.student_id = s.id
+       ) archive_count ON true
        WHERE s.is_archived = true
-         AND UPPER(COALESCE(s.archived_reason, '')) <> 'IMPORTED'
        ORDER BY s.archived_at DESC NULLS LAST`,
     );
 
@@ -8281,43 +8005,6 @@ app.get("/api/archive/users", async (req, res) => {
   }
 });
 
-app.get("/api/archive/maintenance-status", async (req, res) => {
-  if (!hasDbConfig()) {
-    return res.status(500).json({
-      status: "error",
-      message: "Database is not configured.",
-    });
-  }
-
-  try {
-    await ensureAuthDatabaseReady();
-    const pool = getDbPool();
-    await ensureArchiveColumnsExist(pool);
-
-    if (String(req.query.start || "1") !== "0") {
-      void requestArchiveMaintenance(pool, {
-        trigger: "GET /api/archive/maintenance-status",
-        forceStart: true,
-      }).catch((error) => {
-        console.warn(
-          "Archive maintenance skipped/failed:",
-          error?.message || error,
-        );
-      });
-    }
-
-    return res.status(200).json({
-      status: "ok",
-      maintenance: getArchiveMaintenanceSnapshot(),
-    });
-  } catch (error) {
-    return res.status(503).json({
-      status: "error",
-      message: `Unable to fetch archive maintenance status (${error.message}).`,
-    });
-  }
-});
-
 // GET school years with archived violations
 app.get("/api/archive/school-years", async (req, res) => {
   if (!hasDbConfig()) {
@@ -8330,15 +8017,8 @@ app.get("/api/archive/school-years", async (req, res) => {
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
-    await ensureArchiveColumnsExist(pool);
-    void requestArchiveMaintenance(pool, {
-      trigger: "GET /api/archive/school-years",
-    }).catch((error) => {
-      console.warn(
-        "Archive maintenance skipped/failed:",
-        error?.message || error,
-      );
-    });
+
+    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
 
     const archiveResult = await pool.query(
       `
@@ -8356,6 +8036,15 @@ app.get("/api/archive/school-years", async (req, res) => {
         semester: normalizeSemester(row.semester),
       }))
       .filter((row) => row.schoolYear && row.semester);
+
+    const workbookTerms = Array.isArray(workbookRecords)
+      ? workbookRecords
+          .map((record) => ({
+            schoolYear: normalizeSchoolYear(record.schoolYear),
+            semester: normalizeSemester(record.semester),
+          }))
+          .filter((row) => row.schoolYear && row.semester)
+      : [];
 
     const settingsResult = await pool.query(
       `
@@ -8378,7 +8067,7 @@ app.get("/api/archive/school-years", async (req, res) => {
     };
 
     const schoolYearSet = new Set(
-      archiveTerms
+      [...archiveTerms, ...workbookTerms]
         .map((term) => term.schoolYear)
         .filter(Boolean),
     );
@@ -8393,7 +8082,7 @@ app.get("/api/archive/school-years", async (req, res) => {
       .slice(0, 4);
 
     const semestersBySchoolYear = combinedYears.reduce((acc, schoolYear) => {
-      const semesters = [...archiveTerms]
+      const semesters = [...archiveTerms, ...workbookTerms]
         .filter((term) => term.schoolYear === schoolYear)
         .map((term) => term.semester);
 
@@ -8468,7 +8157,7 @@ app.delete("/api/archive/semesters/:schoolYear/:semester", async (req, res) => {
     if (deletedCount === 0) {
       return res.status(200).json({
         status: "ok",
-        message: `${normalizedSemester} S.Y. ${normalizedSchoolYear} has no database archive records.`,
+        message: `${normalizedSemester} S.Y. ${normalizedSchoolYear} has no database archive records. Workbook source remains unchanged.`,
         deletedCount: 0,
       });
     }
@@ -8668,14 +8357,19 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
 
-    void requestArchiveMaintenance(pool, {
-      trigger: "GET /api/archive/violations",
-    }).catch((error) => {
+    void maybeRunArchiveMaintenance(pool).catch((error) => {
       console.warn(
         "Archive maintenance skipped/failed:",
         error?.message || error,
       );
     });
+
+    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+    const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
+      pool,
+      schoolYear,
+      semester,
+    );
     const violationCandidates = await getViolationCandidatesForInference(pool);
 
     // Query archived violations from the archive table for this semester/year, excluding unresolved
@@ -8730,9 +8424,19 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
       };
     });
 
+    const workbookViolations = workbookRecords
+      .filter(
+        (record) =>
+          normalizeSchoolYear(record.schoolYear) ===
+            normalizeSchoolYear(schoolYear) &&
+          normalizeSemester(record.semester) === normalizeSemester(semester) &&
+          !importedWorkbookKeys.has(buildWorkbookImportKey(record)),
+      )
+      .map((record, index) => mapWorkbookRecordToArchiveRow(record, index));
+
     return res.status(200).json({
       status: "ok",
-      violations,
+      violations: [...violations, ...workbookViolations],
     });
   } catch (error) {
     console.error("Error fetching archived violations:", error);
@@ -9366,59 +9070,155 @@ app.post("/api/archive/violations/:id/import", async (req, res) => {
     });
   }
 
-  const workbookAvailability = await getLegacyWorkbookAvailability();
-  if (!workbookAvailability.available) {
-    return res.status(409).json({
-      status: "error",
-      message:
-        workbookAvailability.reason === "disabled"
-          ? getLegacyWorkbookGuidance()
-          : workbookAvailability.message,
-    });
-  }
-
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
-    const recordToImport = await getWorkbookRecordByWorkbookId(id);
 
-    if (!recordToImport) {
+    // Parse workbook ID: wb-YYYY-YYYY-SEMESTER-index
+    const chunks = id.split("-");
+    if (chunks.length < 5) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid workbook record ID format.",
+      });
+    }
+
+    const indexString = chunks.pop();
+    const index = Number(indexString);
+    if (!Number.isFinite(index) || index < 0) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid workbook record index.",
+      });
+    }
+
+    const schoolYear = `${chunks[1]}-${chunks[2]}`;
+    const semester = chunks.slice(3).join("-");
+
+    // Load workbook records to find the one to import
+    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+    const filteredRecords = workbookRecords.filter(
+      (record) =>
+        normalizeSchoolYear(record.schoolYear) ===
+          normalizeSchoolYear(schoolYear) &&
+        normalizeSemester(record.semester) === normalizeSemester(semester),
+    );
+
+    if (index >= filteredRecords.length) {
       return res.status(404).json({
         status: "error",
         message: "Workbook record not found.",
       });
     }
 
-    const syncResult = await upsertWorkbookArchiveRecord(pool, recordToImport, req.user || {});
-    if (!syncResult.violationId) {
-      return res.status(500).json({
-        status: "error",
-        message: "Failed to create or locate database record.",
-      });
+    const recordToImport = filteredRecords[index];
+    const archivedAt =
+      toArchiveTimestamp(recordToImport.date) || new Date().toISOString();
+
+    let studentId = await resolveWorkbookStudentId(
+      pool,
+      recordToImport.studentName,
+    );
+    if (!studentId) {
+      studentId = await getOrCreateHistoricalWorkbookStudent(
+        pool,
+        recordToImport,
+      );
     }
 
-    if (syncResult.inserted) {
-      await logAuditEvent(req, {
-        action: "IMPORT_WORKBOOK_VIOLATION",
-        targetType: "StudentViolation",
-        targetId: syncResult.violationId,
-        details: `Imported workbook record for student: ${recordToImport.studentName || "Unknown"}, violation: ${recordToImport.violationLabel || "Unknown"}`,
-      });
-    }
+    const { category, degree, label } = parseWorkbookTypeLabel(
+      recordToImport.typeLabel,
+    );
+    const sourceImportKey = buildWorkbookImportKey(recordToImport);
 
-    const importedRecord = await pool.query(
-      `SELECT * FROM student_violation_archives WHERE id = $1`,
-      [syncResult.violationId],
+    // Check for duplicates based on student name, violation label, school year, semester, and date.
+    const duplicateCheck = await pool.query(
+      `SELECT id FROM student_violation_archives 
+       WHERE student_id = $1 
+       AND violation_label = $2
+       AND school_year = $3
+       AND semester = $4
+       AND archived_at::date = $5::date
+       AND remarks = 'IMPORTED'
+       AND is_unresolved = FALSE
+       LIMIT 1`,
+      [
+        studentId,
+        recordToImport.violationLabel || "",
+        normalizeSchoolYear(recordToImport.schoolYear),
+        normalizeSemester(recordToImport.semester),
+        formatWorkbookComparisonDate(recordToImport.date),
+      ],
     );
 
-    const { category, degree } = parseWorkbookTypeLabel(recordToImport.typeLabel);
+    if (duplicateCheck.rows.length > 0) {
+      return res.status(409).json({
+        status: "error",
+        message:
+          "This record has already been imported. Duplicate records are not allowed.",
+      });
+    }
 
-    return res.status(syncResult.inserted ? 201 : 200).json({
+    // Insert record into database (include parsed type fields)
+    const insertResult = await pool.query(
+      `INSERT INTO student_violation_archives 
+       (student_id, violation_catalog_id, violation_label, reported_by, remarks, source_import_key, 
+        signature_image, signature_updated_at, semester, school_year, is_unresolved,
+        archived_by_user_id, archived_by_name, original_created_at, original_updated_at,
+        violation_category, violation_degree, violation_type_label)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+       RETURNING id`,
+      [
+        studentId,
+        null, // violation_catalog_id - no linked violation
+        recordToImport.violationLabel || "",
+        "",
+        "IMPORTED", // remarks - mark as imported
+        sourceImportKey,
+        "", // signature_image - no signature for workbook records
+        null, // signature_updated_at
+        normalizeSemester(recordToImport.semester),
+        normalizeSchoolYear(recordToImport.schoolYear),
+        false, // is_unresolved - import as resolved, not unresolved
+        req.user?.id || null,
+        req.user?.full_name || "System",
+        archivedAt,
+        archivedAt,
+        category,
+        degree,
+        label,
+      ],
+    );
+
+    if (!insertResult.rows?.[0]) {
+      return res.status(500).json({
+        status: "error",
+        message: "Failed to create database record.",
+      });
+    }
+
+    const importedRecordId = insertResult.rows[0].id;
+
+    // Keep workbook rows as the canonical source file; do not delete on import.
+
+    // Log audit event
+    await logAuditEvent(req, {
+      action: "IMPORT_WORKBOOK_VIOLATION",
+      targetType: "StudentViolation",
+      targetId: importedRecordId,
+      details: `Imported workbook record for student: ${recordToImport.studentName || "Unknown"}, violation: ${recordToImport.violationLabel || "Unknown"}`,
+    });
+
+    // Return the imported record with all details
+    const importedRecord = await pool.query(
+      `SELECT * FROM student_violation_archives WHERE id = $1`,
+      [importedRecordId],
+    );
+
+    return res.status(201).json({
       status: "ok",
-      message: syncResult.inserted
-        ? "Record imported successfully."
-        : "Record already exists in the database archive.",
+      message: "Record imported successfully.",
       violation: {
         ...importedRecord.rows[0],
         student_name: recordToImport.studentName || "",
@@ -9444,23 +9244,6 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
     return res.status(500).json({
       status: "error",
       message: "Database is not configured.",
-    });
-  }
-
-  return res.status(410).json({
-    status: "error",
-    message:
-      "Cleanup and re-import is no longer available. Archive data now runs from Postgres only.",
-  });
-
-  const workbookAvailability = await getLegacyWorkbookAvailability();
-  if (!workbookAvailability.available) {
-    return res.status(409).json({
-      status: "error",
-      message:
-        workbookAvailability.reason === "disabled"
-          ? getLegacyWorkbookGuidance()
-          : workbookAvailability.message,
     });
   }
 
@@ -9493,7 +9276,8 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
 
       return res.status(200).json({
         status: "ok",
-        message: "Cleanup completed. No workbook rows found to re-import.",
+        message:
+          "Cleanup completed. No rows found in ViolationRecords1.xlsx to re-import.",
         cleanupCount,
         importCount: 0,
         importedRecords: [],
@@ -9506,20 +9290,87 @@ app.post("/api/archive/cleanup-and-reimport-workbook", async (req, res) => {
     let skippedCount = 0;
     for (let index = 0; index < workbookRecords.length; index += 1) {
       const record = workbookRecords[index];
-      const syncResult = await upsertWorkbookArchiveRecord(pool, record, req.user || {});
-      if (!syncResult.inserted) {
+      const normalizedSemester = normalizeSemester(record.semester);
+      const normalizedSchoolYear = normalizeSchoolYear(record.schoolYear);
+
+      if (!normalizedSemester || !normalizedSchoolYear) {
+        continue;
+      }
+
+      const archivedAt =
+        toArchiveTimestamp(record.date) || new Date().toISOString();
+
+      const studentId =
+        (await resolveWorkbookStudentId(pool, record.studentName)) ||
+        (await getOrCreateHistoricalWorkbookStudent(pool, record));
+
+      // Skip inserting if a matching (non-unresolved) archive record already exists
+      const existing = await pool.query(
+        `SELECT id FROM student_violation_archives
+         WHERE student_id = $1
+           AND LOWER(TRIM(violation_label)) = LOWER(TRIM($2))
+           AND school_year = $3
+           AND semester = $4
+           AND archived_at::date = $5::date
+           AND is_unresolved = FALSE
+         LIMIT 1`,
+        [
+          studentId,
+          record.violationLabel || "",
+          normalizedSchoolYear,
+          normalizedSemester,
+          formatWorkbookComparisonDate(record.date),
+        ],
+      );
+
+      if (existing.rows && existing.rows.length > 0) {
         skippedCount += 1;
         continue;
       }
 
-      importCount += 1;
-      importedRecords.push({
-        id: syncResult.violationId,
-        studentName: record.studentName,
-        violationLabel: record.violationLabel,
-        semester: normalizeSemester(record.semester),
-        schoolYear: normalizeSchoolYear(record.schoolYear),
-      });
+      const { category, degree, label } = parseWorkbookTypeLabel(record.typeLabel);
+      const sourceImportKey = buildWorkbookImportKey(record);
+
+      const insertResult = await pool.query(
+        `INSERT INTO student_violation_archives 
+         (student_id, violation_catalog_id, violation_label, reported_by, remarks, source_import_key, 
+          signature_image, signature_updated_at, semester, school_year, is_unresolved,
+          archived_by_user_id, archived_by_name, original_created_at, original_updated_at,
+          violation_category, violation_degree, violation_type_label)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+         RETURNING id`,
+        [
+          studentId,
+          null,
+          record.violationLabel || "",
+          "",
+          "IMPORTED",
+          sourceImportKey,
+          "",
+          null,
+          normalizedSemester,
+          normalizedSchoolYear,
+          false,
+          req.user?.id || null,
+          req.user?.full_name || "System",
+          archivedAt,
+          archivedAt,
+          category,
+          degree,
+          label,
+        ],
+      );
+
+      if (insertResult.rows?.[0]) {
+        importCount += 1;
+        importedRecords.push({
+          id: insertResult.rows[0].id,
+          studentName: record.studentName,
+          violationLabel: record.violationLabel,
+          semester: normalizedSemester,
+          schoolYear: normalizedSchoolYear,
+        });
+      }
     }
 
     // Log audit event (include skipped count)
@@ -9568,16 +9419,6 @@ app.delete("/api/archive/violations/:id", async (req, res) => {
     const pool = getDbPool();
 
     if (typeof id === "string" && id.startsWith("wb-")) {
-      const workbookAvailability = await getLegacyWorkbookAvailability();
-      if (!workbookAvailability.available) {
-        return res.status(409).json({
-          status: "error",
-          message:
-            workbookAvailability.reason === "disabled"
-              ? getLegacyWorkbookGuidance()
-              : workbookAvailability.message,
-        });
-      }
       deleted = await deleteHistoricalWorkbookRecordById(id);
     } else {
       const result = await pool.query(
@@ -9606,6 +9447,13 @@ app.delete("/api/archive/violations/:id", async (req, res) => {
       message: "Archived violation deleted.",
     });
   } catch (error) {
+    if (isWorkbookBusyError(error)) {
+      return res.status(423).json({
+        status: "error",
+        message:
+          "ViolationRecords1.xlsx is currently in use. Close the file and try deleting again.",
+      });
+    }
     console.error("Error deleting archived violation:", error);
     return res.status(503).json({
       status: "error",
@@ -9638,64 +9486,52 @@ async function ensureAuthDatabaseReady() {
     const seedAccounts = getSeedAccountsFromEnv();
     const isDev = process.env.NODE_ENV === "development";
 
-    if (isServerlessRuntime && !serverlessRuntimeDbSyncEnabled) {
-      authSyncPromise = (async () => {
-        const schemaIsCurrent = await isAuthSchemaCurrent();
-        if (!schemaIsCurrent) {
-          throw new Error(
-            `Database schema is not ready for serverless runtime. ${getServerlessDbSyncGuidance()}`,
-          );
-        }
-      })();
-    } else {
+    const runFullSynchronization = async () => {
+      // Run base table syncs sequentially for predictable migration ordering.
+      await syncAuthDatabase({ seedAccounts });
+      await syncStudentsDatabase();
+      await syncSystemSettingsDatabase();
+      await syncViolationsDatabase(false);
+      await syncAuditLogsDatabase();
+      await syncStudentsFromUsers();
+      await syncNotificationsDatabase();
+      await syncPasswordResetDatabase();
+      await syncStudentViolationLogsDatabase();
+      await syncAppStateDatabase();
+    };
 
-      const runFullSynchronization = async () => {
-        // Run base table syncs sequentially for predictable migration ordering.
-        await syncAuthDatabase({ seedAccounts });
-        await syncStudentsDatabase();
-        await syncSystemSettingsDatabase();
-        await syncViolationsDatabase(false);
-        await syncAuditLogsDatabase();
-        await syncStudentsFromUsers();
-        await syncNotificationsDatabase();
-        await syncPasswordResetDatabase();
-        await syncStudentViolationLogsDatabase();
-        await syncAppStateDatabase();
-      };
+    authSyncPromise = (async () => {
+      const schemaIsCurrent = await isAuthSchemaCurrent();
 
-      authSyncPromise = (async () => {
-        const schemaIsCurrent = await isAuthSchemaCurrent();
-
-        if (schemaIsCurrent) {
-          try {
-            // Fast path for known/current schema - skip heavy operations in dev.
-            await syncAuthDatabase({ seedAccounts, skipSchemaCheck: true });
-            await syncStudentsDatabase();
-            await syncSystemSettingsDatabase();
-            // In dev, skip re-seeding violations and app state sync - they're heavy operations
-            await syncViolationsDatabase(isDev);
-            await syncAuditLogsDatabase();
-            await syncStudentsFromUsers();
-            await syncNotificationsDatabase();
-            await syncPasswordResetDatabase();
-            await syncStudentViolationLogsDatabase();
-            // Defer app state sync in dev mode - it creates triggers on all tables
-            if (!isDev) {
-              await syncAppStateDatabase();
-            }
-            return;
-          } catch (fastPathError) {
-            console.warn(
-              `Fast startup sync failed, retrying with full synchronization: ${fastPathError.message}`,
-            );
-            await runFullSynchronization();
-            return;
+      if (schemaIsCurrent) {
+        try {
+          // Fast path for known/current schema - skip heavy operations in dev.
+          await syncAuthDatabase({ seedAccounts, skipSchemaCheck: true });
+          await syncStudentsDatabase();
+          await syncSystemSettingsDatabase();
+          // In dev, skip re-seeding violations and app state sync - they're heavy operations
+          await syncViolationsDatabase(isDev);
+          await syncAuditLogsDatabase();
+          await syncStudentsFromUsers();
+          await syncNotificationsDatabase();
+          await syncPasswordResetDatabase();
+          await syncStudentViolationLogsDatabase();
+          // Defer app state sync in dev mode - it creates triggers on all tables
+          if (!isDev) {
+            await syncAppStateDatabase();
           }
+          return;
+        } catch (fastPathError) {
+          console.warn(
+            `Fast startup sync failed, retrying with full synchronization: ${fastPathError.message}`,
+          );
+          await runFullSynchronization();
+          return;
         }
+      }
 
-        await runFullSynchronization();
-      })();
-    }
+      await runFullSynchronization();
+    })();
   }
 
   try {
@@ -9728,13 +9564,6 @@ async function startServer() {
         notificationCleanupTimer = setInterval(() => {
           purgeExpiredNotifications();
         }, NOTIFICATION_CLEANUP_INTERVAL_MS);
-
-        await ensureArchiveColumnsExist(getDbPool());
-        void requestArchiveMaintenance(getDbPool(), {
-          trigger: "startup prewarm",
-        }).catch((error) => {
-          console.warn("Archive prewarm skipped/failed:", error?.message || error);
-        });
 
         await deactivateGraduatedStudentAccounts();
 
@@ -9802,23 +9631,12 @@ if (!isServerlessRuntime) {
   startServer();
 } else if (hasDbConfig()) {
   // Warm schema on cold starts without creating long-running loops.
-  ensureAuthDatabaseReady()
-    .then(async () => {
-      const pool = getDbPool();
-      if (!pool) return;
-      await ensureArchiveColumnsExist(pool);
-      void requestArchiveMaintenance(pool, {
-        trigger: "serverless cold start",
-      }).catch((error) => {
-        console.warn("Archive prewarm skipped/failed:", error?.message || error);
-      });
-    })
-    .catch((error) => {
-      console.error(
-        "Failed to synchronize auth database on serverless cold start.",
-      );
-      console.error(error.message);
-    });
+  ensureAuthDatabaseReady().catch((error) => {
+    console.error(
+      "Failed to synchronize auth database on serverless cold start.",
+    );
+    console.error(error.message);
+  });
 }
 
 export default app;
