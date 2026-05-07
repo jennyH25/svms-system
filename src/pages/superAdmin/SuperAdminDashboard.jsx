@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { Edit, Loader2, Plus, Shield, Trash2, UserCog, Users } from "lucide-react";
+import { ChevronDown, Edit, Loader2, Plus, Shield, Trash2, UserCog, Users } from "lucide-react";
 import AnimatedContent from "@/components/ui/AnimatedContent";
 import Button from "@/components/ui/Button";
 import DataTable, {
@@ -11,7 +11,12 @@ import SearchBar from "@/components/ui/SearchBar";
 import AdminAccountModal from "@/components/modals/AdminAccountModal";
 import Modal, { ModalFooter } from "@/components/ui/Modal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
-import SelectField from "@/components/ui/SelectField";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 
 const roleBadgeVariant = {
   admin: "info",
@@ -398,19 +403,28 @@ const SuperAdminDashboard = () => {
             </p>
           </div>
           <div className="flex w-full flex-col gap-3 lg:max-w-2xl lg:flex-row lg:items-center lg:justify-end">
-            <div className="w-full lg:w-[170px] lg:flex-shrink-0">
-              <SelectField
-                value={roleFilter}
-                onChange={(event) => setRoleFilter(event.target.value)}
-                wrapperClassName="w-full"
-                className="h-[42px] rounded-xl bg-[#15181d] border-white/10 text-sm"
-              >
-                <option value="all">All ({accounts.length})</option>
-                <option value="admin">Admins ({stats.adminCount})</option>
-                <option value="super_admin">
-                  Super Admins ({stats.superAdminCount})
-                </option>
-              </SelectField>
+            <div className="w-full lg:w-auto lg:flex-shrink-0">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full min-w-[180px] justify-between text-sm"
+                  >
+                    {roleFilter === "all"
+                      ? `All (${accounts.length})`
+                      : roleFilter === "admin"
+                      ? `Admins (${stats.adminCount})`
+                      : `Super Admins (${stats.superAdminCount})`}
+                    <ChevronDown className="ml-2 w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="min-w-[180px]">
+                  <DropdownMenuItem onClick={() => setRoleFilter("all")}>All ({accounts.length})</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setRoleFilter("admin")}>Admins ({stats.adminCount})</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setRoleFilter("super_admin")}>Super Admins ({stats.superAdminCount})</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <div className="w-full max-w-md">
               <SearchBar
