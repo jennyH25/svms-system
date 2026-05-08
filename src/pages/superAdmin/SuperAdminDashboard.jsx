@@ -23,8 +23,24 @@ const roleBadgeVariant = {
   super_admin: "warning",
 };
 
+const statCardStyles =
+  "rounded-2xl border border-white/10 bg-[#15181d] p-5 shadow-[0_20px_45px_rgba(0,0,0,0.22)]";
+
 const formatRoleLabel = (role) =>
   role === "super_admin" ? "Super Admin" : "Admin";
+
+const formatCreatedDate = (value) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "Recently added";
+  }
+
+  return parsed.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
 
 const mapAccount = (account) => ({
   id: Number(account.id),
@@ -279,14 +295,19 @@ const SuperAdminDashboard = () => {
       key: "fullName",
       label: "Administrator",
       render: (_value, row) => (
-        <TableCellText primary={row.fullName} secondary={row.email} />
+        <div>
+          <TableCellText primary={row.fullName} secondary={row.email} />
+          <p className="mt-1 text-[12px] font-medium text-gray-500">
+            Added {formatCreatedDate(row.createdAt)}
+          </p>
+        </div>
       ),
     },
     {
       key: "username",
       label: "Username",
       render: (value) => (
-        <span className="text-[14px] font-semibold text-[#1a1a1a]">
+        <span className="text-[14px] font-semibold tracking-[0.02em] text-[#1a1a1a]">
           {value}
         </span>
       ),
@@ -335,19 +356,18 @@ const SuperAdminDashboard = () => {
   return (
     <div className="space-y-6 font-inter">
       <AnimatedContent distance={20} direction="vertical" duration={0.45}>
-        <div className="rounded-[28px] border border-white/10 bg-gradient-to-br from-[#14181d] via-[#111418] to-[#0b0d10] p-6 shadow-[0_25px_70px_rgba(0,0,0,0.28)]">
+        <div className="rounded-[28px] border border-white/10 bg-gradient-to-br from-[#14181d] via-[#111418] to-[#0b0d10] p-7 shadow-[0_25px_70px_rgba(0,0,0,0.28)]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="max-w-2xl">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300/80">
-                Super Admin Control
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300/75">
+                Super Admin Panel
               </p>
               <h1 className="text-3xl font-black text-white">
-                Administrator Access Management
+                Admin Accounts
               </h1>
-              <p className="mt-3 text-sm leading-relaxed text-gray-400">
-                Manage admin and super admin accounts, keep credentials stored in
-                the database, and send login details through email from one
-                place.
+              <p className="mt-3 max-w-xl text-sm leading-relaxed text-gray-400">
+                Manage administrator access with a focused directory for account
+                creation, role control, and status updates.
               </p>
             </div>
 
@@ -364,43 +384,61 @@ const SuperAdminDashboard = () => {
         </div>
       </AnimatedContent>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-2xl border border-white/10 bg-[#15181d] p-5">
-          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-400/15 text-cyan-300">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className={statCardStyles}>
+          <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-white/5 text-slate-200">
             <Users className="h-5 w-5" />
           </div>
-          <p className="text-sm text-gray-400">Total Admin Accounts</p>
+          <p className="text-sm font-medium text-gray-400">Total Accounts</p>
           <p className="mt-2 text-3xl font-black text-white">
             {accounts.length}
           </p>
+          <p className="mt-2 text-xs text-gray-500">
+            All administrator-level users in the system.
+          </p>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-[#15181d] p-5">
-          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-sky-400/15 text-sky-300">
+        <div className={statCardStyles}>
+          <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
             <UserCog className="h-5 w-5" />
           </div>
-          <p className="text-sm text-gray-400">Admins</p>
+          <p className="text-sm font-medium text-gray-400">Admins</p>
           <p className="mt-2 text-3xl font-black text-white">
             {stats.adminCount}
           </p>
+          <p className="mt-2 text-xs text-gray-500">
+            Standard administrative accounts.
+          </p>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-[#15181d] p-5">
-          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-amber-400/15 text-amber-300">
+        <div className={statCardStyles}>
+          <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-amber-400/10 text-amber-300">
             <Shield className="h-5 w-5" />
           </div>
-          <p className="text-sm text-gray-400">Super Admins</p>
+          <p className="text-sm font-medium text-gray-400">Super Admins</p>
           <p className="mt-2 text-3xl font-black text-white">
             {stats.superAdminCount}
+          </p>
+          <p className="mt-2 text-xs text-gray-500">
+            Highest-privilege accounts with system control.
+          </p>
+        </div>
+        <div className={statCardStyles}>
+          <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-300">
+            <Shield className="h-5 w-5" />
+          </div>
+          <p className="text-sm font-medium text-gray-400">Active Accounts</p>
+          <p className="mt-2 text-3xl font-black text-white">
+            {stats.activeCount}
+          </p>
+          <p className="mt-2 text-xs text-gray-500">
+            Accounts currently allowed to sign in.
           </p>
         </div>
       </div>
 
-      <div className="rounded-[24px] border border-white/10 bg-[#111418]/90 p-5">
-        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="rounded-[28px] border border-white/10 bg-[#111418]/92 p-5 shadow-[0_25px_70px_rgba(0,0,0,0.2)]">
+        <div className="mb-5 flex flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h2 className="text-xl font-bold text-white">Admin Directory</h2>
-            <p className="mt-1 text-sm text-gray-400">
-              View and update every admin-level account in the system.
-            </p>
+            <h2 className="text-xl font-bold text-white">Account Directory</h2>
           </div>
           <div className="flex w-full flex-col gap-3 lg:max-w-2xl lg:flex-row lg:items-center lg:justify-end">
             <div className="w-full lg:w-auto lg:flex-shrink-0">
@@ -409,20 +447,20 @@ const SuperAdminDashboard = () => {
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="w-full min-w-[180px] justify-between text-sm"
+                    className="w-full min-w-[180px] justify-between border border-white/10 bg-[#1a1d22] text-sm text-white hover:bg-[#23272d]"
                   >
                     {roleFilter === "all"
-                      ? `All (${accounts.length})`
+                      ? "All"
                       : roleFilter === "admin"
-                      ? `Admins (${stats.adminCount})`
-                      : `Super Admins (${stats.superAdminCount})`}
+                      ? "Admins"
+                      : "Super Admins"}
                     <ChevronDown className="ml-2 w-4 h-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="min-w-[180px]">
-                  <DropdownMenuItem onClick={() => setRoleFilter("all")}>All ({accounts.length})</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setRoleFilter("admin")}>Admins ({stats.adminCount})</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setRoleFilter("super_admin")}>Super Admins ({stats.superAdminCount})</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setRoleFilter("all")}>All</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setRoleFilter("admin")}>Admins</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setRoleFilter("super_admin")}>Super Admins</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -436,11 +474,17 @@ const SuperAdminDashboard = () => {
           </div>
         </div>
 
+        <div className="mb-4 flex justify-end">
+          <p className="text-xs uppercase tracking-[0.18em] text-gray-500">
+            Solid access control overview
+          </p>
+        </div>
+
         {feedback.message ? (
           <div
-            className={`mb-4 rounded-xl border px-4 py-3 text-sm ${
+            className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${
               feedback.type === "success"
-                ? "border-green-400/25 bg-green-500/10 text-green-300"
+                ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-300"
                 : feedback.type === "warning"
                   ? "border-amber-400/25 bg-amber-500/10 text-amber-200"
                   : "border-red-400/25 bg-red-500/10 text-red-300"
@@ -451,11 +495,16 @@ const SuperAdminDashboard = () => {
         ) : null}
 
         {isLoading ? (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-10 text-center text-sm text-gray-400">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-12 text-center text-sm text-gray-400">
             Loading admin accounts...
           </div>
         ) : (
-          <DataTable columns={columns} data={filteredAccounts} actions={actions} />
+          <DataTable
+            columns={columns}
+            data={filteredAccounts}
+            actions={actions}
+            className="border border-white/10"
+          />
         )}
       </div>
 
@@ -489,7 +538,7 @@ const SuperAdminDashboard = () => {
         size="sm"
         showCloseButton={!isDeleting}
       >
-        <div className="rounded-lg border border-red-400/25 bg-red-500/10 px-4 py-3">
+        <div className="rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3">
           <p className="text-sm font-medium text-red-300">
             This will permanently remove{" "}
             <span className="font-bold text-white">
@@ -543,8 +592,8 @@ const SuperAdminDashboard = () => {
         size="sm"
         showCloseButton
       >
-        <div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3">
-          <p className="text-sm font-medium text-green-300">
+        <div className="rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3">
+          <p className="text-sm font-medium text-emerald-300">
             {successModal.message}
           </p>
         </div>

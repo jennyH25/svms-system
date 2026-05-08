@@ -78,7 +78,7 @@ const AdminAccountModal = ({
       showCloseButton={!isSaving}
     >
       <form onSubmit={handleSubmit}>
-        <p className="mb-4 text-sm text-gray-400">
+        <p className="mb-5 text-sm text-gray-400">
           {isEditMode
             ? "Update this administrator account."
             : "Create a new admin or super admin account."}
