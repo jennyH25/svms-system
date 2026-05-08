@@ -38,7 +38,7 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
 import { cachedFetchJSON, invalidateFetchCache } from "@/lib/fetchHelper";
-import { pluralize } from '@/lib/utils';
+import { formatStudentDisplayName, pluralize } from '@/lib/utils';
 import {
   addCenteredExcelHeaderImage,
   applyExcelPrintLayout,
@@ -90,16 +90,6 @@ const normalizeRemarksText = (value) => {
   const text = String(value ?? "").trim();
   if (!text || text === "-") return "";
   return text;
-};
-
-const formatStudentDisplayName = (record) => {
-  const first = String(record?.first_name || "").trim();
-  const last = String(record?.last_name || "").trim();
-  const middleRaw = String(record?.middle_initial || "").trim().replace(/\./g, "");
-  const middle = middleRaw ? `${middleRaw.charAt(0).toUpperCase()}.` : "";
-
-  const formatted = [first, middle, last].filter(Boolean).join(" ").trim();
-  return formatted || String(record?.full_name || "").trim();
 };
 
 const getDisplaySemester = (semester, schoolYear) => {

@@ -15,6 +15,7 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import EditArchiveModal from "@/components/modals/EditArchiveModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
+import { formatStudentDisplayName } from "@/lib/utils";
 import {
   addCenteredExcelHeaderImage,
   applyExcelPrintLayout,
@@ -213,34 +214,15 @@ const fetchArchiveViolations = async (url) => {
   return [];
 };
 
-const formatDisplayMiddleInitial = (middleInitial) => {
-  const normalized = String(middleInitial || "")
-    .replace(/\./g, "")
-    .trim();
-  if (!normalized) return "";
-  return `${normalized.charAt(0).toUpperCase()}.`;
-};
-
 const formatDisplayName = (firstName, lastName, fullName, middleInitial = "") => {
-  const first = String(firstName || "").trim();
-  const last = String(lastName || "").trim();
-  const middle = formatDisplayMiddleInitial(middleInitial);
-  if (first && last) {
-    return [first, middle, last].filter(Boolean).join(" ");
-  }
-
-  const combined = String(fullName || "").trim();
-  if (!combined) return "-";
-
-  if (combined.includes(",")) {
-    const [left, ...right] = combined.split(",");
-    const lastPart = String(left || "").trim();
-    const firstPart = right.join(",").trim();
-    const reordered = `${firstPart} ${lastPart}`.trim();
-    return reordered || combined;
-  }
-
-  return combined.replace(/\s+/g, " ").trim();
+  return (
+    formatStudentDisplayName({
+      firstName,
+      middleInitial,
+      lastName,
+      fullName,
+    }) || "-"
+  );
 };
 
 const splitMiddleInitialFromFirstName = (firstName, middleInitial) => {

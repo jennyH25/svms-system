@@ -7,6 +7,7 @@ import SelectField from "@/components/ui/SelectField";
 const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
   const [formData, setFormData] = useState({
     firstName: "",
+    middleInitial: "",
     lastName: "",
     schoolId: "",
     program: "BSIT",
@@ -20,6 +21,7 @@ const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
       // Reset form when modal closes
       setFormData({
         firstName: "",
+        middleInitial: "",
         lastName: "",
         schoolId: "",
         program: "BSIT",
@@ -58,7 +60,7 @@ const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
         <p className="text-sm text-gray-400 mb-4">
           Add a new student to the system.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           <GlassInput
             label={
               <span className="text-sm font-medium text-white mb-2">
@@ -69,6 +71,18 @@ const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
             value={formData.firstName}
             onChange={handleChange}
             required
+          />
+          <GlassInput
+            label={
+              <span className="text-sm font-medium text-white mb-2">
+                Middle Initial
+              </span>
+            }
+            name="middleInitial"
+            value={formData.middleInitial}
+            onChange={handleChange}
+            placeholder="M"
+            maxLength={3}
           />
           <GlassInput
             label={

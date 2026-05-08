@@ -618,6 +618,31 @@ function formatStudentNameSegment(value) {
     });
 }
 
+function formatStudentMiddleInitial(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\./g, "")
+    .slice(0, 1)
+    .toUpperCase();
+}
+
+function buildStudentFullName(firstName, middleInitial, lastName) {
+  const cleanedFirst = formatStudentNameSegment(firstName);
+  const cleanedMiddle = formatStudentMiddleInitial(middleInitial);
+  const cleanedLast = formatStudentNameSegment(lastName);
+
+  if (cleanedLast && cleanedFirst) {
+    return `${cleanedLast}, ${[cleanedFirst, cleanedMiddle ? `${cleanedMiddle}.` : ""]
+      .filter(Boolean)
+      .join(" ")}`.trim();
+  }
+
+  return [cleanedFirst, cleanedMiddle ? `${cleanedMiddle}.` : "", cleanedLast]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
 function formatWorkbookComparisonDate(value) {
   const parsedDate = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(parsedDate.getTime())) {
@@ -3144,10 +3169,7 @@ function parseImportedStudentName(rawName) {
   }
 
   const firstName = formatStudentNameSegment(firstNameParts.join(" "));
-  const fullName = [firstName, middleInitial ? `${middleInitial}.` : "", lastName]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
+  const fullName = buildStudentFullName(firstName, middleInitial, lastName);
 
   return {
     firstName,
@@ -4754,16 +4776,13 @@ app.put("/api/profile/student", async (req, res) => {
     }
 
     const cleanedFirst = formatStudentNameSegment(firstName);
-    const cleanedMiddle = String(middleInitial || "")
-      .trim()
-      .replace(/\./g, "")
-      .slice(0, 1)
-      .toUpperCase();
+    const cleanedMiddle = formatStudentMiddleInitial(middleInitial);
     const cleanedLast = formatStudentNameSegment(lastName);
-    const fullName = [cleanedFirst, cleanedMiddle ? `${cleanedMiddle}.` : "", cleanedLast]
-      .filter(Boolean)
-      .join(" ")
-      .trim();
+    const fullName = buildStudentFullName(
+      cleanedFirst,
+      cleanedMiddle,
+      cleanedLast,
+    );
     const normalizedEmail = String(email || "")
       .trim()
       .toLowerCase();
@@ -5585,7 +5604,7 @@ app.post("/api/students/import", (req, res) => {
 });
 
 app.post("/api/students", async (req, res) => {
-  const { schoolId, email, firstName, lastName, program, yearSection, status } =
+  const { schoolId, email, firstName, middleInitial, lastName, program, yearSection, status } =
     req.body ?? {};
   let createdUserId = null;
   let createdStudentId = null;
@@ -5593,8 +5612,9 @@ app.post("/api/students", async (req, res) => {
   const normalizedEmail = String(email || "")
     .trim()
     .toLowerCase();
-    const cleanedFirst = formatStudentNameSegment(firstName);
-    const cleanedLast = formatStudentNameSegment(lastName);
+  const cleanedFirst = formatStudentNameSegment(firstName);
+  const cleanedMiddleInitial = formatStudentMiddleInitial(middleInitial);
+  const cleanedLast = formatStudentNameSegment(lastName);
   const normalizedProgram = String(program || "").trim();
   const normalizedYearSection = String(yearSection || "").trim();
 
@@ -5625,7 +5645,11 @@ app.post("/api/students", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     const normalizedStatus = status === "Irregular" ? "Irregular" : "Regular";
-    const fullName = `${cleanedFirst} ${cleanedLast}`.trim();
+    const fullName = buildStudentFullName(
+      cleanedFirst,
+      cleanedMiddleInitial,
+      cleanedLast,
+    );
 
     const [existingSchoolIdResult, existingEmailResult] = await Promise.all([
       pool.query(
@@ -5685,15 +5709,16 @@ app.post("/api/students", async (req, res) => {
     const result = await pool.query(
       `
       INSERT INTO "Students"
-        (user_id, email, school_id, first_name, last_name, full_name, program, year_section, year_level, status, violation_count)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0)
-      RETURNING id, user_id, email, school_id, full_name, first_name, last_name, program, year_section, year_level, status, violation_count
+        (user_id, email, school_id, first_name, middle_initial, last_name, full_name, program, year_section, year_level, status, violation_count)
+      VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10, $11, 0)
+      RETURNING id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, program, year_section, year_level, status, violation_count
       `,
       [
         userId,
         normalizedEmail,
         normalizedSchoolId,
         cleanedFirst,
+        cleanedMiddleInitial,
         cleanedLast,
         fullName,
         normalizedProgram,
@@ -5828,11 +5853,7 @@ app.put("/api/students/:id", async (req, res) => {
     const pool = getDbPool();
 
     const cleanedFirst = formatStudentNameSegment(firstName);
-    const cleanedMiddleInitial = String(middleInitial || "")
-      .trim()
-      .replace(/\./g, "")
-      .slice(0, 1)
-      .toUpperCase();
+    const cleanedMiddleInitial = formatStudentMiddleInitial(middleInitial);
     const cleanedLast = formatStudentNameSegment(lastName);
     const normalizedUsername = String(username || "").trim();
     const normalizedSchoolId = String(schoolId || "").trim();
@@ -5843,14 +5864,11 @@ app.put("/api/students/:id", async (req, res) => {
     const normalizedYearSection = String(yearSection || "").trim();
     let normalizedStatus = String(status || "").trim();
     let normalizedYearLevel = null;
-    const fullName = [
+    const fullName = buildStudentFullName(
       cleanedFirst,
-      cleanedMiddleInitial ? `${cleanedMiddleInitial}.` : "",
+      cleanedMiddleInitial,
       cleanedLast,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .trim();
+    );
 
     const studentData = await pool.query(
       `SELECT year_level, year_section, status FROM "Students" WHERE id = $1 LIMIT 1`,
@@ -10284,13 +10302,11 @@ app.put("/api/archive/users/:id", async (req, res) => {
     const cleanedLastName = formatStudentNameSegment(lastName);
     const fullName =
       cleanedFirstName && cleanedLastName
-        ? [
+        ? buildStudentFullName(
             cleanedFirstName,
-            cleanedMiddleInitial ? `${cleanedMiddleInitial}.` : "",
+            cleanedMiddleInitial,
             cleanedLastName,
-          ]
-            .filter(Boolean)
-            .join(" ")
+          )
         : null;
 
     const result = await pool.query(
@@ -10733,14 +10749,11 @@ app.put("/api/archive/violations/:id", async (req, res) => {
       (cleanedFirstName || cleanedMiddleInitial || cleanedLastName) &&
       updatedViolation.student_id
     ) {
-      const fullName = [
+      const fullName = buildStudentFullName(
         cleanedFirstName,
-        cleanedMiddleInitial ? `${cleanedMiddleInitial}.` : "",
+        cleanedMiddleInitial,
         cleanedLastName,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .trim();
+      );
       await pool.query(
         `UPDATE "Students"
          SET first_name = COALESCE(NULLIF($1, ''), first_name),

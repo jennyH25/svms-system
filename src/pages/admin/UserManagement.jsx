@@ -33,6 +33,7 @@ import AddUserModal from "@/components/modals/AddUserModal";
 import EditSemesterYearModal from "@/components/modals/EditSemesterYearModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
 import { cachedFetchJSON, fetchMultiple, invalidateFetchCache } from "@/lib/fetchHelper";
+import { formatStudentDisplayName } from "@/lib/utils";
 import {
   addCenteredExcelHeaderImage,
   applyExcelPrintLayout,
@@ -85,16 +86,6 @@ const getDisplaySemester = (semester, schoolYear) => {
     return "2ND SEM";
   }
   return normalizedSemester || semester || "";
-};
-
-const formatStudentDisplayName = ({ firstName, middleInitial, lastName, fullName }) => {
-  const first = String(firstName || "").trim();
-  const last = String(lastName || "").trim();
-  const middleRaw = String(middleInitial || "").trim().replace(/\./g, "");
-  const middle = middleRaw ? `${middleRaw.charAt(0).toUpperCase()}.` : "";
-
-  const formatted = [first, middle, last].filter(Boolean).join(" ").trim();
-  return formatted || String(fullName || "").trim();
 };
 
 const pluralize = (word, count) => `${word}${count === 1 ? "" : "s"}`;
@@ -488,6 +479,7 @@ const UserManagement = () => {
           schoolId: String(userData.schoolId || "").trim(),
           email: String(userData.email || "").trim(),
           firstName: String(userData.firstName || "").trim(),
+          middleInitial: String(userData.middleInitial || "").trim(),
           lastName: String(userData.lastName || "").trim(),
           program: String(userData.program || "").trim(),
           yearSection: String(userData.yearSection || "").trim(),
