@@ -5,6 +5,7 @@ import Button from "@/components/ui/Button";
 import { getAuditHeaders } from "@/lib/auditHeaders";
 import ViolationPickerModal from "@/components/modals/ViolationPickerModal";
 import { CheckCircle, AlertTriangle } from "lucide-react";
+import { formatStudentDisplayName } from "@/lib/utils";
 
 const getTodayDateInputValue = () => {
   const now = new Date();
@@ -92,11 +93,18 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
     return students
       .filter((student) => {
         const fullName = String(student.full_name || "").toLowerCase();
+        const formattedName = formatStudentDisplayName({
+          firstName: student.first_name,
+          lastName: student.last_name,
+          middleInitial: student.middle_initial,
+          fullName: student.full_name,
+        }).toLowerCase();
         const schoolId = String(student.school_id || "").toLowerCase();
         const program = String(student.program || "").toLowerCase();
         const yearSection = String(student.year_section || "").toLowerCase();
         return (
           fullName.includes(q) ||
+          formattedName.includes(q) ||
           schoolId.includes(q) ||
           program.includes(q) ||
           yearSection.includes(q)
@@ -115,14 +123,20 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
   );
 
   const selectStudent = (student) => {
+    const formattedName = formatStudentDisplayName({
+      firstName: student.first_name,
+      lastName: student.last_name,
+      middleInitial: student.middle_initial,
+      fullName: student.full_name,
+    });
     setFormData((prev) => ({
       ...prev,
       studentId: String(student.id),
-      studentName: student.full_name || "",
+      studentName: formattedName,
       studentNo: student.school_id || "",
       yearSection: formatProgramYearSection(student.program, student.year_section),
     }));
-    setStudentQuery(student.full_name || "");
+    setStudentQuery(formattedName);
     setShowStudentSuggestions(false);
     setError("");
   };
@@ -236,19 +250,27 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
 
           {showStudentSuggestions && filteredStudents.length > 0 && (
             <div className="absolute z-20 mt-2 w-full rounded-xl border border-white/10 bg-[#1f232a] shadow-xl max-h-56 overflow-auto">
-              {filteredStudents.map((student) => (
-                <button
-                  key={student.id}
-                  type="button"
-                  className="w-full text-left px-4 py-2.5 hover:bg-white/10 transition-colors"
-                  onClick={() => selectStudent(student)}
-                >
-                  <div className="text-sm text-white font-semibold">{student.full_name}</div>
-                  <div className="text-xs text-gray-300">
-                    {student.school_id} | {formatProgramYearSection(student.program, student.year_section)}
-                  </div>
-                </button>
-              ))}
+              {filteredStudents.map((student) => {
+                const formattedName = formatStudentDisplayName({
+                  firstName: student.first_name,
+                  lastName: student.last_name,
+                  middleInitial: student.middle_initial,
+                  fullName: student.full_name,
+                });
+                return (
+                  <button
+                    key={student.id}
+                    type="button"
+                    className="w-full text-left px-4 py-2.5 hover:bg-white/10 transition-colors"
+                    onClick={() => selectStudent(student)}
+                  >
+                    <div className="text-sm text-white font-semibold">{formattedName}</div>
+                    <div className="text-xs text-gray-300">
+                      {student.school_id} | {formatProgramYearSection(student.program, student.year_section)}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

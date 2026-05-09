@@ -3168,6 +3168,26 @@ const Archives = () => {
               tabs={semesterTabs}
               activeTab={activeSemester}
               onTabChange={setActiveSemester}
+              renderTabAction={(tab) => (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleDeleteSemesterClick(selectedUnresolvedYear, tab.key);
+                  }}
+                  disabled={isSemesterActionLoading}
+                  className="absolute right-1 top-1 z-10 flex h-4 w-5 items-center justify-center text-slate-400 transition-colors hover:text-white disabled:opacity-50"
+                  title={`Delete ${tab.label} for S.Y. ${selectedUnresolvedYear}`}
+                >
+                  {isSemesterActionLoading &&
+                  semesterToDelete?.schoolYear === selectedUnresolvedYear &&
+                  semesterToDelete?.semester === tab.key ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3 w-3" />
+                  )}
+                </button>
+              )}
               className="mb-4"
             />
           )}
