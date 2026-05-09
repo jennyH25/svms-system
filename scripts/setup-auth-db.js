@@ -1,27 +1,37 @@
 import "dotenv/config";
+import { pathToFileURL } from "node:url";
 import {
   closeDbPool,
+  syncAppStateDatabase,
   getSeedAccountsFromEnv,
   syncAuthDatabase,
+  syncAuditLogsDatabase,
+  syncStudentsFromUsers,
+  syncSystemSettingsDatabase,
   syncStudentsDatabase,
   syncViolationsDatabase,
   syncNotificationsDatabase,
   syncPasswordResetDatabase,
   syncSuperAdminSecurityDatabase,
+  syncStudentViolationLogsDatabase,
 } from "../server/db.js";
 
-async function setupAuthDatabase() {
+export default async function setupAuthDatabase() {
   try {
     const seedAccounts = getSeedAccountsFromEnv();
     const result = await syncAuthDatabase({ seedAccounts });
     await syncStudentsDatabase();
-    // also ensure the violations and notification tables exist when preparing the auth database
+    await syncSystemSettingsDatabase();
     await syncViolationsDatabase();
+    await syncAuditLogsDatabase();
+    await syncStudentsFromUsers();
     await syncNotificationsDatabase();
     await syncPasswordResetDatabase();
     await syncSuperAdminSecurityDatabase();
+    await syncStudentViolationLogsDatabase();
+    await syncAppStateDatabase();
 
-    console.log("Auth database setup completed successfully.");
+    console.log("Database setup completed successfully.");
     if (result.accounts.length > 0) {
       console.log("Seeded accounts:", result.accounts);
     } else {
@@ -48,4 +58,6 @@ async function setupAuthDatabase() {
   }
 }
 
-setupAuthDatabase();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  setupAuthDatabase();
+}

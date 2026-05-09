@@ -77,6 +77,13 @@ const isEnvEnabled = (value) =>
 const shouldRunServerlessDbSync = isEnvEnabled(
   process.env.SVMS_ENABLE_SERVERLESS_DB_SYNC,
 );
+const shouldAllowServerlessWorkbookReads = isEnvEnabled(
+  process.env.SVMS_ENABLE_SERVERLESS_WORKBOOK_READS,
+);
+
+function canReadHistoricalWorkbookFile() {
+  return !isServerlessRuntime || shouldAllowServerlessWorkbookReads;
+}
 
 function assertHistoricalWorkbookWritable() {
   if (!isServerlessRuntime) {
@@ -981,6 +988,10 @@ function parseWorkbookTypeLabel(value) {
 }
 
 async function loadHistoricalViolationRecordsFromWorkbook() {
+  if (!canReadHistoricalWorkbookFile()) {
+    return [];
+  }
+
   try {
     await access(HISTORICAL_VIOLATION_RECORDS_PATH);
   } catch {
@@ -1460,6 +1471,16 @@ async function maybeSyncHistoricalWorkbookRecordsToDatabase(
   pool,
   { force = false } = {},
 ) {
+  if (!canReadHistoricalWorkbookFile()) {
+    return {
+      skipped: true,
+      scannedCount: 0,
+      importCount: 0,
+      skippedCount: 0,
+      createdStudentCount: 0,
+    };
+  }
+
   const now = Date.now();
   if (
     !force &&
@@ -2276,6 +2297,225 @@ async function resolveSystemLogoPath(storedLogoPath) {
       resolvedLogoPath: normalizedCandidate,
       normalizedPersistedValue: encryptImagePath(normalizedCandidate),
     };
+  }
+
+  return { resolvedLogoPath: null, normalizedPersistedValue: null };
+}
+
+function getSupabaseStorageConfig() {
+  const projectUrl = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
+  const serviceRoleKey = String(
+    process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+  ).trim();
+  const bucketName = String(
+    process.env.SUPABASE_STORAGE_BUCKET || "svms-assets",
+  ).trim();
+
+  if (!projectUrl || !serviceRoleKey || !bucketName) {
+    return null;
+  }
+
+  return {
+    projectUrl,
+    serviceRoleKey,
+    bucketName,
+  };
+}
+
+function buildSupabaseStorageObjectPath({
+  prefix = "logos",
+  extension = ".bin",
+} = {}) {
+  const safeExtension = String(extension || ".bin").startsWith(".")
+    ? String(extension || ".bin").toLowerCase()
+    : `.${String(extension || "bin").toLowerCase()}`;
+
+  return `${prefix}/${Date.now()}-${crypto.randomUUID()}${safeExtension}`;
+}
+
+async function ensureSupabaseStorageBucket(config) {
+  const response = await fetch(
+    `${config.projectUrl}/storage/v1/bucket/${encodeURIComponent(config.bucketName)}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${config.serviceRoleKey}`,
+        apikey: config.serviceRoleKey,
+      },
+    },
+  );
+
+  if (response.ok) {
+    return;
+  }
+
+  if (response.status !== 404) {
+    const details = await response.text();
+    throw new Error(
+      `Unable to inspect Supabase storage bucket (${response.status} ${details.slice(0, 200)})`,
+    );
+  }
+
+  const createResponse = await fetch(`${config.projectUrl}/storage/v1/bucket`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.serviceRoleKey}`,
+      apikey: config.serviceRoleKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      id: config.bucketName,
+      name: config.bucketName,
+      public: true,
+      file_size_limit: String(VERCEL_SAFE_UPLOAD_LIMIT_BYTES),
+      allowed_mime_types: [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "image/svg+xml",
+        "image/bmp",
+        "image/x-icon",
+      ],
+    }),
+  });
+
+  if (!createResponse.ok) {
+    const details = await createResponse.text();
+    throw new Error(
+      `Unable to create Supabase storage bucket (${createResponse.status} ${details.slice(0, 200)})`,
+    );
+  }
+}
+
+async function uploadBufferToSupabaseStorage(
+  buffer,
+  {
+    contentType = "application/octet-stream",
+    prefix = "logos",
+    extension = ".bin",
+  } = {},
+) {
+  const config = getSupabaseStorageConfig();
+  if (!config) {
+    throw new Error(
+      "Supabase storage is not configured. Set SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and optionally SUPABASE_STORAGE_BUCKET.",
+    );
+  }
+
+  await ensureSupabaseStorageBucket(config);
+
+  const objectPath = buildSupabaseStorageObjectPath({ prefix, extension });
+  const uploadResponse = await fetch(
+    `${config.projectUrl}/storage/v1/object/${encodeURIComponent(config.bucketName)}/${objectPath}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.serviceRoleKey}`,
+        apikey: config.serviceRoleKey,
+        "Content-Type": contentType,
+        "x-upsert": "true",
+      },
+      body: buffer,
+    },
+  );
+
+  if (!uploadResponse.ok) {
+    const details = await uploadResponse.text();
+    throw new Error(
+      `Unable to upload file to Supabase storage (${uploadResponse.status} ${details.slice(0, 200)})`,
+    );
+  }
+
+  return `${config.projectUrl}/storage/v1/object/public/${encodeURIComponent(config.bucketName)}/${objectPath}`;
+}
+
+async function persistLogoBuffer(buffer, mimeType, options = {}) {
+  const extension = path.extname(String(options.fileName || "")).toLowerCase() ||
+    (() => {
+      if (mimeType === "image/png") return ".png";
+      if (mimeType === "image/jpeg") return ".jpg";
+      if (mimeType === "image/webp") return ".webp";
+      if (mimeType === "image/gif") return ".gif";
+      if (mimeType === "image/svg+xml") return ".svg";
+      if (mimeType === "image/bmp") return ".bmp";
+      if (mimeType === "image/x-icon") return ".ico";
+      return ".bin";
+    })();
+
+  const uploadedUrl = await uploadBufferToSupabaseStorage(buffer, {
+    contentType: mimeType,
+    prefix: "logos",
+    extension,
+  });
+
+  return {
+    logoPath: uploadedUrl,
+    encryptedPath: encryptImagePath(uploadedUrl),
+  };
+}
+
+async function normalizePersistedLogoPath(storedLogoPath) {
+  if (!storedLogoPath) {
+    return { resolvedLogoPath: null, normalizedPersistedValue: null };
+  }
+
+  const decryptedValue = decryptImagePath(storedLogoPath);
+  const candidates = [decryptedValue, storedLogoPath];
+
+  for (const candidate of candidates) {
+    if (!isPersistedLogoPath(candidate)) {
+      continue;
+    }
+
+    const normalizedCandidate = String(candidate || "").trim();
+    if (/^https?:\/\//i.test(normalizedCandidate)) {
+      return {
+        resolvedLogoPath: normalizedCandidate,
+        normalizedPersistedValue: encryptImagePath(normalizedCandidate),
+      };
+    }
+
+    if (normalizedCandidate.startsWith("data:image/")) {
+      return {
+        resolvedLogoPath: normalizedCandidate,
+        normalizedPersistedValue: encryptImagePath(normalizedCandidate),
+      };
+    }
+
+    if (normalizedCandidate.startsWith("/uploads/")) {
+      const localFilePath = resolveLegacyLogoFilePath(normalizedCandidate);
+      if (!localFilePath) {
+        continue;
+      }
+
+      try {
+        const fileBuffer = await readFile(localFilePath);
+        const mimeType = getMimeTypeFromFilePath(localFilePath);
+        const {
+          logoPath: uploadedUrl,
+          encryptedPath,
+        } = await persistLogoBuffer(fileBuffer, mimeType, {
+          fileName: path.basename(localFilePath),
+        });
+        return {
+          resolvedLogoPath: uploadedUrl,
+          normalizedPersistedValue: encryptedPath,
+        };
+      } catch (error) {
+        if (getSupabaseStorageConfig()) {
+          throw error;
+        }
+
+        const fileBuffer = await readFile(localFilePath);
+        const mimeType = getMimeTypeFromFilePath(localFilePath);
+        const dataUrl = `data:${mimeType};base64,${fileBuffer.toString("base64")}`;
+        return {
+          resolvedLogoPath: dataUrl,
+          normalizedPersistedValue: encryptImagePath(dataUrl),
+        };
+      }
+    }
   }
 
   return { resolvedLogoPath: null, normalizedPersistedValue: null };
@@ -7778,7 +8018,7 @@ app.get("/api/settings", async (req, res) => {
     const {
       resolvedLogoPath: decryptedLogoPath,
       normalizedPersistedValue,
-    } = await resolveSystemLogoPath(settings.logo_path);
+    } = await normalizePersistedLogoPath(settings.logo_path);
     if (
       normalizedPersistedValue &&
       normalizedPersistedValue !== settings.logo_path
@@ -7838,7 +8078,7 @@ app.get("/api/settings/logo", async (_req, res) => {
     const {
       resolvedLogoPath: logoPath,
       normalizedPersistedValue,
-    } = await resolveSystemLogoPath(settings.logo_path);
+    } = await normalizePersistedLogoPath(settings.logo_path);
     if (
       normalizedPersistedValue &&
       normalizedPersistedValue !== settings.logo_path
@@ -7899,7 +8139,7 @@ app.post("/api/settings", async (req, res) => {
     const {
       resolvedLogoPath: decryptedLogoPath,
       normalizedPersistedValue,
-    } = await resolveSystemLogoPath(settings.logo_path);
+    } = await normalizePersistedLogoPath(settings.logo_path);
     if (
       normalizedPersistedValue &&
       normalizedPersistedValue !== settings.logo_path
@@ -7977,8 +8217,12 @@ app.post(
       await ensureAuthDatabaseReady();
       const pool = getDbPool();
 
-      const logoPath = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
-      const encryptedPath = encryptImagePath(logoPath);
+      const {
+        logoPath,
+        encryptedPath,
+      } = await persistLogoBuffer(req.file.buffer, req.file.mimetype, {
+        fileName: req.file.originalname,
+      });
 
       const result = await pool.query(
         `UPDATE "SystemSettings"
@@ -11765,5 +12009,51 @@ if (!isServerlessRuntime) {
       console.error(error.message);
     });
 }
+
+function isAuthorizedCronRequest(req) {
+  const configuredSecret = String(process.env.CRON_SECRET || "").trim();
+  const authHeader = String(req.headers.authorization || "").trim();
+
+  if (configuredSecret) {
+    return authHeader === `Bearer ${configuredSecret}`;
+  }
+
+  const userAgent = String(req.headers["user-agent"] || "").trim();
+  return userAgent === "vercel-cron/1.0" || !isServerlessRuntime;
+}
+
+app.get("/api/cron/maintenance", async (req, res) => {
+  if (!isAuthorizedCronRequest(req)) {
+    return res.status(401).json({
+      status: "error",
+      message: "Unauthorized cron request.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    await purgeExpiredAuditLogs();
+    await purgeExpiredNotifications();
+    await deactivateGraduatedStudentAccounts();
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Maintenance completed.",
+      ranAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Maintenance failed (${error.message}).`,
+    });
+  }
+});
 
 export default app;
