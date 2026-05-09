@@ -2141,49 +2141,76 @@ const StudentViolation = () => {
         isOpen={showAnalyticsDetailModal}
         onClose={() => setShowAnalyticsDetailModal(false)}
         title={<span className="font-black font-inter">Student Analytics Details</span>}
-        size="lg"
+        size="2xl"
+        className="max-w-4xl"
       >
-        <p className="text-sm text-gray-300 mb-4">
-          View the student analytics trend and next term forecast in greater detail.
-        </p>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-4">
+        <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <p className="max-w-2xl text-sm leading-6 text-gray-300">
+            Review the recent trend and the projected violation outlook for the upcoming term.
+          </p>
+          <div className="inline-flex items-center gap-2 self-start rounded-full border border-cyan-300/15 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-100/80">
+            <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_12px_rgba(103,232,249,0.65)]" />
+            Analytics Snapshot
+          </div>
+        </div>
+        <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-5 mb-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-300/70">
+                Trend Overview
+              </p>
+              <p className="mt-1 text-base font-semibold text-white">
+                Violation pattern across recent terms
+              </p>
+            </div>
+            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-300">
+              Hover points to inspect values
+            </div>
+          </div>
+          <div className="rounded-[24px] border border-white/8 bg-[#30333b]/90 px-4 py-5">
           <AnalyticsLineGraph
             data={analyticsData.studentAnalytics.graphData}
             color="#A3AED0"
-            height={160}
+            height={220}
             showDots
             showAxis
             showHoverLabel
           />
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 min-h-[110px]">
-            <p className="text-sm text-gray-400">Predicted change</p>
-            <p className={`mt-3 text-3xl font-semibold ${analyticsData.studentAnalytics.predictedChangePercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-[26px] border border-white/10 bg-white/[0.045] p-5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-300/70">Predicted Change</p>
+            <div className="mt-4 flex items-end justify-between gap-4">
+            <p className={`text-5xl font-semibold leading-none ${analyticsData.studentAnalytics.predictedChangePercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {analyticsData.studentAnalytics.predictedChangePercent >= 0 ? '+' : ''}{analyticsData.studentAnalytics.predictedChangePercent}%
             </p>
+            <p className="max-w-[11rem] text-right text-sm leading-6 text-gray-400">
+              Relative movement compared with the previous term
+            </p>
+            </div>
           </div>
           <div
-            className="min-h-[110px] rounded-2xl border border-white/10 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+            className="min-h-[220px] rounded-[26px] border border-emerald-300/12 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.16),rgba(255,255,255,0.03)_50%)] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
             style={{
               backgroundColor: "rgb(255 255 255 / 0.05)",
             }}
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-100/60">
-                  Forecast outlook
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-100/70">
+                  Forecast Outlook
                 </p>
                 <p className="mt-1 text-sm text-white/90">Projected next-term violations</p>
               </div>
               <span
-                className="rounded-full border border-emerald-300/20 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-100/75"
+                className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100/80"
                 style={{ backgroundColor: "rgb(37 45 42 / 0.1)" }}
               >
                 Predictive
               </span>
             </div>
-            <div className="mt-4 flex items-end justify-between gap-4">
+            <div className="mt-6 grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
               {(() => {
                 const history = analyticsData.studentAnalytics.historyCounts || null;
                 const serverPred = analyticsData.studentAnalytics.predictedNextTerm?.predictedViolations ?? null;
@@ -2191,11 +2218,11 @@ const StudentViolation = () => {
                 const displayPred = client ? client.pred : (serverPred ?? 0);
                 return (
                   <div>
-                    <p className="text-3xl font-semibold tracking-tight text-white">
+                    <p className="text-5xl font-semibold leading-none tracking-tight text-white">
                       {displayPred}
                     </p>
-                    <p className="mt-1 text-xs uppercase tracking-[0.16em] text-emerald-100/65">
-                      expected violations
+                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-emerald-100/65">
+                      Expected violations
                     </p>
                     {client ? (
                       <p className="mt-1 text-xs text-emerald-100/60">Estimated range: {client.low}–{client.high}</p>
@@ -2205,7 +2232,7 @@ const StudentViolation = () => {
                   </div>
                 );
               })()}
-              <p className="max-w-[52%] text-right text-xs text-emerald-50/70 whitespace-normal break-words">
+              <p className="rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-left text-sm font-medium leading-5 text-emerald-50/85 whitespace-normal break-words sm:min-w-[180px] sm:max-w-[220px]">
                 {analyticsData.studentAnalytics.predictedNextTerm?.label || "No term label available"}
               </p>
             </div>

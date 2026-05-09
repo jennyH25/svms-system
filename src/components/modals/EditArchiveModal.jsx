@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import Modal, { ModalFooter } from "@/components/ui/Modal";
 import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import SelectField from "@/components/ui/SelectField";
 
 function extractNameFromFullName(fullName) {
@@ -453,7 +453,12 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
             disabled={isLoading}
             className="px-8 py-2 bg-[#556987] text-white hover:bg-[#3d4654]"
           >
-            {isLoading ? "Saving..." : "Save Changes"}
+            {isLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="sr-only">Saving changes</span>
+              </>
+            ) : "Save Changes"}
           </Button>
         </ModalFooter>
       </form>

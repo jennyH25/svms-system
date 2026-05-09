@@ -4,7 +4,7 @@ import SearchBar from "../../components/ui/SearchBar";
 import Button from "../../components/ui/Button";
 import DataTable from "../../components/ui/DataTable";
 import TableTabs from "../../components/ui/TableTabs";
-import { Folder, Download, X, AlertCircle, MoreVertical, Edit, RotateCcw, Trash2, Check, Tag, CalendarDays, SortAsc, Upload, UserRound, ShieldAlert, Mail, GraduationCap, CalendarClock, FileText, Database, Archive, ArrowUpRight, IdCard, Loader2 } from "lucide-react";
+import { Folder, Download, X, AlertCircle, MoreVertical, Edit, RotateCcw, Trash2, Check, CheckCircle, Tag, CalendarDays, SortAsc, Upload, UserRound, ShieldAlert, Mail, GraduationCap, CalendarClock, FileText, Database, Archive, ArrowUpRight, IdCard, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -381,6 +381,11 @@ const Archives = () => {
   const [userToRestore, setUserToRestore] = useState(null);
   const [isRestoreLoading, setIsRestoreLoading] = useState(false);
   const [archiveSuccessMessage, setArchiveSuccessMessage] = useState("");
+  const [successModal, setSuccessModal] = useState({
+    isOpen: false,
+    title: "Success",
+    message: "",
+  });
 
   // Delete archived violation modal states
   const [isDeleteArchivedViolationModalOpen, setIsDeleteArchivedViolationModalOpen] = useState(false);
@@ -405,6 +410,20 @@ const Archives = () => {
   const [showDownloadAlertModal, setShowDownloadAlertModal] = useState(false);
   const [downloadAlertMessage, setDownloadAlertMessage] = useState("");
   const [previewSignatureImage, setPreviewSignatureImage] = useState("");
+
+  const openSuccessModal = useCallback((message, title = "Success") => {
+    setSuccessModal({
+      isOpen: true,
+      title,
+      message,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!archiveSuccessMessage) return;
+    openSuccessModal(archiveSuccessMessage);
+    setArchiveSuccessMessage("");
+  }, [archiveSuccessMessage, openSuccessModal]);
 
   const mergeArchiveSignatureImage = useCallback((violationId, signatureImage) => {
     if (!violationId || !signatureImage) return;
@@ -793,6 +812,7 @@ const Archives = () => {
         );
         setIsEditOpen(false);
         setSelectedRow(null);
+        openSuccessModal("Archived user updated successfully.");
         return data.user;
       }
 
@@ -846,6 +866,7 @@ const Archives = () => {
 
         setIsEditOpen(false);
         setSelectedRow(null);
+        openSuccessModal("Archived violation record updated successfully.");
         return data.violation;
       }
 
@@ -962,10 +983,10 @@ const Archives = () => {
         setIsDeleteSemesterModalOpen(false);
         setSemesterToDelete(null);
         setError("");
-        setArchiveSuccessMessage(
+        openSuccessModal(
           data.message || `Deleted ${semesterToDelete.semester} for S.Y. ${semesterToDelete.schoolYear}.`,
+          "Semester Deleted",
         );
-        setTimeout(() => setArchiveSuccessMessage(""), 5000);
         window.dispatchEvent(new CustomEvent("archiveCompleted"));
       } else {
         const data = await response.json();
@@ -1929,7 +1950,9 @@ const Archives = () => {
                   />
                 </div>
               ) : row.signature === "SIGNED" ? (
-                <span className="font-semibold text-green-300">Loading...</span>
+                <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                  Signed
+                </span>
               ) : (
                 <Button
                   size="sm"
@@ -2047,7 +2070,9 @@ const Archives = () => {
                 />
               </div>
             ) : row.signature === "SIGNED" ? (
-              <span className="font-semibold text-green-300">Loading...</span>
+              <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                Signed
+              </span>
             ) : (
               <Button
                 size="sm"
@@ -2145,13 +2170,14 @@ const Archives = () => {
 
       if (data.promotion?.isEligible) {
         if (data.promotion.promoted) {
-          setArchiveSuccessMessage("Student promotion triggered automatically after clearance.");
+          openSuccessModal("Student promotion triggered automatically after clearance.", "Record Cleared");
         } else if (data.promotion.graduated) {
-          setArchiveSuccessMessage("Student graduated automatically after all violations cleared.");
+          openSuccessModal("Student graduated automatically after all violations cleared.", "Record Cleared");
         } else {
-          setArchiveSuccessMessage("Student is eligible and checked for promotion after clearance.");
+          openSuccessModal("Student is eligible and checked for promotion after clearance.", "Record Cleared");
         }
-        setTimeout(() => setArchiveSuccessMessage(""), 5000);
+      } else {
+        openSuccessModal("Archived violation cleared from unresolved records.", "Record Cleared");
       }
 
       // preserve year section from archived record before promotion so UI does not show the promoted value in the source archive row
@@ -3155,12 +3181,6 @@ const Archives = () => {
             <h3 className="text-lg font-bold mb-4">{tableTitle}</h3>
           )}
 
-          {archiveSuccessMessage && (
-            <div className="mb-3 px-3 py-2 text-sm border border-emerald-300 bg-emerald-50 text-emerald-700 rounded">
-              {archiveSuccessMessage}
-            </div>
-          )}
-
           <div className="flex justify-between items-center mb-4">
             <div className="flex gap-2 items-center flex-wrap">
               {(activeFolder === "users" || isGlobalSearch) && (
@@ -3788,6 +3808,29 @@ const Archives = () => {
           </div>
         </Modal>
       )}
+
+      <Modal
+        isOpen={successModal.isOpen}
+        onClose={() => setSuccessModal((prev) => ({ ...prev, isOpen: false }))}
+        title={successModal.title}
+        size="sm"
+        showCloseButton={true}
+      >
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4">
+          <div className="flex items-start gap-3">
+            <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-400" />
+            <p className="text-sm leading-relaxed text-emerald-100">{successModal.message}</p>
+          </div>
+        </div>
+        <ModalFooter>
+          <Button
+            variant="primary"
+            onClick={() => setSuccessModal((prev) => ({ ...prev, isOpen: false }))}
+          >
+            OK
+          </Button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 };
