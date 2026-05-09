@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 import nodemailer from "nodemailer";
 import multer from "multer";
 import path from "node:path";
-import { access, stat } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import XLSX from "xlsx";
 import {
@@ -53,6 +53,7 @@ const API_GET_CACHE_TTL_MS = Number(process.env.API_GET_CACHE_TTL_MS || 8000);
 const API_GET_CACHE_MAX_ENTRIES = Number(
   process.env.API_GET_CACHE_MAX_ENTRIES || 400,
 );
+const VERCEL_SAFE_UPLOAD_LIMIT_BYTES = 4 * 1024 * 1024;
 const HISTORICAL_VIOLATION_RECORDS_PATH = path.resolve(
   __dirname,
   "../ViolationRecords1.xlsx",
@@ -69,6 +70,13 @@ const isServerlessRuntime =
   process.env.VERCEL === "1" ||
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
   process.env.NODE_ENV === "serverless";
+const isEnvEnabled = (value) =>
+  ["1", "true", "yes", "on"].includes(
+    String(value || "").trim().toLowerCase(),
+  );
+const shouldRunServerlessDbSync = isEnvEnabled(
+  process.env.SVMS_ENABLE_SERVERLESS_DB_SYNC,
+);
 
 function assertHistoricalWorkbookWritable() {
   if (!isServerlessRuntime) {
@@ -666,29 +674,6 @@ function buildWorkbookImportKey(record) {
   return [personKey, labelKey, semester, schoolYear, dateKey].join("|");
 }
 
-function buildWorkbookImportKeyVariants(record, studentId = null) {
-  const personKey = normalizeWorkbookPersonKey(record.studentName || record.student_name);
-  const labelKey = normalizeWorkbookComparisonText(
-    record.violationLabel || record.violation_label,
-  );
-  const semester = normalizeSemester(record.semester);
-  const schoolYear = normalizeSchoolYear(record.schoolYear || record.school_year);
-  const dateKey = formatWorkbookComparisonDate(
-    record.date || record.original_created_at || record.archived_at,
-  );
-  const keys = [];
-
-  if (studentId != null && studentId !== "") {
-    keys.push(`student:${studentId}|${labelKey}|${semester}|${schoolYear}|${dateKey}`);
-  }
-
-  if (personKey) {
-    keys.push(`name:${personKey}|${labelKey}|${semester}|${schoolYear}|${dateKey}`);
-  }
-
-  return keys;
-}
-
 async function resolveWorkbookStudentId(pool, studentName) {
   const normalizedStudentName = normalizeWorkbookText(studentName);
   if (!normalizedStudentName) {
@@ -995,38 +980,6 @@ function parseWorkbookTypeLabel(value) {
   };
 }
 
-function mapWorkbookRecordToArchiveRow(record, index) {
-  const archivedAt = toArchiveTimestamp(record.date);
-  const { category, degree, label } = parseWorkbookTypeLabel(record.typeLabel);
-
-  return {
-    id: `wb-${record.schoolYear}-${record.semester}-${index}`,
-    student_id: null,
-    violation_catalog_id: null,
-    violation_label: record.violationLabel || "",
-    reported_by: "",
-    remarks: "IMPORTED",
-    signature_image: "",
-    signature_updated_at: null,
-    semester: record.semester,
-    school_year: record.schoolYear,
-    archived_at: archivedAt,
-    archived_by_name: "Historical Import",
-    original_created_at: archivedAt,
-    original_updated_at: archivedAt,
-    student_name: record.studentName || "",
-    school_id: record.schoolId || "",
-    program: record.program || "",
-    year_section: record.yearSection || "",
-    violation_category: category,
-    violation_degree: degree,
-    violation_name: record.violationLabel || "",
-    violation_type_label: label,
-    isHistoricalWorkbook: true,
-    sourceType: "workbook",
-  };
-}
-
 async function loadHistoricalViolationRecordsFromWorkbook() {
   try {
     await access(HISTORICAL_VIOLATION_RECORDS_PATH);
@@ -1144,35 +1097,6 @@ async function loadHistoricalViolationRecordsFromWorkbook() {
     console.warn(`Historical workbook read failed: ${error.message}`);
     return [];
   }
-}
-
-async function getImportedWorkbookRecordKeys(pool, schoolYear, semester) {
-  const result = await pool.query(
-    `SELECT
-       sva.student_id,
-       sva.violation_label,
-       sva.reported_by,
-       sva.semester,
-       sva.school_year,
-       sva.original_created_at,
-       sva.archived_at,
-       sva.source_import_key,
-       s.full_name AS student_name
-     FROM student_violation_archives sva
-     LEFT JOIN "Students" s ON sva.student_id = s.id
-     WHERE sva.remarks = 'IMPORTED'
-       AND sva.school_year = $1
-       AND sva.semester = $2`,
-    [normalizeSchoolYear(schoolYear), normalizeSemester(semester)],
-  );
-
-  return new Set(
-    (result.rows || []).flatMap((row) => {
-      const fallbackKey = String(row.source_import_key || "").trim();
-      const keys = buildWorkbookImportKeyVariants(row, row.student_id);
-      return fallbackKey ? [fallbackKey, ...keys] : keys;
-    }),
-  );
 }
 
 async function reconcileImportedWorkbookArchiveRecords(pool) {
@@ -1314,6 +1238,9 @@ let lastArchiveMaintenanceAt = 0;
 let archiveMaintenanceInFlight = null;
 let archiveColumnsEnsured = false;
 let archiveColumnsEnsureInFlight = null;
+const HISTORICAL_WORKBOOK_DB_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+let lastHistoricalWorkbookDbSyncAt = 0;
+let historicalWorkbookDbSyncInFlight = null;
 
 const VIOLATION_INFERENCE_CACHE_TTL_MS = 5 * 60 * 1000;
 let violationInferenceCache = {
@@ -1428,6 +1355,141 @@ async function maybeRunArchiveMaintenance(pool) {
   });
 
   return archiveMaintenanceInFlight;
+}
+
+async function syncHistoricalWorkbookRecordsToDatabase(pool) {
+  const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+  if (!Array.isArray(workbookRecords) || workbookRecords.length === 0) {
+    return {
+      scannedCount: 0,
+      importCount: 0,
+      skippedCount: 0,
+      createdStudentCount: 0,
+    };
+  }
+
+  const existingImportsResult = await pool.query(
+    `SELECT source_import_key
+     FROM student_violation_archives
+     WHERE remarks = 'IMPORTED'
+       AND source_import_key IS NOT NULL
+       AND TRIM(source_import_key) <> ''`,
+  );
+  const existingKeys = new Set(
+    (existingImportsResult.rows || [])
+      .map((row) => String(row.source_import_key || "").trim())
+      .filter(Boolean),
+  );
+
+  let importCount = 0;
+  let skippedCount = 0;
+  let createdStudentCount = 0;
+
+  for (const record of workbookRecords) {
+    const normalizedSemester = normalizeSemester(record.semester);
+    const normalizedSchoolYear = normalizeSchoolYear(record.schoolYear);
+    const sourceImportKey = buildWorkbookImportKey(record);
+
+    if (!normalizedSemester || !normalizedSchoolYear || !sourceImportKey) {
+      skippedCount += 1;
+      continue;
+    }
+
+    if (existingKeys.has(sourceImportKey)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    let studentId = await resolveWorkbookStudentId(pool, record.studentName);
+    if (!studentId) {
+      studentId = await getOrCreateHistoricalWorkbookStudent(pool, record);
+      createdStudentCount += 1;
+    }
+
+    const archivedAt = toArchiveTimestamp(record.date) || new Date().toISOString();
+    const { category, degree, label } = parseWorkbookTypeLabel(record.typeLabel);
+
+    const insertResult = await pool.query(
+      `INSERT INTO student_violation_archives
+       (student_id, violation_catalog_id, violation_label, reported_by, remarks, source_import_key,
+        signature_image, signature_updated_at, semester, school_year, is_unresolved,
+        archived_by_user_id, archived_by_name, original_created_at, original_updated_at,
+        violation_category, violation_degree, violation_type_label)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+       RETURNING id`,
+      [
+        studentId,
+        null,
+        record.violationLabel || "",
+        "",
+        "IMPORTED",
+        sourceImportKey,
+        "",
+        null,
+        normalizedSemester,
+        normalizedSchoolYear,
+        false,
+        null,
+        "System",
+        archivedAt,
+        archivedAt,
+        category,
+        degree,
+        label,
+      ],
+    );
+
+    if (insertResult.rows?.[0]?.id) {
+      existingKeys.add(sourceImportKey);
+      importCount += 1;
+      continue;
+    }
+
+    skippedCount += 1;
+  }
+
+  return {
+    scannedCount: workbookRecords.length,
+    importCount,
+    skippedCount,
+    createdStudentCount,
+  };
+}
+
+async function maybeSyncHistoricalWorkbookRecordsToDatabase(
+  pool,
+  { force = false } = {},
+) {
+  const now = Date.now();
+  if (
+    !force &&
+    now - lastHistoricalWorkbookDbSyncAt < HISTORICAL_WORKBOOK_DB_SYNC_INTERVAL_MS
+  ) {
+    return {
+      skipped: true,
+      scannedCount: 0,
+      importCount: 0,
+      skippedCount: 0,
+      createdStudentCount: 0,
+    };
+  }
+
+  if (historicalWorkbookDbSyncInFlight) {
+    return historicalWorkbookDbSyncInFlight;
+  }
+
+  historicalWorkbookDbSyncInFlight = (async () => {
+    const syncResult = await syncHistoricalWorkbookRecordsToDatabase(pool);
+    lastHistoricalWorkbookDbSyncAt = Date.now();
+    return {
+      skipped: false,
+      ...syncResult,
+    };
+  })().finally(() => {
+    historicalWorkbookDbSyncInFlight = null;
+  });
+
+  return historicalWorkbookDbSyncInFlight;
 }
 
 async function getViolationCandidatesForInference(pool) {
@@ -2134,6 +2196,89 @@ function isPersistedLogoPath(value) {
     normalized.startsWith("data:image/") ||
     /^https?:\/\//i.test(normalized)
   );
+}
+
+function getMimeTypeFromFilePath(filePath) {
+  const ext = path.extname(String(filePath || "")).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".svg") return "image/svg+xml";
+  if (ext === ".bmp") return "image/bmp";
+  if (ext === ".ico") return "image/x-icon";
+  return "application/octet-stream";
+}
+
+function chunkArray(items, chunkSize) {
+  const normalizedItems = Array.isArray(items) ? items : [];
+  const normalizedChunkSize = Math.max(1, Number(chunkSize) || 1);
+  const chunks = [];
+
+  for (let index = 0; index < normalizedItems.length; index += normalizedChunkSize) {
+    chunks.push(normalizedItems.slice(index, index + normalizedChunkSize));
+  }
+
+  return chunks;
+}
+
+function resolveLegacyLogoFilePath(logoPath) {
+  const normalized = String(logoPath || "").trim();
+  if (!normalized.startsWith("/uploads/")) {
+    return null;
+  }
+
+  const relativePath = normalized.replace(/^\/+/, "");
+  const absolutePath = path.resolve(__dirname, relativePath);
+  const expectedRoot = path.resolve(__dirname, "uploads");
+
+  if (!absolutePath.startsWith(expectedRoot)) {
+    return null;
+  }
+
+  return absolutePath;
+}
+
+async function resolveSystemLogoPath(storedLogoPath) {
+  if (!storedLogoPath) {
+    return { resolvedLogoPath: null, normalizedPersistedValue: null };
+  }
+
+  const decryptedValue = decryptImagePath(storedLogoPath);
+  const candidates = [decryptedValue, storedLogoPath];
+
+  for (const candidate of candidates) {
+    if (!isPersistedLogoPath(candidate)) {
+      continue;
+    }
+
+    const normalizedCandidate = String(candidate || "").trim();
+    if (normalizedCandidate.startsWith("/uploads/")) {
+      const localFilePath = resolveLegacyLogoFilePath(normalizedCandidate);
+      if (!localFilePath) {
+        continue;
+      }
+
+      try {
+        const fileBuffer = await readFile(localFilePath);
+        const mimeType = getMimeTypeFromFilePath(localFilePath);
+        const dataUrl = `data:${mimeType};base64,${fileBuffer.toString("base64")}`;
+        return {
+          resolvedLogoPath: dataUrl,
+          normalizedPersistedValue: encryptImagePath(dataUrl),
+        };
+      } catch (_error) {
+        continue;
+      }
+    }
+
+    return {
+      resolvedLogoPath: normalizedCandidate,
+      normalizedPersistedValue: encryptImagePath(normalizedCandidate),
+    };
+  }
+
+  return { resolvedLogoPath: null, normalizedPersistedValue: null };
 }
 
 /**
@@ -3395,7 +3540,7 @@ const upload = multer({
     }
   },
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: VERCEL_SAFE_UPLOAD_LIMIT_BYTES,
   },
 });
 
@@ -3420,13 +3565,13 @@ const studentWorkbookUpload = multer({
     cb(new Error("Only Excel files (.xlsx or .xls) are allowed."));
   },
   limits: {
-    fileSize: 10 * 1024 * 1024,
+    fileSize: VERCEL_SAFE_UPLOAD_LIMIT_BYTES,
   },
 });
 
 app.use(cors());
 // Increase JSON body size limit to allow base64 signature uploads
-app.use(express.json({ limit: '6mb' }));
+app.use(express.json({ limit: '4mb' }));
 
 // Lightweight response caching for GET /api requests to speed up tab switches.
 app.use((req, res, next) => {
@@ -6287,19 +6432,25 @@ app.post("/api/students/alerts", async (req, res) => {
     const skippedStudents = [];
     const emailDelivered = [];
     const emailFailures = [];
+    const studentLookup = await pool.query(
+      `
+      SELECT id, user_id, school_id, full_name, program, year_section, violation_count, email
+      FROM "Students"
+      WHERE id = ANY($1::int[])
+      `,
+      [normalizedStudentIds],
+    );
+    const studentById = new Map(
+      (studentLookup.rows || []).map((row) => [Number(row.id), row]),
+    );
 
+    const emailCandidates = normalizedStudentIds
+      .map((studentId) => studentById.get(Number(studentId)))
+      .filter((student) => student?.user_id);
+
+    const validNotificationStudents = [];
     for (const studentId of normalizedStudentIds) {
-      const studentLookup = await pool.query(
-        `
-        SELECT id, user_id, school_id, full_name, program, year_section, violation_count, email
-        FROM "Students"
-        WHERE id = $1
-        LIMIT 1
-        `,
-        [studentId],
-      );
-
-      const student = studentLookup.rows?.[0];
+      const student = studentById.get(Number(studentId));
       if (!student?.user_id) {
         skippedStudents.push({
           studentId,
@@ -6307,39 +6458,50 @@ app.post("/api/students/alerts", async (req, res) => {
         });
         continue;
       }
+      validNotificationStudents.push(student);
+    }
 
-      const activeViolationCount = Number(student.violation_count || 0);
-      const metadata = {
-        type: "admin_alert",
-        alertType: normalizedAlertType,
-        adminMessage: normalizedMessage,
-        studentId: Number(student.id),
-        schoolId: student.school_id || null,
-        studentName: student.full_name || null,
-        program: student.program || null,
-        yearSection: student.year_section || null,
-        activeViolationCount,
-        sentAt: new Date().toISOString(),
-      };
+    for (const studentChunk of chunkArray(validNotificationStudents, 12)) {
+      const notificationChunkResults = await Promise.all(
+        studentChunk.map(async (student) => {
+          const activeViolationCount = Number(student.violation_count || 0);
+          const metadata = {
+            type: "admin_alert",
+            alertType: normalizedAlertType,
+            adminMessage: normalizedMessage,
+            studentId: Number(student.id),
+            schoolId: student.school_id || null,
+            studentName: student.full_name || null,
+            program: student.program || null,
+            yearSection: student.year_section || null,
+            activeViolationCount,
+            sentAt: new Date().toISOString(),
+          };
 
-      const insertedNotification = await insertNotificationForUser(
-        pool,
-        Number(student.user_id),
-        {
-          title: `${normalizedAlertType} from Admin`,
-          description: normalizedMessage,
-          metadata,
-        },
+          const insertedNotification = await insertNotificationForUser(
+            pool,
+            Number(student.user_id),
+            {
+              title: `${normalizedAlertType} from Admin`,
+              description: normalizedMessage,
+              metadata,
+            },
+          );
+
+          return {
+            notificationId: Number.isFinite(Number(insertedNotification?.id))
+              ? Number(insertedNotification.id)
+              : null,
+            createdAt: insertedNotification?.created_at || null,
+            studentId: Number(student.id),
+          };
+        }),
       );
 
-      insertedNotifications.push({
-        notificationId: Number.isFinite(Number(insertedNotification?.id))
-          ? Number(insertedNotification.id)
-          : null,
-        createdAt: insertedNotification?.created_at || null,
-        studentId: Number(student.id),
-      });
+      insertedNotifications.push(...notificationChunkResults);
+    }
 
+    for (const student of emailCandidates) {
       const studentEmail = String(student.email || "")
         .trim()
         .toLowerCase();
@@ -6349,31 +6511,56 @@ app.post("/api/students/alerts", async (req, res) => {
           studentId: Number(student.id),
           reason: "Student email address is missing or invalid.",
         });
-        continue;
       }
+    }
 
-      const emailResult = await sendStudentAdminAlertEmail({
-        toEmail: studentEmail,
-        studentName: student.full_name,
-        alertType: normalizedAlertType,
-        message: normalizedMessage,
-        activeViolationCount,
-        program: student.program,
-        yearSection: student.year_section,
-      });
+    const validEmailStudents = emailCandidates.filter((student) => {
+      const studentEmail = String(student.email || "")
+        .trim()
+        .toLowerCase();
+      return studentEmail && studentEmail.includes("@");
+    });
 
-      if (emailResult.sent) {
-        emailDelivered.push({
-          studentId: Number(student.id),
-          email: studentEmail,
-        });
-      } else {
+    for (const studentChunk of chunkArray(validEmailStudents, 5)) {
+      const emailChunkResults = await Promise.all(
+        studentChunk.map(async (student) => {
+          const studentEmail = String(student.email || "")
+            .trim()
+            .toLowerCase();
+          const activeViolationCount = Number(student.violation_count || 0);
+          const emailResult = await sendStudentAdminAlertEmail({
+            toEmail: studentEmail,
+            studentName: student.full_name,
+            alertType: normalizedAlertType,
+            message: normalizedMessage,
+            activeViolationCount,
+            program: student.program,
+            yearSection: student.year_section,
+          });
+
+          return {
+            studentId: Number(student.id),
+            email: studentEmail,
+            emailResult,
+          };
+        }),
+      );
+
+      emailChunkResults.forEach(({ studentId, email, emailResult }) => {
+        if (emailResult.sent) {
+          emailDelivered.push({
+            studentId,
+            email,
+          });
+          return;
+        }
+
         emailFailures.push({
-          studentId: Number(student.id),
-          email: studentEmail,
+          studentId,
+          email,
           reason: emailResult.reason || "Unable to send student alert email.",
         });
-      }
+      });
     }
 
     if (insertedNotifications.length === 0) {
@@ -6505,11 +6692,11 @@ app.get("/api/violation-analytics", async (req, res) => {
   let currentSchoolYear = "";
 
   try {
-    workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
-
     if (hasDbConfig()) {
       await ensureAuthDatabaseReady();
       const pool = getDbPool();
+      await ensureArchiveColumnsExist(pool);
+      await maybeSyncHistoricalWorkbookRecordsToDatabase(pool);
 
       const settingsResult = await pool.query(
         `
@@ -6621,12 +6808,6 @@ app.get("/api/violation-analytics", async (req, res) => {
           [targetSchoolYear, targetSemester],
         );
 
-        const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
-          pool,
-          targetSchoolYear,
-          targetSemester,
-        );
-
         const archiveDatabaseRecords = (archivedResult.rows || []).map(
           (row, index) => {
             const createdAt = new Date(
@@ -6657,45 +6838,11 @@ app.get("/api/violation-analytics", async (req, res) => {
             };
           },
         );
-
-        const archiveWorkbookRecords = workbookRecords
-          .filter(
-            (record) =>
-              normalizeSchoolYear(record.schoolYear) === targetSchoolYear &&
-              normalizeSemester(record.semester) === targetSemester &&
-              !importedWorkbookKeys.has(buildWorkbookImportKey(record)),
-          )
-          .map((record, index) => {
-            const archivedRow = mapWorkbookRecordToArchiveRow(record, index);
-            const createdAt = new Date(
-              archivedRow.original_created_at || archivedRow.archived_at,
-            );
-
-            return {
-              source: archivedRow.sourceType || "workbook",
-              studentKey: archivedRow.student_id
-                ? `student:${Number(archivedRow.student_id)}`
-                : archivedRow.student_name
-                  ? `name:${String(archivedRow.student_name).toLowerCase()}`
-                  : `workbook-row:${index}`,
-              studentName: String(archivedRow.student_name || "").trim(),
-              program: String(archivedRow.program || "").trim(),
-              yearSection: String(archivedRow.year_section || "").trim(),
-              violationLabel: String(archivedRow.violation_label || "").trim(),
-              degreeRank: parseDegreeRank(archivedRow.violation_degree),
-              date: createdAt,
-              monthLabel: toMonthLabel(createdAt),
-              semester: normalizeSemester(archivedRow.semester),
-              schoolYear: normalizeSchoolYear(archivedRow.school_year),
-            };
-          });
-
-        archivedRecords = [
-          ...archiveDatabaseRecords,
-          ...archiveWorkbookRecords,
-        ];
+        archivedRecords = [...archiveDatabaseRecords];
         databaseRecords = [...archivedRecords];
       }
+    } else {
+      workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
     }
 
     const selectedRecordsSource =
@@ -6783,7 +6930,11 @@ app.get("/api/student-violations", async (_req, res) => {
         svl.violation_label,
         svl.reported_by,
         svl.remarks,
-        svl.signature_image,
+        CASE
+          WHEN svl.signature_image IS NOT NULL AND TRIM(svl.signature_image) <> ''
+          THEN TRUE
+          ELSE FALSE
+        END AS has_signature,
         svl.signature_updated_at,
         svl.cleared_at,
         svl.cleared_by_user_id,
@@ -6848,7 +6999,11 @@ app.get("/api/student-violations/me", async (req, res) => {
         svl.violation_label,
         svl.reported_by,
         svl.remarks,
-        svl.signature_image,
+        CASE
+          WHEN svl.signature_image IS NOT NULL AND TRIM(svl.signature_image) <> ''
+          THEN TRUE
+          ELSE FALSE
+        END AS has_signature,
         svl.signature_updated_at,
         svl.cleared_at,
         svl.cleared_by_user_id,
@@ -7197,7 +7352,7 @@ app.put("/api/student-violations/:id/signature", async (req, res) => {
   // Protect against very large payloads (extra safety beyond express.json limit)
   try {
     const sizeBytes = Buffer.byteLength(String(signatureImage), 'utf8');
-    const MAX_BYTES = 6 * 1024 * 1024; // 6MB
+    const MAX_BYTES = VERCEL_SAFE_UPLOAD_LIMIT_BYTES;
     if (sizeBytes > MAX_BYTES) {
       return res.status(413).json({ status: 'error', message: 'Signature image too large.' });
     }
@@ -7265,6 +7420,53 @@ app.put("/api/student-violations/:id/signature", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Unable to save signature (${error.message}).`,
+    });
+  }
+});
+
+app.get("/api/student-violations/:id/signature", async (req, res) => {
+  const { id } = req.params;
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const result = await pool.query(
+      `
+      SELECT id, signature_image
+      FROM student_violation_logs
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [id],
+    );
+
+    const record = result.rows?.[0] || null;
+    if (!record) {
+      return res.status(404).json({
+        status: "error",
+        message: "Record not found.",
+      });
+    }
+
+    const signatureImage = String(record.signature_image || "").trim() || null;
+
+    return res.status(200).json({
+      status: "ok",
+      id: Number(record.id),
+      hasSignature: Boolean(signatureImage),
+      signatureImage,
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to fetch signature (${error.message}).`,
     });
   }
 });
@@ -7573,24 +7775,18 @@ app.get("/api/settings", async (req, res) => {
     }
 
     const settings = result.rows[0];
-    let decryptedLogoPath = null;
-    if (settings.logo_path) {
-      // Try to decrypt legacy encrypted values and accept modern persisted URL/data formats.
-      const tried = decryptImagePath(settings.logo_path);
-      if (isPersistedLogoPath(tried)) {
-        decryptedLogoPath = tried;
-        const shouldReencrypt = settings.logo_path !== encryptImagePath(tried);
-        if (shouldReencrypt) {
-          await pool.query(
-            `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
-            [encryptImagePath(tried), settings.id],
-          );
-        }
-      } else if (isPersistedLogoPath(settings.logo_path)) {
-        decryptedLogoPath = settings.logo_path;
-      } else {
-        decryptedLogoPath = null;
-      }
+    const {
+      resolvedLogoPath: decryptedLogoPath,
+      normalizedPersistedValue,
+    } = await resolveSystemLogoPath(settings.logo_path);
+    if (
+      normalizedPersistedValue &&
+      normalizedPersistedValue !== settings.logo_path
+    ) {
+      await pool.query(
+        `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+        [normalizedPersistedValue, settings.id],
+      );
     }
 
     return res.status(200).json({
@@ -7600,7 +7796,6 @@ app.get("/api/settings", async (req, res) => {
         settingKey: settings.setting_key,
         displayName:
           settings.display_name || "Student Violation Management System",
-        logoPath: decryptedLogoPath,
         theme: settings.theme || "dark",
         themeColor: settings.theme_color || "#000000",
         updatedAt: settings.updated_at,
@@ -7610,6 +7805,58 @@ app.get("/api/settings", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Unable to fetch settings (${error.message}).`,
+    });
+  }
+});
+
+app.get("/api/settings/logo", async (_req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const result = await pool.query(
+      `SELECT id, logo_path
+       FROM "SystemSettings"
+       WHERE setting_key = 'system_config'
+       LIMIT 1`,
+    );
+
+    if (!result.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "System settings not found.",
+      });
+    }
+
+    const settings = result.rows[0];
+    const {
+      resolvedLogoPath: logoPath,
+      normalizedPersistedValue,
+    } = await resolveSystemLogoPath(settings.logo_path);
+    if (
+      normalizedPersistedValue &&
+      normalizedPersistedValue !== settings.logo_path
+    ) {
+      await pool.query(
+        `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+        [normalizedPersistedValue, settings.id],
+      );
+    }
+
+    return res.status(200).json({
+      status: "ok",
+      logoPath: logoPath || null,
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to fetch logo (${error.message}).`,
     });
   }
 });
@@ -7649,23 +7896,18 @@ app.post("/api/settings", async (req, res) => {
     }
 
     const settings = result.rows[0];
-    let decryptedLogoPath = null;
-    if (settings.logo_path) {
-      const tried = decryptImagePath(settings.logo_path);
-      if (isPersistedLogoPath(tried)) {
-        decryptedLogoPath = tried;
-        const shouldReencrypt = settings.logo_path !== encryptImagePath(tried);
-        if (shouldReencrypt) {
-          await pool.query(
-            `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
-            [encryptImagePath(tried), settings.id],
-          );
-        }
-      } else if (isPersistedLogoPath(settings.logo_path)) {
-        decryptedLogoPath = settings.logo_path;
-      } else {
-        decryptedLogoPath = null;
-      }
+    const {
+      resolvedLogoPath: decryptedLogoPath,
+      normalizedPersistedValue,
+    } = await resolveSystemLogoPath(settings.logo_path);
+    if (
+      normalizedPersistedValue &&
+      normalizedPersistedValue !== settings.logo_path
+    ) {
+      await pool.query(
+        `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+        [normalizedPersistedValue, settings.id],
+      );
     }
 
     await logAuditEvent(req, {
@@ -9728,7 +9970,11 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
         sva.violation_label,
         sva.reported_by,
         sva.remarks,
-        sva.signature_image,
+        CASE
+          WHEN sva.signature_image IS NOT NULL AND TRIM(sva.signature_image) <> ''
+          THEN TRUE
+          ELSE FALSE
+        END AS has_signature,
         sva.signature_updated_at,
         sva.semester,
         sva.school_year,
@@ -9796,6 +10042,7 @@ app.get("/api/archive/users", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
+    await maybeSyncHistoricalWorkbookRecordsToDatabase(pool);
 
     const result = await pool.query(
       `SELECT 
@@ -9845,8 +10092,8 @@ app.get("/api/archive/school-years", async (req, res) => {
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
-
-    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
+    await ensureArchiveColumnsExist(pool);
+    await maybeSyncHistoricalWorkbookRecordsToDatabase(pool);
 
     const archiveResult = await pool.query(
       `
@@ -9864,15 +10111,6 @@ app.get("/api/archive/school-years", async (req, res) => {
         semester: normalizeSemester(row.semester),
       }))
       .filter((row) => row.schoolYear && row.semester);
-
-    const workbookTerms = Array.isArray(workbookRecords)
-      ? workbookRecords
-          .map((record) => ({
-            schoolYear: normalizeSchoolYear(record.schoolYear),
-            semester: normalizeSemester(record.semester),
-          }))
-          .filter((row) => row.schoolYear && row.semester)
-      : [];
 
     const settingsResult = await pool.query(
       `
@@ -9895,9 +10133,7 @@ app.get("/api/archive/school-years", async (req, res) => {
     };
 
     const schoolYearSet = new Set(
-      [...archiveTerms, ...workbookTerms]
-        .map((term) => term.schoolYear)
-        .filter(Boolean),
+      archiveTerms.map((term) => term.schoolYear).filter(Boolean),
     );
     if (currentSchoolYear) {
       schoolYearSet.add(currentSchoolYear);
@@ -9910,7 +10146,7 @@ app.get("/api/archive/school-years", async (req, res) => {
       .slice(0, 4);
 
     const semestersBySchoolYear = combinedYears.reduce((acc, schoolYear) => {
-      const semesters = [...archiveTerms, ...workbookTerms]
+      const semesters = archiveTerms
         .filter((term) => term.schoolYear === schoolYear)
         .map((term) => term.semester);
 
@@ -9985,7 +10221,7 @@ app.delete("/api/archive/semesters/:schoolYear/:semester", async (req, res) => {
     if (deletedCount === 0) {
       return res.status(200).json({
         status: "ok",
-        message: `${normalizedSemester} S.Y. ${normalizedSchoolYear} has no database archive records. Workbook source remains unchanged.`,
+        message: `${normalizedSemester} S.Y. ${normalizedSchoolYear} has no archived records to delete.`,
         deletedCount: 0,
       });
     }
@@ -10053,7 +10289,7 @@ app.delete("/api/archive/school-years/:schoolYear", async (req, res) => {
     if (databaseViolationCount === 0) {
       return res.status(200).json({
         status: "ok",
-        message: `School year ${schoolYear} has no database archive records. Workbook source remains unchanged.`,
+        message: `School year ${schoolYear} has no archived records to delete.`,
       });
     }
 
@@ -10184,6 +10420,7 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     await ensureArchiveColumnsExist(pool);
+    await maybeSyncHistoricalWorkbookRecordsToDatabase(pool);
 
     void maybeRunArchiveMaintenance(pool).catch((error) => {
       console.warn(
@@ -10192,12 +10429,6 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
       );
     });
 
-    const workbookRecords = await loadHistoricalViolationRecordsFromWorkbook();
-    const importedWorkbookKeys = await getImportedWorkbookRecordKeys(
-      pool,
-      schoolYear,
-      semester,
-    );
     const violationCandidates = await getViolationCandidatesForInference(pool);
 
     // Query archived violations from the archive table for this semester/year, excluding unresolved
@@ -10209,7 +10440,11 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
         sva.violation_label,
         sva.reported_by,
         sva.remarks,
-        sva.signature_image,
+        CASE
+          WHEN sva.signature_image IS NOT NULL AND TRIM(sva.signature_image) <> ''
+          THEN TRUE
+          ELSE FALSE
+        END AS has_signature,
         sva.signature_updated_at,
         sva.semester,
         sva.school_year,
@@ -10252,25 +10487,62 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
       };
     });
 
-    const workbookViolations = workbookRecords
-      .filter(
-        (record) =>
-          normalizeSchoolYear(record.schoolYear) ===
-            normalizeSchoolYear(schoolYear) &&
-          normalizeSemester(record.semester) === normalizeSemester(semester) &&
-          !importedWorkbookKeys.has(buildWorkbookImportKey(record)),
-      )
-      .map((record, index) => mapWorkbookRecordToArchiveRow(record, index));
-
     return res.status(200).json({
       status: "ok",
-      violations: [...violations, ...workbookViolations],
+      violations,
     });
   } catch (error) {
     console.error("Error fetching archived violations:", error);
     return res.status(503).json({
       status: "error",
       message: `Unable to fetch archived violations (${error.message}).`,
+    });
+  }
+});
+
+app.get("/api/archive/violations/:id/signature", async (req, res) => {
+  const { id } = req.params;
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const result = await pool.query(
+      `
+      SELECT id, signature_image
+      FROM student_violation_archives
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [id],
+    );
+
+    const record = result.rows?.[0] || null;
+    if (!record) {
+      return res.status(404).json({
+        status: "error",
+        message: "Archive record not found.",
+      });
+    }
+
+    const signatureImage = String(record.signature_image || "").trim() || null;
+
+    return res.status(200).json({
+      status: "ok",
+      id: Number(record.id),
+      hasSignature: Boolean(signatureImage),
+      signatureImage,
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to fetch archive signature (${error.message}).`,
     });
   }
 });
@@ -11323,6 +11595,8 @@ async function ensureAuthDatabaseReady() {
   if (!authSyncPromise) {
     const seedAccounts = getSeedAccountsFromEnv();
     const isDev = process.env.NODE_ENV === "development";
+    const shouldUseLightweightServerlessReadiness =
+      isServerlessRuntime && !isDev && !shouldRunServerlessDbSync;
 
     const runFullSynchronization = async () => {
       // Run base table syncs sequentially for predictable migration ordering.
@@ -11340,6 +11614,16 @@ async function ensureAuthDatabaseReady() {
     };
 
     authSyncPromise = (async () => {
+      if (shouldUseLightweightServerlessReadiness) {
+        const schemaIsCurrent = await isAuthSchemaCurrent();
+        if (!schemaIsCurrent) {
+          throw new Error(
+            "Database schema is not initialized for serverless mode. Run the schema sync once before deploying, or temporarily enable SVMS_ENABLE_SERVERLESS_DB_SYNC=true.",
+          );
+        }
+        return;
+      }
+
       const schemaIsCurrent = await isAuthSchemaCurrent();
 
       if (schemaIsCurrent) {
@@ -11470,7 +11754,7 @@ if (!isServerlessRuntime) {
   });
 
   startServer();
-} else if (hasDbConfig()) {
+} else if (hasDbConfig() && shouldRunServerlessDbSync) {
   // Warm schema on cold starts without creating long-running loops.
   ensureAuthDatabaseReady()
     .then(() => ensureDefaultSuperAdminAccount())

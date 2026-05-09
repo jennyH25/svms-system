@@ -2775,7 +2775,12 @@ const UserManagement = () => {
             disabled={isSendingAlert}
             className="px-6 py-2.5"
           >
-            {isSendingAlert ? "Sending..." : "Send Alert"}
+            {isSendingAlert ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Sending</span>
+              </span>
+            ) : "Send Alert"}
           </Button>
         </ModalFooter>
       </Modal>

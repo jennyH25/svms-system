@@ -138,6 +138,7 @@ const StudentViolations = () => {
 	const [savingSignatureId, setSavingSignatureId] = useState(null);
 	const [showErrorModal, setShowErrorModal] = useState(false);
 	const [errorModalMessage, setErrorModalMessage] = useState("");
+	const studentSignaturePreviewNote = 'To update this signature, please contact your faculty secretary.';
 
 	const openSignaturePreview = useCallback((imageSrc) => {
 		if (!imageSrc) return;
@@ -147,6 +148,67 @@ const StudentViolations = () => {
 	const closeSignaturePreview = useCallback(() => {
 		setPreviewSignatureImage('');
 	}, []);
+
+	const fetchStudentViolationSignatureImage = useCallback(async (violationId) => {
+		if (!violationId) return '';
+
+		const response = await fetch(`/api/student-violations/${violationId}/signature`, {
+			headers: { ...getAuditHeaders() },
+		});
+		const data = await response.json().catch(() => ({}));
+
+		if (!response.ok || data.status !== 'ok') {
+			throw new Error(data.message || 'Unable to load signature.');
+		}
+
+		const signatureImage = String(data.signatureImage || '').trim();
+		if (signatureImage) {
+			setRecords((prev) =>
+				prev.map((record) =>
+					record.id === Number(violationId)
+						? { ...record, signature_image: signatureImage, has_signature: true }
+						: record,
+				),
+			);
+		}
+
+		return signatureImage;
+	}, []);
+
+	const resolveStudentSignatureImage = useCallback(async (record) => {
+		if (!record) return '';
+
+		const localSignature =
+			record.signature ||
+			record.signature_image ||
+			record.signatureImage ||
+			record.raw?.signature_image ||
+			'';
+		if (localSignature) {
+			return localSignature;
+		}
+
+		const hasSignature = Boolean(
+			record.hasSignature ||
+			record.has_signature ||
+			record.raw?.has_signature,
+		);
+		if (!hasSignature) {
+			return '';
+		}
+
+		return fetchStudentViolationSignatureImage(record.id || record.raw?.id);
+	}, [fetchStudentViolationSignatureImage]);
+
+	const handlePreviewSignature = useCallback(async (record) => {
+		try {
+			const signatureImage = await resolveStudentSignatureImage(record);
+			if (!signatureImage) return;
+			openSignaturePreview(signatureImage);
+		} catch (error) {
+			alert(error.message || 'Unable to load signature.');
+		}
+	}, [openSignaturePreview, resolveStudentSignatureImage]);
 
 	// Helper to merge updated record into state
 	const mergeRecord = useCallback((updated) => {
@@ -197,6 +259,42 @@ const StudentViolations = () => {
 		}
 	}, []);
 
+	const hydrateStudentRecordsWithSignatures = useCallback(async (recordsList) => {
+		const normalizedRecords = Array.isArray(recordsList) ? recordsList : [];
+		const rowsNeedingSignatures = normalizedRecords.filter(
+			(record) =>
+				Boolean(record?.has_signature) &&
+				!String(record?.signature_image || '').trim(),
+		);
+
+		if (rowsNeedingSignatures.length === 0) {
+			return normalizedRecords;
+		}
+
+		const signatures = await Promise.allSettled(
+			rowsNeedingSignatures.map((record) =>
+				fetchStudentViolationSignatureImage(record.id),
+			),
+		);
+
+		const signatureById = new Map();
+		signatures.forEach((result, index) => {
+			if (result.status === 'fulfilled' && result.value) {
+				signatureById.set(rowsNeedingSignatures[index].id, result.value);
+			}
+		});
+
+		return normalizedRecords.map((record) =>
+			signatureById.has(record.id)
+				? {
+						...record,
+						signature_image: signatureById.get(record.id),
+						has_signature: true,
+				  }
+				: record,
+		);
+	}, [fetchStudentViolationSignatureImage]);
+
 	useEffect(() => {
 		let isMounted = true;
 
@@ -225,7 +323,10 @@ const StudentViolations = () => {
 
 				if (isMounted) {
 					if (recordsResp.status === 'ok') {
-						setRecords(Array.isArray(recordsData.records) ? recordsData.records : []);
+						const hydratedRecords = await hydrateStudentRecordsWithSignatures(
+							Array.isArray(recordsData.records) ? recordsData.records : [],
+						);
+						setRecords(hydratedRecords);
 						setHasLoadedOnce(true);
 					} else {
 						setError(recordsResp.error || recordsData.message || 'Unable to refresh your violations.');
@@ -260,7 +361,7 @@ const StudentViolations = () => {
 			isMounted = false;
 			clearInterval(intervalId);
 		};
-	}, []);
+	}, [hydrateStudentRecordsWithSignatures]);
 
 	const formatDateForFileName = (rawDate) => {
 	const parsedDate = new Date(rawDate || new Date().toISOString());
@@ -396,9 +497,8 @@ const createDownload = useCallback(async (record, format) => {
 
 	if (format === 'excel') {
 	try {
-		const signatureSrc = record.signature || record.signature_image || record.signatureImage || '';
 		const [signatureImageData, { Workbook }, headerImage] = await Promise.all([
-			getSignatureImageData(signatureSrc),
+			resolveStudentSignatureImage(record).then((signatureSrc) => getSignatureImageData(signatureSrc)),
 			import('exceljs'),
 			resolveHeaderImage(),
 		]);
@@ -631,9 +731,8 @@ const createDownload = useCallback(async (record, format) => {
 }
 if (format === 'pdf') {
 	try {
-		const signatureSrc = record.signature || record.signature_image || record.signatureImage || '';
 		const [signatureImageData, { jsPDF }, headerImage] = await Promise.all([
-			getSignatureImageData(signatureSrc),
+			resolveStudentSignatureImage(record).then((signatureSrc) => getSignatureImageData(signatureSrc)),
 			import('jspdf'),
 			resolveHeaderImage(),
 		]);
@@ -798,9 +897,8 @@ if (format === 'pdf') {
 }
 if (format === 'jpeg') {
 	try {
-		const signatureSrc = record.signature || record.signature_image || record.signatureImage || '';
 		const [signatureImageData, headerImage] = await Promise.all([
-			getSignatureImageData(signatureSrc),
+			resolveStudentSignatureImage(record).then((signatureSrc) => getSignatureImageData(signatureSrc)),
 			resolveHeaderImage(),
 		]);
 
@@ -1072,8 +1170,8 @@ if (format === 'jpeg') {
 		if (format === 'excel') {
 			try {
 				// Process signature images for all records
-				const signaturePromises = records.map(record => 
-					getSignatureImageData(record.signature || record.signature_image || record.signatureImage || '')
+				const signaturePromises = records.map((record) =>
+					resolveStudentSignatureImage(record).then((signatureSrc) => getSignatureImageData(signatureSrc)),
 				);
 				const signatureImages = await Promise.all(signaturePromises);
 				
@@ -1454,8 +1552,8 @@ sheet.mergeCells('A1:H3');
 		} else if (format === 'pdf') {
 			try {
 				// Process signature images for all records
-				const signaturePromises = records.map(record => 
-					getSignatureImageData(record.signature || record.signature_image || record.signatureImage || '')
+				const signaturePromises = records.map((record) =>
+					resolveStudentSignatureImage(record).then((signatureSrc) => getSignatureImageData(signatureSrc)),
 				);
 				const signatureImages = await Promise.all(signaturePromises);
 				
@@ -1577,7 +1675,7 @@ sheet.mergeCells('A1:H3');
 		} else if (format === 'jpeg') {
 			try {
 				const signaturePromises = records.map((record) =>
-					getSignatureImageData(record.signature || record.signature_image || record.signatureImage || ''),
+					resolveStudentSignatureImage(record).then((signatureSrc) => getSignatureImageData(signatureSrc)),
 				);
 				const signatureImages = await Promise.all(signaturePromises);
 
@@ -1733,9 +1831,13 @@ sheet.mergeCells('A1:H3');
 
 	const handleAttachSignatureFromTable = useCallback((row) => {
 		if (!row?.id && !row?.raw?.id) return;
+		if (row?.hasSignature || row?.raw?.has_signature || row?.signature || row?.raw?.signature_image) {
+			void handlePreviewSignature(row);
+			return;
+		}
 		setSignatureTarget(row.raw || row);
 		setShowSignatureModal(true);
-	}, []);
+	}, [handlePreviewSignature]);
 
 	const handleSignatureSave = useCallback(async (signatureImage) => {
 		if (!signatureTarget?.id) return;
@@ -1747,7 +1849,7 @@ sheet.mergeCells('A1:H3');
 
 		try {
 			// Optimistic update: immediately update records with signature for instant feedback
-			mergeRecord({ id: id, signature_image: signatureImage });
+			mergeRecord({ id: id, signature_image: signatureImage, has_signature: true });
 			
 			// Show success modal immediately for instant feedback
 			setSignatureTarget(null);
@@ -1811,23 +1913,23 @@ sheet.mergeCells('A1:H3');
 									className="h-8 w-24 cursor-zoom-in object-contain rounded border border-gray-200 bg-white transition hover:opacity-90"
 									onClick={(e) => {
 										e.stopPropagation();
-										openSignaturePreview(_value);
+										handlePreviewSignature(row);
 									}}
 								/>
-								<Button
-									size="sm"
-									variant="secondary"
-									className="px-2 py-1 h-7 text-xs gap-1"
-									onClick={(e) => {
-										e.stopPropagation();
-										handleAttachSignatureFromTable(row);
-									}}
-									title="Update signature"
-									disabled={isSignatureSaving && savingSignatureId === row.id}
-								>
-									<PenTool className="w-3 h-3" />
-								</Button>
 							</>
+						) : row.hasSignature ? (
+							<Button
+								size="sm"
+								variant="secondary"
+								className="px-3 py-1 h-7 text-xs gap-1"
+								onClick={(e) => {
+									e.stopPropagation();
+									handlePreviewSignature(row);
+								}}
+								title="View signature"
+							>
+								View signature
+							</Button>
 						) : (
 								<Button
 									size="sm"
@@ -1900,7 +2002,7 @@ sheet.mergeCells('A1:H3');
 				),
 			},
 		],
-		[triggerDownloadModal, triggerDownloadAllModal, handleAttachSignatureFromTable],
+		[triggerDownloadModal, triggerDownloadAllModal, handleAttachSignatureFromTable, handlePreviewSignature, isSignatureSaving, savingSignatureId],
 	);
 
 	const tableData = useMemo(() => {
@@ -1940,6 +2042,7 @@ sheet.mergeCells('A1:H3');
 				reportedBy: row.reported_by || '-',
 				remarks: row.remarks || '-',
 				signature: row.signature_image || row.signatureImage || '',
+				hasSignature: Boolean(row.has_signature || row.signature_image || row.signatureImage),
 				status: isRecordCleared(row) ? 'Cleared' : 'Active',
 				clearedAtRaw: getClearedAtValue(row),
 				year_section: row.year_section || row.yearSection || '',
@@ -1948,9 +2051,23 @@ sheet.mergeCells('A1:H3');
 				student_last_name: row.student_last_name || row.last_name || row.surname || '',
 				student_first_name: row.student_first_name || row.first_name || row.given_name || '',
 				createdAtRaw: row.created_at || row.date || new Date().toISOString(),
+				raw: row,
 			};
 		});
 	}, [records, searchTerm, statusFilter]);
+
+	useEffect(() => {
+		const rowsNeedingSignatures = tableData.filter(
+			(row) => row.hasSignature && !row.signature,
+		);
+		if (rowsNeedingSignatures.length === 0) return;
+
+		void Promise.allSettled(
+			rowsNeedingSignatures.map((row) =>
+				fetchStudentViolationSignatureImage(row.id),
+			),
+		);
+	}, [tableData, fetchStudentViolationSignatureImage]);
 
 	return (
 		<AnimatedContent>
@@ -2130,6 +2247,7 @@ sheet.mergeCells('A1:H3');
 							onClose={closeSignaturePreview}
 							imageSrc={previewSignatureImage}
 							alt="Student signature preview"
+							note={studentSignaturePreviewNote}
 						/>
 
 						<Modal

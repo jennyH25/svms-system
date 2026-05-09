@@ -166,6 +166,64 @@ const StudentViolation = () => {
     setPreviewSignatureImage("");
   }, []);
 
+  const fetchViolationSignatureImage = useCallback(async (violationId) => {
+    if (!violationId) return "";
+
+    const response = await fetch(`/api/student-violations/${violationId}/signature`, {
+      headers: { ...getAuditHeaders() },
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || data.status !== "ok") {
+      throw new Error(data.message || "Unable to load signature.");
+    }
+
+    const signatureImage = String(data.signatureImage || "").trim();
+    if (signatureImage) {
+      mergeRecord({
+        id: Number(violationId),
+        signature_image: signatureImage,
+        has_signature: true,
+      });
+    }
+
+    return signatureImage;
+  }, []);
+
+  const resolveViolationSignatureImage = useCallback(async (row) => {
+    if (!row) return "";
+
+    const localSignature =
+      row.signatureImage ||
+      row.signature_image ||
+      row.raw?.signature_image ||
+      "";
+    if (localSignature) {
+      return localSignature;
+    }
+
+    const hasSignature = Boolean(
+      row.hasSignature ||
+      row.has_signature ||
+      row.raw?.has_signature,
+    );
+    if (!hasSignature) {
+      return "";
+    }
+
+    return fetchViolationSignatureImage(row.id || row.raw?.id);
+  }, [fetchViolationSignatureImage]);
+
+  const handlePreviewSignature = useCallback(async (row) => {
+    try {
+      const signatureImage = await resolveViolationSignatureImage(row);
+      if (!signatureImage) return;
+      openSignaturePreview(signatureImage);
+    } catch (error) {
+      alert(error.message || "Unable to load signature.");
+    }
+  }, [openSignaturePreview, resolveViolationSignatureImage]);
+
   const statusTabs = [
     { key: "pending", label: "Pending" },
     { key: "cleared", label: "Clear" },
@@ -332,6 +390,42 @@ const StudentViolation = () => {
     return { pred: Math.max(0, Math.round(forecast)), low: Math.max(0, lower), high: Math.max(upper, Math.round(forecast)) };
   };
 
+  const hydrateViolationRecordsWithSignatures = useCallback(async (recordsList) => {
+    const normalizedRecords = Array.isArray(recordsList) ? recordsList : [];
+    const rowsNeedingSignatures = normalizedRecords.filter(
+      (record) =>
+        Boolean(record?.has_signature) &&
+        !String(record?.signature_image || "").trim(),
+    );
+
+    if (rowsNeedingSignatures.length === 0) {
+      return normalizedRecords;
+    }
+
+    const signatures = await Promise.allSettled(
+      rowsNeedingSignatures.map((record) =>
+        fetchViolationSignatureImage(record.id),
+      ),
+    );
+
+    const signatureById = new Map();
+    signatures.forEach((result, index) => {
+      if (result.status === "fulfilled" && result.value) {
+        signatureById.set(rowsNeedingSignatures[index].id, result.value);
+      }
+    });
+
+    return normalizedRecords.map((record) =>
+      signatureById.has(record.id)
+        ? {
+            ...record,
+            signature_image: signatureById.get(record.id),
+            has_signature: true,
+          }
+        : record,
+    );
+  }, [fetchViolationSignatureImage]);
+
   const fetchStudentViolations = async ({ silent = false, forceRefresh = false } = {}) => {
     if (!silent) setIsLoading(true);
     try {
@@ -346,7 +440,10 @@ const StudentViolation = () => {
       if (result.status !== "ok") {
         throw new Error(result.error || data?.message || "Unable to load records.");
       }
-      setRecords(Array.isArray(data.records) ? data.records : []);
+      const hydratedRecords = await hydrateViolationRecordsWithSignatures(
+        Array.isArray(data.records) ? data.records : [],
+      );
+      setRecords(hydratedRecords);
     } catch (error) {
       if (!silent) alert(error.message || "Unable to load records.");
     } finally {
@@ -650,6 +747,30 @@ const StudentViolation = () => {
     setShowSignatureModal(true);
   };
 
+  const hydrateViolationRecordWithSignature = useCallback(async (record) => {
+    if (!record) return record;
+
+    const hasSignature = Boolean(record.has_signature || record.signature_image);
+    if (!hasSignature || record.signature_image) {
+      return record;
+    }
+
+    try {
+      const signatureImage = await fetchViolationSignatureImage(record.id);
+      if (!signatureImage) {
+        return record;
+      }
+
+      return {
+        ...record,
+        signature_image: signatureImage,
+        has_signature: true,
+      };
+    } catch (_error) {
+      return record;
+    }
+  }, [fetchViolationSignatureImage]);
+
   const handleAttachSignatureFromTable = (row) => {
     if (!row?.raw?.id) return;
     setSignatureTarget(row.raw);
@@ -715,9 +836,9 @@ const StudentViolation = () => {
 
     try {
       // Optimistic update: immediately update records and editTarget for instant feedback
-      mergeRecord({ id: signatureTarget.id, signature_image: signatureImage });
+      mergeRecord({ id: signatureTarget.id, signature_image: signatureImage, has_signature: true });
       setEditTarget((prev) =>
-        prev ? { ...prev, signature_image: signatureImage } : prev,
+        prev ? { ...prev, signature_image: signatureImage, has_signature: true } : prev,
       );
 
       // Show success modal immediately for instant feedback (don't wait for API)
@@ -1093,9 +1214,18 @@ const StudentViolation = () => {
               src={row.signatureImage}
               alt="Signature"
               className="h-8 w-24 cursor-zoom-in object-contain rounded border border-gray-200 bg-white transition hover:opacity-90"
-              onClick={() => openSignaturePreview(row.signatureImage)}
+              onClick={() => handlePreviewSignature(row)}
             />
           </div>
+        ) : row.hasSignature ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            className="px-3 py-1 h-7 text-xs gap-1"
+            onClick={() => handlePreviewSignature(row)}
+          >
+            View
+          </Button>
         ) : (
           <Button
             size="sm"
@@ -1148,6 +1278,7 @@ const StudentViolation = () => {
       reportedBy: row.reported_by || "-",
       remarks: normalizeRemarksText(row.remarks),
       signatureImage: row.signature_image || "",
+      hasSignature: Boolean(row.has_signature || row.signature_image),
       clearedAt: cleared
         ? `${cleared.toLocaleDateString()} ${cleared.toLocaleTimeString([], {
             hour: "2-digit",
@@ -1157,6 +1288,19 @@ const StudentViolation = () => {
       raw: row,
     };
   });
+
+  useEffect(() => {
+    const rowsNeedingSignatures = tableData.filter(
+      (row) => row.hasSignature && !row.signatureImage,
+    );
+    if (rowsNeedingSignatures.length === 0) return;
+
+    void Promise.allSettled(
+      rowsNeedingSignatures.map((row) =>
+        fetchViolationSignatureImage(row.id),
+      ),
+    );
+  }, [tableData, fetchViolationSignatureImage]);
 
   const exportRows = useMemo(
     () =>
@@ -1171,6 +1315,8 @@ const StudentViolation = () => {
         reportedBy: row.reportedBy || "-",
         remarks: normalizeRemarksText(row.remarks),
         signatureImage: row.signatureImage || "",
+        hasSignature: Boolean(row.hasSignature),
+        recordId: row.id,
         status: row.clearedAt ? `Cleared (${row.clearedAt})` : "Pending",
       })),
     [tableData],
@@ -1210,7 +1356,19 @@ const StudentViolation = () => {
     return { dataUrl, imageFormat };
   }, []);
 
+  const getExportRowsWithSignatures = useCallback(async () => (
+    Promise.all(
+      exportRows.map(async (row) => ({
+        ...row,
+        signatureImage:
+          row.signatureImage ||
+          (row.hasSignature ? await fetchViolationSignatureImage(row.recordId) : ""),
+      })),
+    )
+  ), [exportRows, fetchViolationSignatureImage]);
+
   const exportAsExcel = useCallback(async () => {
+    const resolvedExportRows = await getExportRowsWithSignatures();
     const [{ Workbook }, { dataUrl }] = await Promise.all([
       import("exceljs"),
       resolveHeaderImage(),
@@ -1306,7 +1464,7 @@ const StudentViolation = () => {
 
     // Data rows.
     const firstDataRow = headerRowNumber + 1;
-    for (const [index, row] of exportRows.entries()) {
+    for (const [index, row] of resolvedExportRows.entries()) {
       const excelRowNumber = firstDataRow + index;
       const excelRow = sheet.getRow(excelRowNumber);
       excelRow.values = [
@@ -1387,9 +1545,10 @@ const StudentViolation = () => {
     });
     const filename = `student_violations_${formatDateForFileName()}.xlsx`;
     downloadBlob(blob, filename);
-  }, [downloadBlob, exportRows, resolveHeaderImage]);
+  }, [downloadBlob, getExportRowsWithSignatures, resolveHeaderImage]);
 
   const exportAsPdf = useCallback(async () => {
+    const resolvedExportRows = await getExportRowsWithSignatures();
     const [{ jsPDF }, { default: autoTable }] = await Promise.all([
       import("jspdf"),
       import("jspdf-autotable"),
@@ -1435,7 +1594,7 @@ const StudentViolation = () => {
           "Status",
         ],
       ],
-      body: exportRows.map((row) => [
+      body: resolvedExportRows.map((row) => [
         row.no,
         row.date,
         row.studentName,
@@ -1482,7 +1641,7 @@ const StudentViolation = () => {
           return;
         }
 
-        const signatureImage = exportRows[data.row.index]?.signatureImage;
+        const signatureImage = resolvedExportRows[data.row.index]?.signatureImage;
         if (!signatureImage) {
           return;
         }
@@ -1500,7 +1659,7 @@ const StudentViolation = () => {
     });
 
     doc.save(`student_violations_${formatDateForFileName()}.pdf`);
-  }, [exportRows, resolveHeaderImage]);
+  }, [getExportRowsWithSignatures, resolveHeaderImage]);
 
   const handleConfirmExport = async () => {
     if (exportRows.length === 0) {
@@ -1529,8 +1688,9 @@ const StudentViolation = () => {
     {
       label: "Edit",
       icon: <Edit className="w-4 h-4" />,
-      onClick: (row) => {
-        setEditTarget(row.raw);
+      onClick: async (row) => {
+        const hydratedRecord = await hydrateViolationRecordWithSignature(row.raw);
+        setEditTarget(hydratedRecord);
         setShowEditModal(true);
       },
     },
@@ -2109,14 +2269,14 @@ const StudentViolation = () => {
           </Button>
           <Button
             type="button"
-            variant={confirmAction?.type === "delete" ? "danger" : "primary"}
+            variant={confirmAction?.type === "delete" || confirmAction?.type === "bulk-delete" ? "danger" : "primary"}
             onClick={handleConfirmAction}
             disabled={isConfirmingAction}
             className="px-6 py-2.5"
           >
             {isConfirmingAction
               ? "Processing..."
-              : confirmAction?.type === "delete"
+              : confirmAction?.type === "delete" || confirmAction?.type === "bulk-delete"
                 ? "Delete"
                 : "Clear"}
           </Button>

@@ -21,40 +21,44 @@ export const SettingsProvider = ({ children }) => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  const buildDefaultSettings = () => ({
+    displayName: 'Student Violation Management System',
+    logoPath: null,
+    theme: 'dark',
+    themeColor: '#000000',
+  })
+
   // Fetch settings from server
   const fetchSettings = async () => {
     try {
       setLoading(true)
       setError(null)
-      const response = await fetch('/api/settings')
-      const data = await response.json()
+      const [settingsResponse, logoResponse] = await Promise.all([
+        fetch('/api/settings'),
+        fetch('/api/settings/logo'),
+      ])
+      const [settingsData, logoData] = await Promise.all([
+        settingsResponse.json(),
+        logoResponse.json(),
+      ])
 
-      if (data.status === 'ok' && data.settings) {
+      if (settingsData.status === 'ok' && settingsData.settings) {
         setSettings({
-          displayName: data.settings.displayName,
-          logoPath: data.settings.logoPath,
-          theme: data.settings.theme,
-          themeColor: data.settings.themeColor,
+          displayName: settingsData.settings.displayName,
+          logoPath:
+            logoData.status === 'ok'
+              ? logoData.logoPath || null
+              : null,
+          theme: settingsData.settings.theme,
+          themeColor: settingsData.settings.themeColor,
         })
       } else {
-        // Use default settings if fetch fails
-        setSettings({
-          displayName: 'Student Violation Management System',
-          logoPath: null,
-          theme: 'dark',
-          themeColor: '#000000',
-        })
+        setSettings(buildDefaultSettings())
       }
     } catch (err) {
       console.error('Error fetching settings:', err)
       setError(err.message)
-      // Keep default settings on error
-      setSettings({
-        displayName: 'Student Violation Management System',
-        logoPath: null,
-        theme: 'dark',
-        themeColor: '#000000',
-      })
+      setSettings(buildDefaultSettings())
     } finally {
       setLoading(false)
     }
@@ -79,13 +83,14 @@ export const SettingsProvider = ({ children }) => {
       const data = await response.json()
 
       if (data.status === 'ok' && data.settings) {
+        const logoPath = settings.logoPath
         setSettings({
           displayName: data.settings.displayName,
-          logoPath: data.settings.logoPath,
+          logoPath,
           theme: data.settings.theme,
           themeColor: data.settings.themeColor,
         })
-        return { success: true, settings: data.settings }
+        return { success: true, settings: { ...data.settings, logoPath } }
       } else {
         return { success: false, error: data.message }
       }

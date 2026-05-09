@@ -11,6 +11,40 @@ function extractNameFromFullName(fullName) {
     return { firstName: "", middleInitial: "", lastName: "" };
   }
 
+  const commaMatch = normalized.match(/^([^,]+),\s*(.+)$/);
+  if (commaMatch) {
+    const lastName = String(commaMatch[1] || "").trim();
+    const remaining = String(commaMatch[2] || "").trim();
+    const remainingParts = remaining.split(/\s+/).filter(Boolean);
+
+    if (remainingParts.length === 0) {
+      return { firstName: "", middleInitial: "", lastName };
+    }
+
+    if (remainingParts.length === 1) {
+      return {
+        firstName: remainingParts[0],
+        middleInitial: "",
+        lastName,
+      };
+    }
+
+    const trailingToken = String(
+      remainingParts[remainingParts.length - 1] || "",
+    ).replace(/\./g, "");
+    const hasTrailingInitial = /^[a-z]$/i.test(trailingToken);
+
+    return {
+      firstName: hasTrailingInitial
+        ? remainingParts.slice(0, -1).join(" ")
+        : remaining,
+      middleInitial: hasTrailingInitial
+        ? trailingToken.charAt(0).toUpperCase()
+        : "",
+      lastName,
+    };
+  }
+
   const parts = normalized.split(/\s+/).filter(Boolean);
   if (parts.length === 1) {
     return { firstName: parts[0], middleInitial: "", lastName: "" };
@@ -133,7 +167,11 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
         setFormData({
           firstName: normalizedName.firstName || "",
           middleInitial: normalizedName.middleInitial || "",
-          lastName: nameParts.lastName || "",
+          lastName:
+            record.lastName ||
+            record.last_name ||
+            nameParts.lastName ||
+            "",
           schoolId: schoolId,
           yearSection: record.yearSection || "",
           violation: record.violation || "",

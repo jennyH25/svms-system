@@ -150,6 +150,10 @@ const EditViolationModal = ({
     });
   };
 
+  const hasAttachedSignature = Boolean(
+    record?.signature_image || record?.has_signature,
+  );
+
   return (
     <>
     <Modal
@@ -253,7 +257,7 @@ const EditViolationModal = ({
               disabled={isSaving || isUnclearing}
             >
               <PenTool className="w-4 h-4" />
-              {record?.signature_image ? "Update E-Signature" : "Attach E-Signature"}
+              {hasAttachedSignature ? "Update E-Signature" : "Attach E-Signature"}
             </Button>
 
             {record?.cleared_at ? (

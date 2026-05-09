@@ -14,6 +14,7 @@ import {
 import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import EditArchiveModal from "@/components/modals/EditArchiveModal";
+import SignaturePreviewModal from "@/components/modals/SignaturePreviewModal";
 import { getAuditHeaders } from "@/lib/auditHeaders";
 import { formatStudentDisplayName } from "@/lib/utils";
 import {
@@ -214,6 +215,21 @@ const fetchArchiveViolations = async (url) => {
   return [];
 };
 
+const fetchArchiveSignatureImage = async (violationId) => {
+  if (!violationId) return '';
+
+  const response = await fetch(`/api/archive/violations/${violationId}/signature`, {
+    headers: { ...getAuditHeaders() },
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || data.status !== 'ok') {
+    throw new Error(data.message || 'Unable to load archive signature.');
+  }
+
+  return String(data.signatureImage || '').trim();
+};
+
 const formatDisplayName = (firstName, lastName, fullName, middleInitial = "") => {
   return (
     formatStudentDisplayName({
@@ -305,7 +321,7 @@ const isImportedUserRecord = (user) => {
 };
 
 const getArchiveSignatureStatus = (record) => {
-  if (record?.signatureImage) return "SIGNED";
+  if (record?.signatureImage || record?.hasSignature) return "SIGNED";
   if (isImportedArchiveRecord(record)) return "SIGNED";
   return "No Signature";
 };
@@ -388,6 +404,26 @@ const Archives = () => {
   const [downloadAllFormat, setDownloadAllFormat] = useState('excel');
   const [showDownloadAlertModal, setShowDownloadAlertModal] = useState(false);
   const [downloadAlertMessage, setDownloadAlertMessage] = useState("");
+  const [previewSignatureImage, setPreviewSignatureImage] = useState("");
+
+  const mergeArchiveSignatureImage = useCallback((violationId, signatureImage) => {
+    if (!violationId || !signatureImage) return;
+
+    const applySignature = (items) =>
+      (Array.isArray(items) ? items : []).map((item) =>
+        item?.id === Number(violationId)
+          ? {
+              ...item,
+              signature_image: signatureImage,
+              has_signature: true,
+            }
+          : item,
+      );
+
+    setArchivedViolations((prev) => applySignature(prev));
+    setAllArchivedViolations((prev) => applySignature(prev));
+    setAllUnresolvedViolations((prev) => applySignature(prev));
+  }, []);
 
   const loadArchiveSchoolYears = useCallback(async () => {
     try {
@@ -1138,13 +1174,19 @@ const Archives = () => {
           return {
             id: violation.id,
             no: "",
+            student_name: violation.student_name || "",
+            first_name: violation.first_name || "",
+            middle_initial: violation.middle_initial || "",
+            last_name: violation.last_name || "",
+            firstName: violation.first_name || "",
+            middleInitial: violation.middle_initial || "",
+            lastName: violation.last_name || "",
             studentName: (
               <div>
                 <div className="font-semibold">{formattedStudentName}</div>
                 <div className="text-xs text-gray-400">{violation.school_id}</div>
               </div>
             ),
-            middle_initial: violation.middle_initial || "",
             yearSection: combinedYearSection,
             program: violation.program || '',
             violation: violation.violation_label,
@@ -1155,10 +1197,12 @@ const Archives = () => {
             remarks: violation.remarks || "-",
             signature: getArchiveSignatureStatus({
               signatureImage: violation.signature_image,
+              hasSignature: Boolean(violation.has_signature || violation.signature_image),
               remarks: violation.remarks,
               sourceType: violation.sourceType || (violation.isHistoricalWorkbook ? "workbook" : "archive"),
             }),
             signatureImage: violation.signature_image,
+            hasSignature: Boolean(violation.has_signature || violation.signature_image),
             date: formatDate(getArchiveViolationDisplayDate(violation)),
             archivedAt: violation.archived_at,
             originalCreatedAt: getArchiveViolationDisplayDate(violation),
@@ -1261,13 +1305,19 @@ const Archives = () => {
           allData.push({
             id: violation.id,
             no: "",
+            student_name: violation.student_name || "",
+            first_name: violation.first_name || "",
+            middle_initial: violation.middle_initial || "",
+            last_name: violation.last_name || "",
+            firstName: violation.first_name || "",
+            middleInitial: violation.middle_initial || "",
+            lastName: violation.last_name || "",
             studentName: (
               <div>
                 <div className="font-semibold">{formattedStudentName}</div>
                 <div className="text-xs text-gray-400">{violation.school_id}</div>
               </div>
             ),
-            middle_initial: violation.middle_initial || "",
             yearSection: formatProgramYearSection(violation.program, violation.year_section),
             program: violation.program || '',
             violation: violation.violation_label,
@@ -1278,10 +1328,12 @@ const Archives = () => {
             remarks: violation.remarks || "-",
             signature: getArchiveSignatureStatus({
               signatureImage: violation.signature_image,
+              hasSignature: Boolean(violation.has_signature || violation.signature_image),
               remarks: violation.remarks,
               sourceType: violation.sourceType || (violation.isHistoricalWorkbook ? "workbook" : "archive"),
             }),
             signatureImage: violation.signature_image,
+            hasSignature: Boolean(violation.has_signature || violation.signature_image),
             date: formatDate(getArchiveViolationDisplayDate(violation)),
             archivedAt: violation.archived_at,
             originalCreatedAt: getArchiveViolationDisplayDate(violation),
@@ -1318,13 +1370,19 @@ const Archives = () => {
           allData.push({
             id: violation.id,
             no: "",
+            student_name: violation.student_name || "",
+            first_name: violation.first_name || "",
+            middle_initial: violation.middle_initial || "",
+            last_name: violation.last_name || "",
+            firstName: violation.first_name || "",
+            middleInitial: violation.middle_initial || "",
+            lastName: violation.last_name || "",
             studentName: (
               <div>
                 <div className="font-semibold">{formattedStudentName}</div>
                 <div className="text-xs text-gray-400">{violation.school_id}</div>
               </div>
             ),
-            middle_initial: violation.middle_initial || "",
             yearSection: formatProgramYearSection(violation.program, violation.year_section),
             program: violation.program || '',
             violation: violation.violation_label,
@@ -1335,10 +1393,12 @@ const Archives = () => {
             remarks: violation.remarks || "-",
             signature: getArchiveSignatureStatus({
               signatureImage: violation.signature_image,
+              hasSignature: Boolean(violation.has_signature || violation.signature_image),
               remarks: violation.remarks,
               sourceType: violation.sourceType || (violation.isHistoricalWorkbook ? "workbook" : "archive"),
             }),
             signatureImage: violation.signature_image,
+            hasSignature: Boolean(violation.has_signature || violation.signature_image),
             date: formatDate(getArchiveViolationDisplayDate(violation)),
             archivedAt: violation.archived_at,
             originalCreatedAt: getArchiveViolationDisplayDate(violation),
@@ -1479,6 +1539,25 @@ const Archives = () => {
       return results;
     }
   }, [displayData, searchQuery, filterType, filterYear, sortOrder, isGlobalSearch, folders]);
+
+  useEffect(() => {
+    const rowsNeedingSignatures = filteredData.filter(
+      (row) =>
+        row.recordType === "violation" &&
+        row.hasSignature &&
+        !row.signatureImage,
+    );
+    if (rowsNeedingSignatures.length === 0) return;
+
+    void Promise.allSettled(
+      rowsNeedingSignatures.map(async (row) => {
+        const signatureImage = await fetchArchiveSignatureImage(row.id);
+        if (signatureImage) {
+          mergeArchiveSignatureImage(row.id, signatureImage);
+        }
+      }),
+    );
+  }, [filteredData, mergeArchiveSignatureImage]);
 
   const tableRowClassName = (row) => {
     if (isGlobalSearch) {
@@ -1842,11 +1921,15 @@ const Archives = () => {
                   <img
                     src={row.signatureImage}
                     alt="Signature"
-                  className="h-8 w-24 object-contain bg-white rounded border border-gray-200"
-                />
-              </div>
+                    className="h-8 w-24 cursor-zoom-in object-contain bg-white rounded border border-gray-200"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setPreviewSignatureImage(row.signatureImage);
+                    }}
+                  />
+                </div>
               ) : row.signature === "SIGNED" ? (
-                <span className="font-semibold text-green-300">SIGNED</span>
+                <span className="font-semibold text-green-300">Loading...</span>
               ) : (
                 <Button
                   size="sm"
@@ -1956,11 +2039,15 @@ const Archives = () => {
                 <img
                   src={row.signatureImage}
                   alt="Signature"
-                  className="h-8 w-24 object-contain bg-white rounded border border-gray-200"
+                  className="h-8 w-24 cursor-zoom-in object-contain bg-white rounded border border-gray-200"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setPreviewSignatureImage(row.signatureImage);
+                  }}
                 />
               </div>
             ) : row.signature === "SIGNED" ? (
-              <span className="font-semibold text-green-300">SIGNED</span>
+              <span className="font-semibold text-green-300">Loading...</span>
             ) : (
               <Button
                 size="sm"
@@ -2405,11 +2492,16 @@ const Archives = () => {
 
     const signatureImageDataByRow = await Promise.all(
       filteredData.map(async (item) => {
-        if (!item.signatureImage) return null;
-        if (typeof item.signatureImage === 'string' && item.signatureImage.startsWith('data:')) {
-          return item.signatureImage;
+        const localSignature = item.signatureImage || '';
+        if (typeof localSignature === 'string' && localSignature.startsWith('data:')) {
+          return localSignature;
         }
-        return await getSignatureImageData(item.signatureImage);
+        if (localSignature) {
+          return await getSignatureImageData(localSignature);
+        }
+        if (!item.hasSignature) return null;
+        const fetchedSignature = await fetchArchiveSignatureImage(item.id);
+        return fetchedSignature ? await getSignatureImageData(fetchedSignature) : null;
       }),
     );
 
@@ -3339,6 +3431,13 @@ const Archives = () => {
         title="Export unavailable"
         message={downloadAlertMessage}
         confirmLabel="Okay"
+      />
+
+      <SignaturePreviewModal
+        isOpen={Boolean(previewSignatureImage)}
+        onClose={() => setPreviewSignatureImage("")}
+        imageSrc={previewSignatureImage}
+        alt="Archived signature preview"
       />
 
       {/* Edit Modal */}

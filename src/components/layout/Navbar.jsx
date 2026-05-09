@@ -45,19 +45,9 @@ const Navbar = ({ onRequestLogout }) => {
 
   const computeDropdownNotifications = (notifications) => {
     if (!notifications || notifications.length === 0) return []
-
-    if (notifications.length <= 10) {
-      return notifications
-    }
-
     const unread = notifications
       .filter((n) => !n.read_at)
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-
-    if (unread.length <= 6) {
-      return unread.slice(0, 6)
-    }
-
     return unread.slice(0, 10)
   }
 
@@ -320,7 +310,7 @@ const Navbar = ({ onRequestLogout }) => {
                 </div>
                 <div className="max-h-80 overflow-y-auto overflow-x-hidden px-4 py-3 space-y-2">
                   {dropdownNotifications.length === 0 ? (
-                    <p className="text-gray-400 text-sm">No notifications</p>
+                    <p className="text-gray-400 text-sm">No unread notifications</p>
                   ) : (
                     dropdownNotifications.map((note) => (
                       <div

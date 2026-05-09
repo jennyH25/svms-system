@@ -6,6 +6,7 @@ const SignaturePreviewModal = ({
   onClose,
   imageSrc,
   alt = "Signature preview",
+  note = "",
 }) => {
   return (
     <Modal
@@ -15,16 +16,21 @@ const SignaturePreviewModal = ({
       showCloseButton
       className="max-w-4xl"
     >
-      <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-white/10 bg-black/20 p-4 sm:p-6">
-        {imageSrc ? (
-          <img
-            src={imageSrc}
-            alt={alt}
-            className="max-h-[70vh] w-auto max-w-full rounded-xl bg-white object-contain shadow-2xl"
-          />
-        ) : (
-          <p className="text-sm text-gray-300">No signature image available.</p>
-        )}
+      <div className="space-y-4">
+        <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-white/10 bg-black/20 p-4 sm:p-6">
+          {imageSrc ? (
+            <img
+              src={imageSrc}
+              alt={alt}
+              className="max-h-[70vh] w-auto max-w-full rounded-xl bg-white object-contain shadow-2xl"
+            />
+          ) : (
+            <p className="text-sm text-gray-300">No signature image available.</p>
+          )}
+        </div>
+        {note ? (
+          <p className="text-center text-sm text-gray-300">{note}</p>
+        ) : null}
       </div>
     </Modal>
   );
