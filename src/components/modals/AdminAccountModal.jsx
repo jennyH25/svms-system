@@ -22,10 +22,12 @@ const AdminAccountModal = ({
   initialData = null,
 }) => {
   const [formData, setFormData] = useState(DEFAULT_FORM);
+  const [emailError, setEmailError] = useState("");
 
   useEffect(() => {
     if (!isOpen) {
       setFormData(DEFAULT_FORM);
+      setEmailError("");
       return;
     }
 
@@ -40,15 +42,41 @@ const AdminAccountModal = ({
             ? initialData.isActive
             : true,
       });
+      setEmailError("");
       return;
     }
 
     setFormData(DEFAULT_FORM);
+    setEmailError("");
   }, [initialData, isOpen]);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
+    if (name === "email" && emailError) {
+      setEmailError("");
+    }
     setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const validateEmail = (value) => {
+    const normalizedEmail = value.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      return "Please enter an email address.";
+    }
+
+    if (!normalizedEmail.includes("@")) {
+      return "Please enter a valid email address.";
+    }
+
+    if (
+      !normalizedEmail.endsWith("@gmail.com") &&
+      !normalizedEmail.endsWith("@plpasig.edu.ph")
+    ) {
+      return "Email must end with @gmail.com or @plpasig.edu.ph.";
+    }
+
+    return "";
   };
 
   const handleSubmit = async (event) => {
@@ -57,6 +85,13 @@ const AdminAccountModal = ({
       return;
     }
 
+    const errorMessage = validateEmail(formData.email);
+    if (errorMessage) {
+      setEmailError(errorMessage);
+      return;
+    }
+
+    setEmailError("");
     const saved = await onSave?.(formData);
     if (saved) {
       onClose?.();
@@ -111,14 +146,22 @@ const AdminAccountModal = ({
             <option value="admin">Admin</option>
             <option value="super_admin">Super Admin</option>
           </SelectField>
-          <GlassInput
-            label={<span className="text-sm font-medium text-white">Email</span>}
-            name="email"
-            type="email"
-            value={formData.email}
-            onChange={handleChange}
-            required
-          />
+          <div className="space-y-2">
+            <GlassInput
+              label={<span className="text-sm font-medium text-white">Email</span>}
+              name="email"
+              type="email"
+              value={formData.email}
+              onChange={handleChange}
+              required
+              aria-describedby="admin-account-email-error"
+            />
+            {emailError && (
+              <p id="admin-account-email-error" className="text-sm text-red-300">
+                {emailError}
+              </p>
+            )}
+          </div>
         </div>
 
         {isEditMode && (
