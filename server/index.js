@@ -2929,6 +2929,14 @@ async function logAuditEvent(
   }
 }
 
+function runBackgroundTask(task, label = "background task") {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.warn(`${label} failed: ${error.message}`);
+    });
+}
+
 async function purgeExpiredAuditLogs() {
   if (!hasDbConfig()) {
     return;
@@ -8460,49 +8468,50 @@ app.post("/api/violations", async (req, res) => {
 
     const parent = result.rows[0];
 
-    // if children array provided, insert each as a child of the newly created parent
+    // If child rows are provided, insert them in parallel so the request
+    // only waits on the actual record creation work.
     if (Array.isArray(children) && children.length > 0) {
-      for (const childName of children) {
-        await pool.query(
-          `
-          INSERT INTO violations (category, degree, name, parent_id)
-          VALUES ($1, $2, $3, $4)
-          ON CONFLICT (category, degree, name) DO NOTHING
-          `,
-          [category, degree, childName, parent.id],
-        );
-      }
+      await Promise.all(
+        children.map((childName) =>
+          pool.query(
+            `
+            INSERT INTO violations (category, degree, name, parent_id)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (category, degree, name) DO NOTHING
+            `,
+            [category, degree, childName, parent.id],
+          ),
+        ),
+      );
     }
 
-    await logAuditEvent(req, {
-      action: "CREATE_VIOLATION",
-      targetType: "violation",
-      targetId: parent.id,
-      details: `Created violation ${parent.name}.`,
-      metadata: {
-        category,
-        degree,
-        childCount: Array.isArray(children) ? children.length : 0,
-      },
-    });
-
-    // create notifications for all students informing them about the new violation
-    try {
-      const notifTitle = "New violation added";
-      const notifDesc = `A new violation \"${parent.name}\" (${parent.category} / ${parent.degree}) has been added.`;
-      await insertNotificationForAllStudents(pool, {
-        title: notifTitle,
-        description: notifDesc,
-        metadata: { type: "violation_added", violationId: parent.id },
-      });
-    } catch (notifErr) {
-      console.warn("Failed to insert violation notifications", notifErr);
-    }
-
-    return res.status(201).json({
+    res.status(201).json({
       status: "ok",
       violation: parent,
     });
+
+    runBackgroundTask(async () => {
+      await Promise.allSettled([
+        logAuditEvent(req, {
+          action: "CREATE_VIOLATION",
+          targetType: "violation",
+          targetId: parent.id,
+          details: `Created violation ${parent.name}.`,
+          metadata: {
+            category,
+            degree,
+            childCount: Array.isArray(children) ? children.length : 0,
+          },
+        }),
+        insertNotificationForAllStudents(pool, {
+          title: "New violation added",
+          description: `A new violation "${parent.name}" (${parent.category} / ${parent.degree}) has been added.`,
+          metadata: { type: "violation_added", violationId: parent.id },
+        }),
+      ]);
+    }, "Create violation follow-up");
+
+    return;
   } catch (error) {
     return res.status(503).json({
       status: "error",
@@ -8654,31 +8663,29 @@ app.delete("/api/violations/:id", async (req, res) => {
       });
     }
 
-    await logAuditEvent(req, {
-      action: "DELETE_VIOLATION",
-      targetType: "violation",
-      targetId: id,
-      details: `Deleted violation ${violation.name} (ID: ${id}).`,
-    });
+    res.status(200).json({ status: "ok" });
 
-    // Create a student notification for violation deletion
-    try {
-      const notifTitle = "Violation deleted";
-      const notifDesc = `A violation has been removed: "${violation.name}" (${violation.category} / ${violation.degree}).`;
-      await insertNotificationForAllStudents(pool, {
-        title: notifTitle,
-        description: notifDesc,
-        metadata: {
-          type: "violation_deleted",
-          violationId: id,
-          violationName: violation.name,
-        },
-      });
-    } catch (notifErr) {
-      console.warn("Failed to insert violation delete notifications", notifErr);
-    }
+    runBackgroundTask(async () => {
+      await Promise.allSettled([
+        logAuditEvent(req, {
+          action: "DELETE_VIOLATION",
+          targetType: "violation",
+          targetId: id,
+          details: `Deleted violation ${violation.name} (ID: ${id}).`,
+        }),
+        insertNotificationForAllStudents(pool, {
+          title: "Violation deleted",
+          description: `A violation has been removed: "${violation.name}" (${violation.category} / ${violation.degree}).`,
+          metadata: {
+            type: "violation_deleted",
+            violationId: id,
+            violationName: violation.name,
+          },
+        }),
+      ]);
+    }, "Delete violation follow-up");
 
-    return res.status(200).json({ status: "ok" });
+    return;
   } catch (error) {
     return res.status(503).json({
       status: "error",

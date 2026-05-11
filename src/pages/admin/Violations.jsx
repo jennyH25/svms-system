@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import Button from '@/components/ui/Button'
 import Modal, { ModalFooter } from '@/components/ui/Modal'
 import SearchBar from '@/components/ui/SearchBar'
@@ -10,7 +10,32 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
 import { getAuditHeaders } from '@/lib/auditHeaders'
-import { Plus, Edit, Trash2, ChevronDown, ChevronRight, MoreVertical } from 'lucide-react'
+import { Plus, Edit, Trash2, ChevronDown, ChevronRight, MoreVertical, CheckCircle } from 'lucide-react'
+
+const DEGREE_ORDER = ['First Degree', 'Second Degree', 'Third Degree', 'Fourth Degree', 'Fifth Degree', 'Sixth Degree', 'Seventh Degree']
+
+const sortViolations = (violations = []) => {
+  return [...violations].sort((a, b) => {
+    const da = DEGREE_ORDER.indexOf(a.degree)
+    const db = DEGREE_ORDER.indexOf(b.degree)
+    if (da !== db) return da - db
+    if (a.category !== b.category) return String(a.category || '').localeCompare(String(b.category || ''))
+    const timeA = new Date(a.created_at).getTime()
+    const timeB = new Date(b.created_at).getTime()
+    if (timeA !== timeB) return timeA - timeB
+    return Number(a.id) - Number(b.id)
+  })
+}
+
+const getCategoryFilterForDegree = (degree) =>
+  ['First Degree', 'Second Degree'].includes(degree) ? 'minor' : 'major'
+
+const Spinner = ({ className = 'w-4 h-4' }) => (
+  <span
+    className={`${className} inline-block rounded-full border-2 border-current border-t-transparent animate-spin`}
+    aria-hidden="true"
+  />
+)
 
 const Violations = () => {
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -43,36 +68,60 @@ const Violations = () => {
   const [violationsData, setViolationsData] = useState([])
   const [loading, setLoading] = useState(true)
   const [expandedRows, setExpandedRows] = useState(new Set())
+  const [isAddingViolation, setIsAddingViolation] = useState(false)
+  const [isDeletingViolation, setIsDeletingViolation] = useState(false)
+  const [successModal, setSuccessModal] = useState({
+    isOpen: false,
+    type: 'success',
+    title: '',
+    message: '',
+  })
+  const [highlightedViolationId, setHighlightedViolationId] = useState(null)
+  const highlightTimeoutRef = useRef(null)
   
   useEffect(() => {
     fetchViolations()
   }, [])
 
-  const fetchViolations = async () => {
+  const fetchViolations = async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+    }
     try {
-      const response = await fetch('/api/violations')
+      const response = await fetch(`/api/violations?t=${Date.now()}`)
       const data = await response.json()
       if (data.status === 'ok') {
-        // ensure client-side ordering in case backend isn\'t restarted
-        const degreeOrder = ['First Degree','Second Degree','Third Degree','Fourth Degree','Fifth Degree','Sixth Degree','Seventh Degree'];
-        const sorted = [...data.violations].sort((a, b) => {
-          const da = degreeOrder.indexOf(a.degree);
-          const db = degreeOrder.indexOf(b.degree);
-          if (da !== db) return da - db;
-          if (a.category !== b.category) return a.category.localeCompare(b.category);
-          const timeA = new Date(a.created_at).getTime();
-          const timeB = new Date(b.created_at).getTime();
-          if (timeA !== timeB) return timeA - timeB;
-          return a.id - b.id;
-        });
-        setViolationsData(sorted)
+        setViolationsData(sortViolations(data.violations || []))
       }
     } catch (error) {
       console.error('Error fetching violations:', error)
     } finally {
-      setLoading(false)
+      if (!silent) {
+        setLoading(false)
+      }
     }
   }
+
+  useEffect(() => {
+    if (!highlightedViolationId) return
+
+    const rowElement = document.getElementById(`violation-row-${highlightedViolationId}`)
+    rowElement?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current)
+    }
+
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedViolationId(null)
+    }, 4500)
+
+    return () => {
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current)
+      }
+    }
+  }, [highlightedViolationId])
 
   // degrees used for filtering the table
   const getAvailableDegrees = () => {
@@ -220,11 +269,12 @@ const Violations = () => {
   }
 
   const confirmDelete = async () => {
-    if (!deleteTarget) {
+    if (!deleteTarget || isDeletingViolation) {
       setIsDeleteModalOpen(false)
       return
     }
 
+    setIsDeletingViolation(true)
     try {
       const response = await fetch(`/api/violations/${deleteTarget.id}`, {
         method: 'DELETE',
@@ -232,15 +282,44 @@ const Violations = () => {
           ...getAuditHeaders(),
         },
       })
-      if (response.ok) {
-        fetchViolations()
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to delete violation.')
       }
+      setViolationsData((prev) =>
+        prev.filter(
+          (item) => Number(item.id) !== Number(deleteTarget.id) && Number(item.parent_id) !== Number(deleteTarget.id),
+        ),
+      )
+      setExpandedRows((prev) => {
+        const next = new Set(prev)
+        next.delete(deleteTarget.id)
+        return next
+      })
+      if (Number(highlightedViolationId) === Number(deleteTarget.id)) {
+        setHighlightedViolationId(null)
+      }
+      setSuccessModal({
+        isOpen: true,
+        type: 'success',
+        title: 'Violation Deleted',
+        message: `"${deleteTarget.name}" was deleted successfully.`,
+      })
+      fetchViolations({ silent: true })
     } catch (error) {
       console.error('Error deleting violation:', error)
+      setFormError('')
+      setSuccessModal({
+        isOpen: true,
+        type: 'error',
+        title: 'Delete Failed',
+        message: error.message || 'Unable to delete violation.',
+      })
+    } finally {
+      setIsDeletingViolation(false)
+      setIsDeleteModalOpen(false)
+      setDeleteTarget(null)
     }
-
-    setIsDeleteModalOpen(false)
-    setDeleteTarget(null)
   }
 
   const actions = [
@@ -289,6 +368,7 @@ const Violations = () => {
   }
 
   const handleAddViolation = async () => {
+    if (isAddingViolation) return
     if (!validateAddForm()) {
       setFormError('Please answer all the required fields.')
       return
@@ -297,9 +377,13 @@ const Violations = () => {
 
     const payload = {
       ...formData,
+      category: String(formData.category || '').trim(),
+      degree: String(formData.degree || '').trim(),
+      name: String(formData.name || '').trim(),
       children: (formData.children || []).map((c) => c.trim()).filter(Boolean),
     }
 
+    setIsAddingViolation(true)
     try {
       const response = await fetch('/api/violations', {
         method: 'POST',
@@ -309,17 +393,50 @@ const Violations = () => {
         },
         body: JSON.stringify(payload)
       })
-      if (response.ok) {
-        setFormData({ category: '', degree: '', name: '', parentId: null, children: [] })
-        setIsModalOpen(false)
-        fetchViolations()
-      } else {
-        const data = await response.json();
-        setFormError(data.message || 'Failed to add violation.');
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setFormError(data.message || 'Failed to add violation.')
+        return
       }
+
+      const createdParent = data?.violation
+      if (!createdParent?.id) {
+        throw new Error('Violation was saved, but the response was incomplete.')
+      }
+
+      const createdAt = createdParent.created_at || new Date().toISOString()
+      const tempChildren = payload.children.map((childName, index) => ({
+        id: -1 * (Date.now() + index + 1),
+        category: createdParent.category,
+        degree: createdParent.degree,
+        name: childName,
+        parent_id: createdParent.id,
+        created_at: createdAt,
+        updated_at: createdParent.updated_at || createdAt,
+      }))
+
+      setViolationsData((prev) => sortViolations([...prev, { ...createdParent, created_at: createdAt }, ...tempChildren]))
+      setCategoryFilter(getCategoryFilterForDegree(createdParent.degree))
+      setSpecificDegree('')
+      if (tempChildren.length > 0) {
+        setExpandedRows((prev) => new Set(prev).add(createdParent.id))
+      }
+      setHighlightedViolationId(createdParent.id)
+      setFormData({ category: '', degree: '', name: '', parentId: null, children: [] })
+      setFormErrors({ category: '', degree: '', name: '' })
+      setIsModalOpen(false)
+      setSuccessModal({
+        isOpen: true,
+        type: 'success',
+        title: 'Violation Added',
+        message: `"${createdParent.name}" was added successfully.`,
+      })
+      fetchViolations({ silent: true })
     } catch (error) {
       console.error('Error adding violation:', error)
-      setFormError('Network error while adding violation.');
+      setFormError(error.message || 'Network error while adding violation.')
+    } finally {
+      setIsAddingViolation(false)
     }
   }
 
@@ -515,7 +632,12 @@ const Violations = () => {
                 {filteredData.map((row) => (
                   <React.Fragment key={row.id}>
                     <tr
-                      className={`border-b border-gray-100 hover:bg-gray-100 transition-colors text-[#1a1a1a] ${row.children && row.children.length > 0 ? "cursor-pointer" : ""}`}
+                      id={`violation-row-${row.id}`}
+                      className={`border-b border-gray-100 transition-all text-[#1a1a1a] ${
+                        Number(highlightedViolationId) === Number(row.id)
+                          ? 'bg-[rgba(85,105,135,0.10)] outline outline-1 outline-[rgba(85,105,135,0.45)] outline-offset-[-1px] shadow-[inset_0_0_0_1px_rgba(85,105,135,0.12)]'
+                          : 'hover:bg-gray-100'
+                      } ${row.children && row.children.length > 0 ? "cursor-pointer" : ""}`}
                       onClick={() => handleViolationRowClick(row)}
                     >
                       {columns.map((column) => (
@@ -588,6 +710,7 @@ const Violations = () => {
       <Modal
         isOpen={isModalOpen}
         onClose={() => {
+          if (isAddingViolation) return
           setIsModalOpen(false);
           setFormError('');
         }}
@@ -720,11 +843,18 @@ const Violations = () => {
         </div>
 
         <ModalFooter>
-          <Button variant="secondary" onClick={() => setIsModalOpen(false)}>
+          <Button variant="secondary" onClick={() => setIsModalOpen(false)} disabled={isAddingViolation}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={handleAddViolation}>
-            Add Violation
+          <Button variant="primary" onClick={handleAddViolation} disabled={isAddingViolation}>
+            {isAddingViolation ? (
+              <>
+                <Spinner />
+                Adding...
+              </>
+            ) : (
+              'Add Violation'
+            )}
           </Button>
         </ModalFooter>
       </Modal>
@@ -892,17 +1022,57 @@ const Violations = () => {
       {/* Delete Confirmation Modal */}
       <Modal
         isOpen={isDeleteModalOpen}
-        onClose={() => setIsDeleteModalOpen(false)}
+        onClose={() => {
+          if (isDeletingViolation) return
+          setIsDeleteModalOpen(false)
+        }}
         title="Confirm Delete"
         size="sm"
       >
         <p>Are you sure you want to delete this violation?</p>
         <ModalFooter>
-          <Button variant="secondary" onClick={() => setIsDeleteModalOpen(false)}>
+          <Button variant="secondary" onClick={() => setIsDeleteModalOpen(false)} disabled={isDeletingViolation}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={confirmDelete}>
-            Delete
+          <Button variant="danger" onClick={confirmDelete} disabled={isDeletingViolation}>
+            {isDeletingViolation ? (
+              <>
+                <Spinner />
+                Deleting...
+              </>
+            ) : (
+              'Delete'
+            )}
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        isOpen={successModal.isOpen}
+        onClose={() => setSuccessModal({ isOpen: false, type: 'success', title: '', message: '' })}
+        title={
+          <span className="flex items-center gap-2 font-black font-inter">
+            <CheckCircle className={`w-5 h-5 ${successModal.type === 'error' ? 'text-red-400' : 'text-green-400'}`} />
+            {successModal.title || 'Success'}
+          </span>
+        }
+        size="sm"
+      >
+        <div className={`rounded-lg px-4 py-3 mb-4 ${
+          successModal.type === 'error'
+            ? 'border border-red-400/25 bg-red-500/10'
+            : 'border border-green-400/25 bg-green-500/10'
+        }`}>
+          <p className={`text-sm font-medium ${successModal.type === 'error' ? 'text-red-300' : 'text-green-300'}`}>
+            {successModal.message}
+          </p>
+        </div>
+        <ModalFooter>
+          <Button
+            variant="primary"
+            onClick={() => setSuccessModal({ isOpen: false, type: 'success', title: '', message: '' })}
+          >
+            OK
           </Button>
         </ModalFooter>
       </Modal>
