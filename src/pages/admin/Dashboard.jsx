@@ -203,11 +203,26 @@ const Dashboard = () => {
       .map((semester) => formatSemesterLabel(semester))
       .filter(Boolean);
 
+    if (selectedSchoolYear && selectedSchoolYear === currentSchoolYear) {
+      const currentSemesterLabel = formatSemesterLabel(currentSemester);
+      if (currentSemesterLabel) {
+        labels.push(currentSemesterLabel);
+      }
+    }
+
     const fallbackLabels = ["1st Sem", "2nd Sem", "Summer"];
     return Array.from(new Set(labels.length > 0 ? labels : fallbackLabels)).sort(
       (left, right) => (semesterOrder[left] || 99) - (semesterOrder[right] || 99),
     );
-  }, [availableSemestersBySchoolYear, selectedSchoolYear]);
+  }, [availableSemestersBySchoolYear, selectedSchoolYear, currentSchoolYear, currentSemester]);
+
+  const availableSchoolYearOptions = useMemo(() => {
+    const options = Array.isArray(availableSchoolYears) ? [...availableSchoolYears] : [];
+    if (currentSchoolYear) {
+      options.push(currentSchoolYear);
+    }
+    return Array.from(new Set(options));
+  }, [availableSchoolYears, currentSchoolYear]);
 
   const rankingExportRows = useMemo(
     () =>
@@ -1148,6 +1163,236 @@ const Dashboard = () => {
     }
   };
 
+  const fetchDashboardViolationData = useCallback(async ({
+    forceRefresh = false,
+    silent = false,
+  } = {}) => {
+    if (!silent) {
+      setIsLoadingMetrics(true);
+      setIsLoadingRanking(true);
+    }
+
+    const degreeRank = {
+      "First Degree": 1,
+      "Second Degree": 2,
+      "Third Degree": 3,
+      "Fourth Degree": 4,
+      "Fifth Degree": 5,
+      "Sixth Degree": 6,
+      "Seventh Degree": 7,
+    };
+
+    const getRiskColor = (rank) => {
+      if (rank >= 5 && rank <= 7) return "bg-red-500";
+      if (rank >= 3 && rank <= 4) return "bg-orange-500";
+      if (rank === 2) return "bg-yellow-500";
+      if (rank === 1) return "bg-green-500";
+      return "bg-gray-500";
+    };
+
+    try {
+      const [currentSettingsRes, studentsRes, violationsRes] = await Promise.all([
+        cachedFetchJSON("/api/archive/current-settings", {}, {
+          ttlMs: 30000,
+          staleWhileRevalidate: true,
+          forceRefresh,
+        }),
+        cachedFetchJSON("/api/students", {}, {
+          ttlMs: 12000,
+          staleWhileRevalidate: true,
+          forceRefresh,
+        }),
+        cachedFetchJSON("/api/student-violations", {}, {
+          ttlMs: 12000,
+          staleWhileRevalidate: true,
+          forceRefresh,
+        }),
+      ]);
+
+      const currentSettings = currentSettingsRes.data || {};
+      const normalizedCurrentSem = String(currentSettings.currentSemester || "").trim();
+      const currentSY = String(currentSettings.currentSchoolYear || "").trim();
+
+      if (currentSettingsRes.status === "ok" && currentSettings?.status === "ok") {
+        setCurrentSemester(normalizedCurrentSem);
+        setCurrentSchoolYear(currentSY);
+      }
+
+      const analyticsUrl = selectedSchoolYear && selectedSemester
+        ? `/api/violation-analytics?schoolYear=${encodeURIComponent(selectedSchoolYear)}&semester=${encodeURIComponent(selectedSemester)}`
+        : "/api/violation-analytics";
+
+      const analyticsRes = await cachedFetchJSON(analyticsUrl, {}, {
+        ttlMs: 12000,
+        staleWhileRevalidate: true,
+        forceRefresh,
+      });
+
+      const studentsResult = studentsRes.data || {};
+      const violationsResult = violationsRes.data || {};
+      const analyticsResult = analyticsRes.data || {};
+
+      const isSelectedCurrentTerm =
+        selectedSchoolYear &&
+        selectedSemester &&
+        selectedSchoolYear === currentSY &&
+        normalizeSemester(selectedSemester) === normalizeSemester(normalizedCurrentSem);
+
+      console.log("Violation Trends Debug:", {
+        selectedSY: selectedSchoolYear,
+        selectedSem: selectedSemester,
+        currentSY,
+        currentSem: normalizedCurrentSem,
+        dataSource: isSelectedCurrentTerm ? "StudentViolations" : "Archives",
+        ongoingLabel: isSelectedCurrentTerm,
+        analyticsUrl,
+        analyticsStatus: analyticsResult?.status,
+        forceRefresh,
+      });
+
+      if (studentsRes.status !== "ok" || !Array.isArray(studentsResult?.students)) {
+        throw new Error("Failed to load students.");
+      }
+      if (violationsRes.status !== "ok" || !Array.isArray(violationsResult?.records)) {
+        throw new Error("Failed to load violations.");
+      }
+
+      const students = studentsResult.students || [];
+      const activeRecords = violationsResult.records.filter((rec) => !rec.cleared_at);
+
+      const studentById = new Map(students.map((student) => [Number(student.id), student]));
+
+      const studentMaxDegree = activeRecords.reduce((acc, rec) => {
+        const studentId = Number(rec.student_id);
+        if (!studentId) return acc;
+
+        const rank = degreeRank[String(rec.violation_degree)] || 0;
+        acc[studentId] = Math.max(acc[studentId] || 0, rank);
+        return acc;
+      }, {});
+
+      const violationCountMap = {};
+      students.forEach((student) => {
+        violationCountMap[student.id] = Number(student.violation_count) || 0;
+      });
+
+      let warningStudents = 0;
+      let atRiskStudents = 0;
+      let highRiskStudents = 0;
+
+      Object.entries(studentMaxDegree).forEach(([studentId, degree]) => {
+        const count = violationCountMap[studentId] || 0;
+
+        if (count >= 5 || (degree >= 5 && degree <= 7)) {
+          highRiskStudents += 1;
+        } else if ((count >= 3 && count <= 4) || (degree >= 3 && degree <= 4)) {
+          atRiskStudents += 1;
+        } else if (count === 2 || degree === 2) {
+          warningStudents += 1;
+        }
+      });
+
+      const rankingStats = activeRecords.reduce((acc, rec) => {
+        const studentId = Number(rec.student_id);
+        if (!studentId || !studentById.has(studentId)) return acc;
+
+        if (!acc[studentId]) {
+          acc[studentId] = {
+            count: 0,
+            maxDegreeRank: 0,
+          };
+        }
+
+        acc[studentId].count += 1;
+        const rank = degreeRank[String(rec.violation_degree)] || 0;
+        if (rank > acc[studentId].maxDegreeRank) {
+          acc[studentId].maxDegreeRank = rank;
+        }
+        return acc;
+      }, {});
+
+      const newRankingData = Object.entries(rankingStats)
+        .map(([studentId, data]) => {
+          const student = studentById.get(Number(studentId));
+          const parsedYearSection = parseYearSection(student?.year_section);
+          return {
+            rank: "",
+            name: student?.full_name || student?.username || "Unknown",
+            violations: data.count,
+            color: getRiskColor(data.maxDegreeRank),
+            id: student?.school_id || "",
+            program: student?.program || "",
+            year: parsedYearSection.year,
+            section: parsedYearSection.section,
+            yearSection: parsedYearSection.normalized,
+            maxDegreeRank: data.maxDegreeRank,
+          };
+        })
+        .sort((a, b) => b.violations - a.violations || b.maxDegreeRank - a.maxDegreeRank)
+        .map((item, index) => ({
+          ...item,
+          rank: String(index + 1).padStart(2, "0"),
+        }));
+
+      setViolationMetrics({
+        activeViolations: activeRecords.length,
+        warningStudents,
+        atRiskStudents,
+        highRiskStudents,
+      });
+
+      setMetricComparisons({
+        activeViolations:
+          Number(analyticsResult?.cards?.activeViolations?.percentChange) || 0,
+        warningStudents:
+          Number(analyticsResult?.cards?.warningStudents?.percentChange) || 0,
+        atRiskStudents:
+          Number(analyticsResult?.cards?.atRiskStudents?.percentChange) || 0,
+        highRiskStudents:
+          Number(analyticsResult?.cards?.highRiskStudents?.percentChange) || 0,
+      });
+
+      setTrendBySemester({
+        "1st Sem": Array.isArray(analyticsResult?.trendBySemester?.["1st Sem"])
+          ? analyticsResult.trendBySemester["1st Sem"]
+          : [],
+        "2nd Sem": Array.isArray(analyticsResult?.trendBySemester?.["2nd Sem"])
+          ? analyticsResult.trendBySemester["2nd Sem"]
+          : [],
+        Summer: Array.isArray(analyticsResult?.trendBySemester?.Summer)
+          ? analyticsResult.trendBySemester.Summer
+          : [],
+      });
+      setTrendTermBySemester(analyticsResult?.trendTermBySemester || {});
+      setOngoingSemesters(analyticsResult?.ongoingSemesters || {});
+      setRankingData(newRankingData);
+    } catch (_error) {
+      setViolationMetrics({
+        activeViolations: 0,
+        warningStudents: 0,
+        atRiskStudents: 0,
+        highRiskStudents: 0,
+      });
+      setMetricComparisons({
+        activeViolations: 0,
+        warningStudents: 0,
+        atRiskStudents: 0,
+        highRiskStudents: 0,
+      });
+      setTrendBySemester({
+        "1st Sem": [],
+        "2nd Sem": [],
+        Summer: [],
+      });
+      setRankingData([]);
+    } finally {
+      if (!silent) {
+        setIsLoadingMetrics(false);
+        setIsLoadingRanking(false);
+      }
+    }
+  }, [selectedSchoolYear, selectedSemester]);
+
   // Fetch available school years
   useEffect(() => {
     const fetchSchoolYears = async () => {
@@ -1172,239 +1417,50 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
+    fetchDashboardViolationData({ forceRefresh: true });
+  }, [fetchDashboardViolationData]);
 
-    const degreeRank = {
-      "First Degree": 1,
-      "Second Degree": 2,
-      "Third Degree": 3,
-      "Fourth Degree": 4,
-      "Fifth Degree": 5,
-      "Sixth Degree": 6,
-      "Seventh Degree": 7,
+  useEffect(() => {
+    const handleStudentViolationUpdated = () => {
+      fetchDashboardViolationData({ forceRefresh: true, silent: true });
     };
 
-    const getRiskColor = (rank) => {
-      if (rank >= 5 && rank <= 7) return "bg-red-500";
-      if (rank >= 3 && rank <= 4) return "bg-orange-500";
-      if (rank === 2) return "bg-yellow-500";
-      if (rank === 1) return "bg-green-500";
-      return "bg-gray-500";
+    window.addEventListener("studentViolationUpdated", handleStudentViolationUpdated);
+    return () => {
+      window.removeEventListener("studentViolationUpdated", handleStudentViolationUpdated);
+    };
+  }, [fetchDashboardViolationData]);
+
+  useEffect(() => {
+    const refreshDashboardData = () => {
+      fetchDashboardViolationData({ forceRefresh: true, silent: true });
     };
 
-    const fetchDashboardViolationData = async () => {
-      setIsLoadingMetrics(true);
-      setIsLoadingRanking(true);
+    const handleWindowFocus = () => {
+      refreshDashboardData();
+    };
 
-      try {
-        const [currentSettingsRes, studentsRes, violationsRes] = await Promise.all([
-          cachedFetchJSON("/api/archive/current-settings", {}, {
-            ttlMs: 30000,
-            staleWhileRevalidate: true,
-          }),
-          cachedFetchJSON("/api/students", {}, {
-            ttlMs: 12000,
-            staleWhileRevalidate: true,
-          }),
-          cachedFetchJSON("/api/student-violations", {}, {
-            ttlMs: 12000,
-            staleWhileRevalidate: true,
-          }),
-        ]);
-
-        const currentSettings = currentSettingsRes.data || {};
-        const normalizedCurrentSem = String(currentSettings.currentSemester || "").trim();
-        const currentSY = String(currentSettings.currentSchoolYear || "").trim();
-
-        if (currentSettingsRes.status === "ok" && currentSettings?.status === "ok") {
-          setCurrentSemester(normalizedCurrentSem);
-          setCurrentSchoolYear(currentSY);
-        }
-
-        const analyticsUrl = selectedSchoolYear && selectedSemester
-          ? `/api/violation-analytics?schoolYear=${encodeURIComponent(selectedSchoolYear)}&semester=${encodeURIComponent(selectedSemester)}`
-          : "/api/violation-analytics";
-
-        const analyticsRes = await cachedFetchJSON(analyticsUrl, {}, {
-          ttlMs: 12000,
-          staleWhileRevalidate: true,
-        });
-
-        const studentsResult = studentsRes.data || {};
-        const violationsResult = violationsRes.data || {};
-        const analyticsResult = analyticsRes.data || {};
-
-        const isSelectedCurrentTerm =
-          selectedSchoolYear &&
-          selectedSemester &&
-          selectedSchoolYear === currentSY &&
-          normalizeSemester(selectedSemester) === normalizeSemester(normalizedCurrentSem);
-
-        console.log("Violation Trends Debug:", {
-          selectedSY: selectedSchoolYear,
-          selectedSem: selectedSemester,
-          currentSY,
-          currentSem: normalizedCurrentSem,
-          dataSource: isSelectedCurrentTerm ? "StudentViolations" : "Archives",
-          ongoingLabel: isSelectedCurrentTerm,
-          analyticsUrl,
-          analyticsStatus: analyticsResult?.status,
-        });
-
-        if (studentsRes.status !== "ok" || !Array.isArray(studentsResult?.students)) {
-          throw new Error("Failed to load students.");
-        }
-        if (violationsRes.status !== "ok" || !Array.isArray(violationsResult?.records)) {
-          throw new Error("Failed to load violations.");
-        }
-
-        const students = studentsResult.students || [];
-        const activeRecords = violationsResult.records.filter((rec) => !rec.cleared_at);
-
-        const studentById = new Map(students.map((student) => [Number(student.id), student]));
-
-        const studentMaxDegree = activeRecords.reduce((acc, rec) => {
-          const studentId = Number(rec.student_id);
-          if (!studentId) return acc;
-
-          const rank = degreeRank[String(rec.violation_degree)] || 0;
-          acc[studentId] = Math.max(acc[studentId] || 0, rank);
-          return acc;
-        }, {});
-
-        const violationCountMap = {};
-        students.forEach((student) => {
-          violationCountMap[student.id] = Number(student.violation_count) || 0;
-        });
-
-        let warningStudents = 0;
-        let atRiskStudents = 0;
-        let highRiskStudents = 0;
-
-        Object.entries(studentMaxDegree).forEach(([studentId, degree]) => {
-          const count = violationCountMap[studentId] || 0;
-
-          if (count >= 5 || (degree >= 5 && degree <= 7)) {
-            highRiskStudents += 1;
-          } else if ((count >= 3 && count <= 4) || (degree >= 3 && degree <= 4)) {
-            atRiskStudents += 1;
-          } else if (count === 2 || degree === 2) {
-            warningStudents += 1;
-          }
-        });
-
-        const rankingStats = activeRecords.reduce((acc, rec) => {
-          const studentId = Number(rec.student_id);
-          if (!studentId || !studentById.has(studentId)) return acc;
-
-          if (!acc[studentId]) {
-            acc[studentId] = {
-              count: 0,
-              maxDegreeRank: 0,
-            };
-          }
-
-          acc[studentId].count += 1;
-          const rank = degreeRank[String(rec.violation_degree)] || 0;
-          if (rank > acc[studentId].maxDegreeRank) {
-            acc[studentId].maxDegreeRank = rank;
-          }
-          return acc;
-        }, {});
-
-        const newRankingData = Object.entries(rankingStats)
-          .map(([studentId, data]) => {
-            const student = studentById.get(Number(studentId));
-            const parsedYearSection = parseYearSection(student?.year_section);
-            return {
-              rank: "",
-              name: student?.full_name || student?.username || "Unknown",
-              violations: data.count,
-              color: getRiskColor(data.maxDegreeRank),
-              id: student?.school_id || "",
-              program: student?.program || "",
-              year: parsedYearSection.year,
-              section: parsedYearSection.section,
-              yearSection: parsedYearSection.normalized,
-              maxDegreeRank: data.maxDegreeRank,
-            };
-          })
-          .sort((a, b) => b.violations - a.violations || b.maxDegreeRank - a.maxDegreeRank)
-          .map((item, index) => ({
-            ...item,
-            rank: String(index + 1).padStart(2, "0"),
-          }));
-
-        if (isMounted) {
-          setViolationMetrics({
-            activeViolations: activeRecords.length,
-            warningStudents,
-            atRiskStudents,
-            highRiskStudents,
-          });
-
-          setMetricComparisons({
-            activeViolations:
-              Number(analyticsResult?.cards?.activeViolations?.percentChange) || 0,
-            warningStudents:
-              Number(analyticsResult?.cards?.warningStudents?.percentChange) || 0,
-            atRiskStudents:
-              Number(analyticsResult?.cards?.atRiskStudents?.percentChange) || 0,
-            highRiskStudents:
-              Number(analyticsResult?.cards?.highRiskStudents?.percentChange) || 0,
-          });
-
-          setTrendBySemester({
-            "1st Sem": Array.isArray(analyticsResult?.trendBySemester?.["1st Sem"])
-              ? analyticsResult.trendBySemester["1st Sem"]
-              : [],
-            "2nd Sem": Array.isArray(analyticsResult?.trendBySemester?.["2nd Sem"])
-              ? analyticsResult.trendBySemester["2nd Sem"]
-              : [],
-            Summer: Array.isArray(analyticsResult?.trendBySemester?.Summer)
-              ? analyticsResult.trendBySemester.Summer
-              : [],
-          });
-          setTrendTermBySemester(analyticsResult?.trendTermBySemester || {});
-          setOngoingSemesters(analyticsResult?.ongoingSemesters || {});
-
-          setRankingData(newRankingData);
-        }
-      } catch (_error) {
-        if (isMounted) {
-          setViolationMetrics({
-            activeViolations: 0,
-            warningStudents: 0,
-            atRiskStudents: 0,
-            highRiskStudents: 0,
-          });
-          setMetricComparisons({
-            activeViolations: 0,
-            warningStudents: 0,
-            atRiskStudents: 0,
-            highRiskStudents: 0,
-          });
-          setTrendBySemester({
-            "1st Sem": [],
-            "2nd Sem": [],
-            Summer: [],
-          });
-          setRankingData([]);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoadingMetrics(false);
-          setIsLoadingRanking(false);
-        }
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshDashboardData();
       }
     };
 
-    fetchDashboardViolationData();
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        refreshDashboardData();
+      }
+    }, 10000);
+
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      isMounted = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [selectedSchoolYear, selectedSemester]);
+  }, [fetchDashboardViolationData]);
 
   useEffect(() => {
     if (hasInitializedTrendSelectionRef.current) return;
@@ -1665,7 +1721,7 @@ const Dashboard = () => {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {availableSchoolYears.map((year) => (
+                    {availableSchoolYearOptions.map((year) => (
                       <DropdownMenuItem
                         key={year}
                         onClick={() => setSelectedSchoolYear(year)}
@@ -1846,7 +1902,7 @@ const Dashboard = () => {
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {availableSchoolYears.map((year) => (
+              {availableSchoolYearOptions.map((year) => (
                 <DropdownMenuItem
                   key={year}
                   onClick={() => setSelectedSchoolYear(year)}

@@ -131,6 +131,10 @@ const StudentViolation = () => {
   const [showAnalyticsDetailModal, setShowAnalyticsDetailModal] = useState(false);
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorModalMessage, setErrorModalMessage] = useState("");
+  const [deleteSuccessModal, setDeleteSuccessModal] = useState({
+    isOpen: false,
+    message: "",
+  });
   const [analyticsData, setAnalyticsData] = useState({
     cards: {
       activeViolations: { percentChange: 0 },
@@ -475,6 +479,11 @@ const StudentViolation = () => {
         throw new Error(result?.message || "Unable to delete record.");
       }
       setRecords((prev) => prev.filter((r) => r.id !== row.id));
+      setDeleteSuccessModal({
+        isOpen: true,
+        message: `The violation record for ${row.full_name || "this student"} has been deleted successfully.`,
+      });
+      invalidateFetchCache("/api/violation-analytics");
       invalidateFetchCache("/api/students");
       window.dispatchEvent(new CustomEvent("studentViolationUpdated", {
         detail: { studentId: Number(row.student_id || row.studentId || 0) },
@@ -509,6 +518,7 @@ const StudentViolation = () => {
         isOpen: true,
         message: `The violation for ${row.full_name || "this student"} has been marked as cleared.`,
       });
+      invalidateFetchCache("/api/violation-analytics");
       invalidateFetchCache("/api/students");
       window.dispatchEvent(new CustomEvent("studentViolationUpdated", {
         detail: { studentId: Number(row.student_id || row.studentId || 0) },
@@ -563,6 +573,14 @@ const StudentViolation = () => {
         deletedIds.forEach((id) => next.delete(id));
         return next;
       });
+      setDeleteSuccessModal({
+        isOpen: true,
+        message:
+          deletedIds.length === 1
+            ? "1 violation record has been deleted successfully."
+            : `${deletedIds.length} violation records have been deleted successfully.`,
+      });
+      invalidateFetchCache("/api/violation-analytics");
       invalidateFetchCache("/api/students");
       window.dispatchEvent(new CustomEvent("studentViolationUpdated"));
     }
@@ -609,6 +627,7 @@ const StudentViolation = () => {
         throw new Error(result?.message || "Unable to unclear record.");
       }
       mergeRecord(result.record);
+      invalidateFetchCache("/api/violation-analytics");
       invalidateFetchCache("/api/students");
       window.dispatchEvent(new CustomEvent("studentViolationUpdated", {
         detail: { studentId: Number(result.record?.student_id || result.record?.studentId || 0) },
@@ -633,6 +652,7 @@ const StudentViolation = () => {
     // archive we should clear them from the table immediately instead of waiting
     // for the follow-up refetch.
     setRecords([]);
+    invalidateFetchCache("/api/violation-analytics");
     invalidateFetchCache("/api/student-violations");
     
     // Trigger events to notify Archives tab
@@ -676,6 +696,7 @@ const StudentViolation = () => {
       }
 
       invalidateFetchCache("/api/archive/current-settings");
+      invalidateFetchCache("/api/violation-analytics");
       setCurrentSemester(getDisplaySemester(data.currentSemester || semester, data.currentSchoolYear || schoolYear));
       setCurrentSchoolYear(data.currentSchoolYear || schoolYear);
       window.localStorage.setItem("semesterYearUpdated", Date.now().toString());
@@ -2055,6 +2076,7 @@ const StudentViolation = () => {
           }
 
           // Ensure UI state exactly matches persisted DB state after logging.
+          invalidateFetchCache("/api/violation-analytics");
           invalidateFetchCache("/api/student-violations");
           invalidateFetchCache("/api/students");
           window.dispatchEvent(new CustomEvent("studentViolationUpdated", {
@@ -2356,6 +2378,34 @@ const StudentViolation = () => {
           </div>
           <p className="text-gray-300 text-sm">Updating the student violation record...</p>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={deleteSuccessModal.isOpen}
+        onClose={() => setDeleteSuccessModal({ isOpen: false, message: "" })}
+        title={
+          <span className="font-black font-inter flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-green-400" />
+            Record Deleted
+          </span>
+        }
+        size="sm"
+        showCloseButton
+      >
+        <div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-green-300">
+            {deleteSuccessModal.message || "The violation record has been deleted successfully."}
+          </p>
+        </div>
+        <ModalFooter>
+          <Button
+            variant="primary"
+            onClick={() => setDeleteSuccessModal({ isOpen: false, message: "" })}
+            className="px-6"
+          >
+            OK
+          </Button>
+        </ModalFooter>
       </Modal>
 
       <Modal
