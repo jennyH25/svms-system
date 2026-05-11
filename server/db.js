@@ -1582,6 +1582,31 @@ export async function syncSuperAdminSecurityDatabase() {
   `);
 
   await dbPool.query(`
+    ALTER TABLE super_admin_login_challenges ENABLE ROW LEVEL SECURITY
+  `);
+
+  await dbPool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'super_admin_login_challenges'
+          AND policyname = 'super_admin_login_challenges_service_role_all'
+      ) THEN
+        CREATE POLICY super_admin_login_challenges_service_role_all
+        ON super_admin_login_challenges
+        FOR ALL
+        TO service_role
+        USING (true)
+        WITH CHECK (true);
+      END IF;
+    END;
+    $$;
+  `);
+
+  await dbPool.query(`
     CREATE TABLE IF NOT EXISTS super_admin_trusted_devices (
       device_token_hash VARCHAR(128) PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1600,6 +1625,31 @@ export async function syncSuperAdminSecurityDatabase() {
   await dbPool.query(`
     CREATE INDEX IF NOT EXISTS super_admin_trusted_devices_expires_at_idx
     ON super_admin_trusted_devices (expires_at)
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE super_admin_trusted_devices ENABLE ROW LEVEL SECURITY
+  `);
+
+  await dbPool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'super_admin_trusted_devices'
+          AND policyname = 'super_admin_trusted_devices_service_role_all'
+      ) THEN
+        CREATE POLICY super_admin_trusted_devices_service_role_all
+        ON super_admin_trusted_devices
+        FOR ALL
+        TO service_role
+        USING (true)
+        WITH CHECK (true);
+      END IF;
+    END;
+    $$;
   `);
 
   await dbPool.query(`
