@@ -278,6 +278,35 @@ export async function getAppStateSnapshot(stateKeys = []) {
   return result.rows || [];
 }
 
+export async function recordProjectActivityHeartbeat(source = "unknown") {
+  if (!hasDbConfig()) {
+    throw new Error(
+      `Missing required environment variables: ${getMissingDbVars().join(", ")}`,
+    );
+  }
+
+  const dbPool = getDbPool();
+  await ensureSchemaStateTable(dbPool);
+
+  const normalizedSource = String(source || "unknown").trim().slice(0, 64);
+  const heartbeatPayload = JSON.stringify({
+    source: normalizedSource || "unknown",
+    at: new Date().toISOString(),
+  });
+
+  await setSchemaStateValue(
+    dbPool,
+    "system:last_project_activity_heartbeat",
+    heartbeatPayload,
+  );
+
+  const result = await dbPool.query("SELECT 1 AS ok");
+  return {
+    ok: Array.isArray(result.rows) && result.rows[0]?.ok === 1,
+    source: normalizedSource || "unknown",
+  };
+}
+
 export async function isAuthSchemaCurrent() {
   if (!hasDbConfig()) {
     return false;

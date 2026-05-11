@@ -17,6 +17,7 @@ import {
   getDbPool,
   getMissingDbVars,
   hasDbConfig,
+  recordProjectActivityHeartbeat,
   syncAppStateDatabase,
   syncAuthDatabase,
   isAuthSchemaCurrent,
@@ -12052,6 +12053,38 @@ app.get("/api/cron/maintenance", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Maintenance failed (${error.message}).`,
+    });
+  }
+});
+
+app.get("/api/cron/keepalive", async (req, res) => {
+  if (!isAuthorizedCronRequest(req)) {
+    return res.status(401).json({
+      status: "error",
+      message: "Unauthorized cron request.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    const heartbeat = await recordProjectActivityHeartbeat("vercel-cron");
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Keepalive completed.",
+      heartbeat,
+      ranAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Keepalive failed (${error.message}).`,
     });
   }
 });
