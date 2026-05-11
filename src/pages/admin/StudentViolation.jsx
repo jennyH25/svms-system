@@ -127,6 +127,7 @@ const StudentViolation = () => {
   const [currentSchoolYear, setCurrentSchoolYear] = useState("");
   const [archiveSuccessMessage, setArchiveSuccessMessage] = useState("");
   const [showEditSemesterModal, setShowEditSemesterModal] = useState(false);
+  const [showSemesterSaveSuccessModal, setShowSemesterSaveSuccessModal] = useState(false);
   const [showAnalyticsDetailModal, setShowAnalyticsDetailModal] = useState(false);
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorModalMessage, setErrorModalMessage] = useState("");
@@ -628,8 +629,11 @@ const StudentViolation = () => {
     setArchiveSuccessMessage(message);
     console.log("Archive completed:", archiveData);
     
-    // CRITICAL: Clear the data immediately from UI (optimistic update)
+    // Active violations are always the current working term, so after a successful
+    // archive we should clear them from the table immediately instead of waiting
+    // for the follow-up refetch.
     setRecords([]);
+    invalidateFetchCache("/api/student-violations");
     
     // Trigger events to notify Archives tab
     window.localStorage.setItem("archiveRefresh", Date.now().toString());
@@ -2124,6 +2128,35 @@ const StudentViolation = () => {
         confirmLabel="Okay"
       />
 
+      <Modal
+        isOpen={showSemesterSaveSuccessModal}
+        onClose={() => setShowSemesterSaveSuccessModal(false)}
+        title={
+          <span className="font-black font-inter flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-green-400" />
+            Changes Saved
+          </span>
+        }
+        size="sm"
+        showCloseButton
+      >
+        <div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-green-300">
+            Semester and school year were saved successfully.
+          </p>
+        </div>
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => setShowSemesterSaveSuccessModal(false)}
+            className="px-6"
+          >
+            OK
+          </Button>
+        </ModalFooter>
+      </Modal>
+
       <EditViolationModal
         isOpen={showEditModal}
         onClose={() => {
@@ -2418,6 +2451,7 @@ const StudentViolation = () => {
         currentSemester={currentSemester}
         currentSchoolYear={currentSchoolYear}
         onSave={handleSaveSemesterYear}
+        onSuccess={() => setShowSemesterSaveSuccessModal(true)}
       />
 
       <ArchiveViolationModal

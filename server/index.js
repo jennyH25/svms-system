@@ -10154,19 +10154,33 @@ app.get("/api/archive/unresolved-school-years", async (req, res) => {
     const pool = getDbPool();
 
     const result = await pool.query(
-      `SELECT DISTINCT school_year
+      `SELECT DISTINCT school_year, semester
        FROM student_violation_archives
        WHERE is_unresolved = TRUE
-       ORDER BY school_year DESC`,
+       ORDER BY school_year DESC, semester ASC`,
     );
 
-    const schoolYears = (result.rows || [])
-      .map((row) => row.school_year)
-      .filter(Boolean);
+    const rows = result.rows || [];
+    const schoolYears = Array.from(
+      new Set(rows.map((row) => row.school_year).filter(Boolean)),
+    );
+    const semesterOrder = ["1ST SEM", "2ND SEM", "SUMMER"];
+    const semestersBySchoolYear = schoolYears.reduce((acc, schoolYear) => {
+      acc[schoolYear] = rows
+        .filter((row) => row.school_year === schoolYear)
+        .map((row) => row.semester)
+        .filter(Boolean)
+        .sort(
+          (left, right) =>
+            semesterOrder.indexOf(left) - semesterOrder.indexOf(right),
+        );
+      return acc;
+    }, {});
 
     return res.status(200).json({
       status: "ok",
       schoolYears: schoolYears.sort((left, right) => right.localeCompare(left)),
+      semestersBySchoolYear,
     });
   } catch (error) {
     console.error("Error fetching unresolved school years:", error);
@@ -10215,6 +10229,7 @@ app.get("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
         sva.violation_label,
         sva.reported_by,
         sva.remarks,
+        sva.signature_image,
         CASE
           WHEN sva.signature_image IS NOT NULL AND TRIM(sva.signature_image) <> ''
           THEN TRUE
@@ -10346,6 +10361,7 @@ app.get("/api/archive/school-years", async (req, res) => {
       FROM student_violation_archives
       WHERE school_year IS NOT NULL
         AND semester IS NOT NULL
+        AND is_unresolved = FALSE
       ORDER BY school_year DESC, semester ASC
       `,
     );
@@ -10394,10 +10410,6 @@ app.get("/api/archive/school-years", async (req, res) => {
       const semesters = archiveTerms
         .filter((term) => term.schoolYear === schoolYear)
         .map((term) => term.semester);
-
-      if (schoolYear === currentSchoolYear && currentSemester) {
-        semesters.push(currentSemester);
-      }
 
       acc[schoolYear] = Array.from(new Set(semesters.filter(Boolean))).sort(
         (left, right) =>
@@ -10457,6 +10469,7 @@ app.delete("/api/archive/semesters/:schoolYear/:semester", async (req, res) => {
       `DELETE FROM student_violation_archives
        WHERE school_year = $1
          AND semester = $2
+         AND is_unresolved = FALSE
        RETURNING id`,
       [normalizedSchoolYear, normalizedSemester],
     );
@@ -10492,6 +10505,77 @@ app.delete("/api/archive/semesters/:schoolYear/:semester", async (req, res) => {
   }
 });
 
+// DELETE unresolved archived violations for a single school year + semester
+app.delete("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => {
+  const { schoolYear, semester } = req.params;
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  if (!schoolYear || !semester) {
+    return res.status(400).json({
+      status: "error",
+      message: "School year and semester are required.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const normalizedSchoolYear = normalizeSchoolYear(schoolYear);
+    const normalizedSemester = normalizeSemester(semester);
+
+    if (!normalizedSchoolYear || !normalizedSemester) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid school year or semester.",
+      });
+    }
+
+    const deleteResult = await pool.query(
+      `DELETE FROM student_violation_archives
+       WHERE school_year = $1
+         AND semester = $2
+         AND is_unresolved = TRUE
+       RETURNING id`,
+      [normalizedSchoolYear, normalizedSemester],
+    );
+
+    const deletedCount = Number(deleteResult.rowCount || 0);
+
+    if (deletedCount === 0) {
+      return res.status(200).json({
+        status: "ok",
+        message: `${normalizedSemester} S.Y. ${normalizedSchoolYear} has no unresolved archived records to delete.`,
+        deletedCount: 0,
+      });
+    }
+
+    await logAuditEvent(req, {
+      action: "DELETE_UNRESOLVED_ARCHIVE_SEMESTER",
+      targetType: "ARCHIVE_UNRESOLVED_SEMESTER",
+      targetId: `${normalizedSchoolYear}|${normalizedSemester}`,
+      details: `Deleted ${deletedCount} unresolved archived violation record${deletedCount === 1 ? '' : 's'} for ${normalizedSemester} S.Y. ${normalizedSchoolYear}.`,
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      message: `Successfully deleted ${deletedCount} unresolved archived record${deletedCount === 1 ? '' : 's'} for ${normalizedSemester} S.Y. ${normalizedSchoolYear}.`,
+      deletedCount,
+    });
+  } catch (error) {
+    console.error("Error deleting unresolved archive semester:", error);
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to delete unresolved archive semester (${error.message}).`,
+    });
+  }
+});
+
 // DELETE school year (deletes all archived violations for that year)
 app.delete("/api/archive/school-years/:schoolYear", async (req, res) => {
   const { schoolYear } = req.params;
@@ -10516,7 +10600,10 @@ app.delete("/api/archive/school-years/:schoolYear", async (req, res) => {
 
     // Check if school year exists in database
     const checkResult = await pool.query(
-      `SELECT COUNT(*) as count FROM student_violation_archives WHERE school_year = $1`,
+      `SELECT COUNT(*) as count
+       FROM student_violation_archives
+       WHERE school_year = $1
+         AND is_unresolved = FALSE`,
       [schoolYear],
     );
 
@@ -10526,7 +10613,9 @@ app.delete("/api/archive/school-years/:schoolYear", async (req, res) => {
     // The workbook remains the import source and is never mutated by folder deletion.
     if (databaseViolationCount > 0) {
       await pool.query(
-        `DELETE FROM student_violation_archives WHERE school_year = $1`,
+        `DELETE FROM student_violation_archives
+         WHERE school_year = $1
+           AND is_unresolved = FALSE`,
         [schoolYear],
       );
     }
@@ -10685,6 +10774,7 @@ app.get("/api/archive/violations/:schoolYear/:semester", async (req, res) => {
         sva.violation_label,
         sva.reported_by,
         sva.remarks,
+        sva.signature_image,
         CASE
           WHEN sva.signature_image IS NOT NULL AND TRIM(sva.signature_image) <> ''
           THEN TRUE

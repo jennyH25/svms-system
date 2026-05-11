@@ -14,11 +14,8 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     build: {
-      // Skip gzip/brotli size reporting to speed up production builds.
       reportCompressedSize: false,
-      // Target modern runtime used by current Electron/Chromium and modern browsers.
       target: "es2022",
-      // `exceljs` is legitimately large even when lazy-loaded; keep warnings meaningful.
       chunkSizeWarningLimit: 1000,
       rollupOptions: {
         output: {
@@ -38,9 +35,6 @@ export default defineConfig(({ mode }) => {
           target: apiProxyTarget,
           changeOrigin: true,
         },
-        // route static uploads to the backend as well so that logos appear
-        // correctly during development (vite itself doesn't serve the
-        // server/uploads folder).
         "/uploads": {
           target: apiProxyTarget,
           changeOrigin: true,

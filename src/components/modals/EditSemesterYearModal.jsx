@@ -2,17 +2,16 @@ import React, { useState, useEffect } from "react";
 import Modal, { ModalFooter } from "@/components/ui/Modal";
 import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
-import { AlertCircle, Check, Loader2 } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import SelectField from "@/components/ui/SelectField";
 
-const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchoolYear, onSave }) => {
+const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchoolYear, onSave, onSuccess }) => {
   const [formData, setFormData] = useState({
     semester: currentSemester || "1ST SEM",
     schoolYear: currentSchoolYear || "2025-2026",
   });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -21,7 +20,6 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
         schoolYear: currentSchoolYear || "2025-2026",
       });
       setError("");
-      setShowSuccess(false);
     }
   }, [isOpen, currentSemester, currentSchoolYear]);
 
@@ -49,10 +47,8 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
 
     try {
       await onSave(formData.semester.trim(), formData.schoolYear.trim());
-      setShowSuccess(true);
-      setTimeout(() => {
-        onClose();
-      }, 1500);
+      onClose();
+      onSuccess?.();
     } catch (err) {
       setError(err.message || "Failed to save changes");
     } finally {
@@ -75,33 +71,12 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
           Update the current semester and school year. This will be updated across all pages.
         </p>
 
-        {isLoading && (
-          <div className="mb-4 rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 flex gap-3">
-            <Loader2 className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5 animate-spin" />
-            <div>
-              <p className="text-blue-300 text-sm font-medium">Saving changes...</p>
-              <p className="text-blue-200/80 text-xs">Updating the semester and school year across the system.</p>
-            </div>
-          </div>
-        )}
-
         {error && (
           <div className="mb-4 bg-red-500/10 border border-red-500/40 rounded-lg p-3 flex gap-2">
             <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
             <p className="text-red-300 text-sm">{error}</p>
           </div>
         )}
-
-        {showSuccess && (
-          <div className="mb-4 bg-green-500/10 border border-green-500/40 rounded-lg p-3 flex gap-2">
-            <Check className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-green-300 text-sm font-medium">Changes saved successfully!</p>
-              <p className="text-green-200/80 text-xs">The new semester and school year are now active.</p>
-            </div>
-          </div>
-        )}
-
         <div className="space-y-4 mb-4">
           <SelectField
             label="Semester"
@@ -145,7 +120,7 @@ const EditSemesterYearModal = ({ isOpen, onClose, currentSemester, currentSchool
             {isLoading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Saving...</span>
+                <span>Saving Changes...</span>
               </>
             ) : (
               "Save Changes"
