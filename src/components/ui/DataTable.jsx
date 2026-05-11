@@ -23,12 +23,14 @@ const DataTable = ({
   onRowClick,
   className = "",
   rowClassName = "",
+  tableClassName = "",
 }) => {
   const hasActions = actions.length > 0;
 
   return (
     <div className={`bg-[#EAECF0] rounded-xl overflow-hidden ${className}`}>
-      <table className="w-full">
+      <div className="overflow-x-auto">
+      <table className={`w-full ${tableClassName}`.trim()}>
         <thead className="bg-[#FFFFFF]">
           <tr className="text-gray-900/50 text-[13px]">
             {columns.map((column) => (
@@ -125,6 +127,7 @@ const DataTable = ({
           ))}
         </tbody>
       </table>
+      </div>
 
       {data.length === 0 && (
         <div className="py-12 text-center text-gray-500">No data available</div>

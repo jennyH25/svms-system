@@ -2072,7 +2072,7 @@ sheet.mergeCells('A1:H3');
 	return (
 		<AnimatedContent>
 			<div className="flex flex-col gap-6">
-				<h2 className="text-2xl font-bold text-white mb-1">MY VIOLATIONS</h2>
+				<h2 className="text-xl sm:text-2xl font-bold text-white mb-1">MY VIOLATIONS</h2>
 
 				{highlightId ? (
 					<Card variant="glass" padding="sm" className="w-full border border-cyan-400/25 bg-cyan-500/10">
@@ -2084,8 +2084,8 @@ sheet.mergeCells('A1:H3');
 
 				{unreadCount > 0 ? (
 					<Card variant="glass" padding="md" className="w-full border border-blue-400/25 bg-blue-500/10">
-						<div className="flex items-center justify-between gap-3">
-							<div className="flex items-center gap-2 text-blue-200">
+						<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+							<div className="flex items-start sm:items-center gap-2 text-blue-200">
 								<Bell className="w-4 h-4" />
 								<span className="text-sm font-semibold">
 									You have {unreadCount} new update{unreadCount > 1 ? 's' : ''} about your violations.
@@ -2103,12 +2103,12 @@ sheet.mergeCells('A1:H3');
 				) : null}
 
 				<Card variant="glass" padding="lg" className="w-full">
-					<div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-						<h3 className="text-lg font-semibold text-white">Violation Records</h3>
-						<div className="flex items-center gap-2">
+					<div className="flex flex-col lg:flex-row lg:items-center lg:justify-between mb-4 gap-3">
+						<h3 className="text-base sm:text-lg font-semibold text-white">Violation Records</h3>
+						<div className="flex w-full lg:w-auto flex-col sm:flex-row items-stretch sm:items-center gap-2">
 							<SearchBar
 								placeholder="Search violation, type, or remarks"
-								className="w-72"
+								className="w-full sm:w-72"
 								value={searchTerm}
 								onChange={(e) => setSearchTerm(e.target.value)}
 							/>
@@ -2116,7 +2116,7 @@ sheet.mergeCells('A1:H3');
 								<select
 									value={statusFilter}
 									onChange={(e) => setStatusFilter(e.target.value)}
-									className="appearance-none rounded-lg border border-gray-500/30 bg-[#1a1a1a] px-3 py-2 pr-8 text-sm text-white outline-none focus:border-cyan-400"
+									className="w-full appearance-none rounded-lg border border-gray-500/30 bg-[#1a1a1a] px-3 py-2 pr-8 text-sm text-white outline-none focus:border-cyan-400"
 								>
 									<option value="All">All</option>
 									<option value="Active">Active</option>
@@ -2126,6 +2126,15 @@ sheet.mergeCells('A1:H3');
 									<Filter className="w-4 h-4 text-gray-400" />
 								</div>
 							</div>
+							<Button
+								variant="secondary"
+								size="sm"
+								onClick={triggerDownloadAllModal}
+								className="inline-flex lg:hidden items-center justify-center gap-2"
+							>
+								<Download className="w-4 h-4" />
+								Export All
+							</Button>
 						</div>
 					</div>{isLoading && !hasLoadedOnce ? (
 						<div className="text-center text-gray-400 py-8">Loading violations...</div>
@@ -2136,7 +2145,99 @@ sheet.mergeCells('A1:H3');
 									{error}
 								</div>
 							) : null}
-							<DataTable columns={columns} data={tableData} className="mt-2" />
+							<div className="mt-2 space-y-3 sm:hidden">
+								{tableData.length === 0 ? (
+									<div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-6 text-center text-sm text-gray-400">
+										No violation records found.
+									</div>
+								) : (
+									tableData.map((row) => (
+										<div key={row.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+											<div className="flex items-start justify-between gap-3">
+												<div className="min-w-0">
+													<p className="text-xs uppercase tracking-[0.22em] text-gray-400">Violation #{row.no}</p>
+													<h4 className="mt-2 text-sm font-semibold leading-relaxed text-white">{row.violation}</h4>
+												</div>
+												<span
+													className={`shrink-0 inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+														row.status === 'Cleared'
+															? 'bg-green-100 text-green-700'
+															: 'bg-amber-100 text-amber-700'
+													}`}
+												>
+													{row.status}
+												</span>
+											</div>
+											<div className="mt-4 space-y-2 text-sm">
+												<div>
+													<p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Date Logged</p>
+													<p className="mt-1 text-gray-200">{row.date}</p>
+												</div>
+												<div>
+													<p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Year / Semester</p>
+													<p className="mt-1 text-gray-200">{row.yearSemester}</p>
+												</div>
+												<div>
+													<p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Reported By</p>
+													<p className="mt-1 text-gray-200">{row.reportedBy}</p>
+												</div>
+												<div>
+													<p className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Remarks</p>
+													<p className="mt-1 text-gray-200">{row.remarks}</p>
+												</div>
+											</div>
+											<div className="mt-4 flex flex-col gap-2">
+												{row.signature ? (
+													<button
+														type="button"
+														className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left"
+														onClick={() => handlePreviewSignature(row)}
+													>
+														<span className="text-sm font-medium text-white">View Signature</span>
+														<img
+															src={row.signature}
+															alt="Signature"
+															className="h-8 w-24 object-contain rounded border border-gray-200 bg-white"
+														/>
+													</button>
+												) : row.hasSignature ? (
+													<Button
+														size="sm"
+														variant="secondary"
+														className="justify-center"
+														onClick={() => handlePreviewSignature(row)}
+													>
+														View Signature
+													</Button>
+												) : (
+													<Button
+														size="sm"
+														variant="secondary"
+														className="justify-center gap-2"
+														onClick={() => handleAttachSignatureFromTable(row)}
+														disabled={isSignatureSaving && savingSignatureId === row.id}
+													>
+														<PenTool className="w-3.5 h-3.5" />
+														{isSignatureSaving && savingSignatureId === row.id ? 'Saving...' : 'Attach Signature'}
+													</Button>
+												)}
+												<Button
+													size="sm"
+													variant="primary"
+													className="justify-center gap-2"
+													onClick={() => triggerDownloadModal(row)}
+												>
+													<Download className="w-4 h-4" />
+													Download
+												</Button>
+											</div>
+										</div>
+									))
+								)}
+							</div>
+							<div className="hidden sm:block">
+								<DataTable columns={columns} data={tableData} className="mt-2" tableClassName="min-w-[900px]" />
+							</div>
 							<Modal
 								isOpen={downloadModalOpen}
 								onClose={() => setDownloadModalOpen(false)}

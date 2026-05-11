@@ -284,23 +284,23 @@ const StudentOffensesList = () => {
       {/* Header */}
       <AnimatedContent>
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-bold tracking-wide">OFFENSES LIST</h2>
+          <h2 className="text-lg sm:text-xl font-bold tracking-wide">OFFENSES LIST</h2>
         </div>
       </AnimatedContent>
 
       {/* Search and Filters */}
       <AnimatedContent distance={40} delay={0.1}>
-        <div className="flex gap-4 mb-6 items-center">
+        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-6 items-stretch sm:items-center">
           <SearchBar
             placeholder="Search Violation"
-            className="flex-1 max-w-xs"
+            className="w-full sm:flex-1 sm:max-w-xs"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
           
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="secondary" size="sm" className="min-w-[100px] justify-between">
+              <Button variant="secondary" size="sm" className="w-full sm:w-auto min-w-[100px] justify-between">
                 Degree
                 <svg className="ml-2 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -323,10 +323,10 @@ const StudentOffensesList = () => {
 
       {/* Minor/Major Toggle */}
       <AnimatedContent distance={40} delay={0.2}>
-        <div className="flex mb-4">
+        <div className="grid grid-cols-2 mb-4">
           <button
             onClick={() => { setCategoryFilter('minor'); setSpecificDegree('') }}
-            className={`px-8 py-2.5 rounded-l-lg text-sm font-medium transition-colors ${
+            className={`px-4 sm:px-8 py-2.5 rounded-l-lg text-sm font-medium transition-colors ${
               categoryFilter === 'minor'
                 ? 'bg-[#1E1F22] text-white'
                 : 'bg-[#2D2F33] text-gray-400 hover:text-white'
@@ -336,7 +336,7 @@ const StudentOffensesList = () => {
           </button>
           <button
             onClick={() => { setCategoryFilter('major'); setSpecificDegree('') }}
-            className={`px-8 py-2.5 rounded-r-lg text-sm font-medium transition-colors ${
+            className={`px-4 sm:px-8 py-2.5 rounded-r-lg text-sm font-medium transition-colors ${
               categoryFilter === 'major'
                 ? 'bg-[#1E1F22] text-white'
                 : 'bg-[#2D2F33] text-gray-400 hover:text-white'
@@ -349,10 +349,64 @@ const StudentOffensesList = () => {
 
       {/* Table Container */}
       <AnimatedContent distance={40} delay={0.3}>
-        <div className="bg-[#23262B] rounded-xl p-6">
-          <h3 className="text-lg font-bold mb-4">List of Offenses</h3>
-          <div className="bg-[#EAECF0] rounded-xl overflow-hidden">
-            <table className="w-full">
+        <div className="bg-[#23262B] rounded-xl p-4 sm:p-6">
+          <h3 className="text-base sm:text-lg font-bold mb-4">List of Offenses</h3>
+          <div className="sm:hidden space-y-3">
+            {filteredData.length === 0 ? (
+              <div className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-6 text-center text-sm text-gray-400">
+                No violations found.
+              </div>
+            ) : (
+              filteredData.map((row) => (
+                <div
+                  key={row.id}
+                  id={`violation-row-${row.id}`}
+                  className={`rounded-xl border border-white/10 bg-white/[0.04] p-4 ${
+                    highlightedViolation === row.id ? "ring-2 ring-yellow-400 bg-yellow-500/10" : ""
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="flex w-full items-start justify-between gap-3 text-left"
+                    onClick={() => handleViolationRowClick(row)}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold leading-relaxed text-white">{row.name}</p>
+                      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-gray-400">{row.degree}</p>
+                    </div>
+                    {row.children && row.children.length > 0 ? (
+                      expandedRows.has(row.id) ? (
+                        <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-gray-300" />
+                      ) : (
+                        <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-gray-300" />
+                      )
+                    ) : null}
+                  </button>
+
+                  {row.children && row.children.length > 0 && expandedRows.has(row.id) ? (
+                    <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
+                      {row.children.map((child) => (
+                        <div
+                          key={child.id}
+                          id={`violation-row-${child.id}`}
+                          className={`rounded-lg bg-black/15 px-3 py-2 ${
+                            highlightedViolation === child.id ? "ring-2 ring-yellow-400 bg-yellow-500/10" : ""
+                          }`}
+                        >
+                          <p className="text-sm text-gray-100">{child.name}</p>
+                          <p className="mt-1 text-xs uppercase tracking-[0.16em] text-gray-400">{child.degree}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="hidden sm:block bg-[#EAECF0] rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[540px]">
               <thead className="bg-[#FFFFFF]">
                 <tr className="text-gray-900/50 text-[13px]">
                   {columns.map((column) => (
@@ -374,7 +428,7 @@ const StudentOffensesList = () => {
               <tbody className="text-[#1a1a1a]">
                 {filteredData.length === 0 && (
                   <tr>
-                    <td colSpan={3} className="py-4 px-4 text-center text-gray-500">
+                    <td colSpan={2} className="py-4 px-4 text-center text-gray-500">
                       No violations found.
                     </td>
                   </tr>
@@ -416,6 +470,7 @@ const StudentOffensesList = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       </AnimatedContent>

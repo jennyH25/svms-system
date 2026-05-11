@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "concurrently \"npm run api:dev\" \"npm run dev:web\"",
-    "dev:web": "vite",
+    "dev:web": "node scripts/wait-for-api.mjs && vite",
     "dev:full": "npm run dev",
     "build": "vite build",
     "build:vercel": "node scripts/vercel-prepare-db.mjs && vite build",

@@ -62,7 +62,7 @@ const Modal = ({
   };
 
   const modalMarkup = (
-    <div className={`fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-4 sm:items-center sm:py-6 transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+    <div className={`fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-3 py-4 sm:px-4 sm:py-6 transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
       {/* Backdrop */}
       <div 
         className={`absolute inset-0 bg-black/50 backdrop-blur-md transition-opacity duration-200 ${isOpen ? 'opacity-100' : 'opacity-0'}`}
@@ -83,9 +83,9 @@ const Modal = ({
           {/* Header */}
           <div className="w-full">
             {(title || showCloseButton) && (
-              <div className="flex items-center justify-between px-6 pt-6 pb-4">
+              <div className="flex items-center justify-between px-4 pt-4 pb-3 sm:px-6 sm:pt-6 sm:pb-4">
                 {title && (
-                  <h2 className="text-lg font-semibold text-white">{title}</h2>
+                  <h2 className="pr-3 text-base sm:text-lg font-semibold text-white">{title}</h2>
                 )}
                 {showCloseButton && (
                   <button 
@@ -98,7 +98,7 @@ const Modal = ({
               </div>
             )}
             {/* Body */}
-            <div className="px-6 pb-6">
+            <div className="px-4 pb-4 sm:px-6 sm:pb-6">
               {children}
             </div>
           </div>
@@ -113,7 +113,7 @@ const Modal = ({
 
 // Modal Footer for action buttons
 export const ModalFooter = ({ children, className = '' }) => (
-  <div className={`flex items-center justify-end gap-3 pt-6 ${className}`}>
+  <div className={`flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-3 pt-6 ${className}`}>
     {children}
   </div>
 )

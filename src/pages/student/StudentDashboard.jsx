@@ -292,18 +292,18 @@ const StudentDashboard = () => {
       {/* Header */}
       <AnimatedContent delay={0.1}>
         <div>
-          <h2 className="text-2xl font-bold text-white mb-1">DASHBOARD</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-white mb-1">DASHBOARD</h2>
         </div>
       </AnimatedContent>
 
       {/* Student Info & Stat Cards */}
       <AnimatedContent delay={0.3}>
-        <div className="flex flex-col md:flex-row gap-6">
+        <div className="flex flex-col md:flex-row gap-4 sm:gap-6">
           {/* Student Info */}
           <Card
             variant="glass"
             padding="lg"
-            className="relative flex-1 min-w-[320px] min-h-[320px] overflow-hidden border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.03]"
+            className="relative flex-1 min-w-0 min-h-[280px] sm:min-h-[320px] overflow-hidden border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.03]"
           >
             <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
             <div className="absolute -right-20 -top-20 h-48 w-48 rounded-full bg-cyan-500/10 blur-3xl" />
@@ -316,7 +316,7 @@ const StudentDashboard = () => {
                 </div>
 
                 <div className="mt-4 space-y-2">
-                  <h3 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white leading-tight">
+                  <h3 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-white leading-tight">
                     {dashboardInfo.name}
                   </h3>
                   <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-medium tracking-wide text-gray-300">
@@ -366,7 +366,7 @@ const StudentDashboard = () => {
           </Card>
 
           {/* Stat Cards */}
-          <div className="flex flex-col md:flex-row gap-6 flex-1">
+          <div className="flex flex-col sm:flex-row gap-4 sm:gap-6 flex-1">
             <StudentStatCard
               title=""
               value={dashboardInfo.violationCount}
@@ -391,7 +391,7 @@ const StudentDashboard = () => {
       <AnimatedContent delay={0.5}>
         <Card variant="glass" padding="lg" className="w-full min-h-[280px]">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl md:text-2xl font-semibold text-white">Disciplinary Standing</h3>
+            <h3 className="text-lg sm:text-xl md:text-2xl font-semibold text-white">Disciplinary Standing</h3>
           </div>
 
           <AnimatedContent delay={0.08} distance={18}>
@@ -418,7 +418,7 @@ const StudentDashboard = () => {
             <div className="grid gap-3 sm:grid-cols-2">
               <button
                 onClick={() => window.location.href = '/student/violations'}
-                className="flex items-center justify-center gap-2 rounded-xl bg-[rgb(36,38,41)] px-4 py-3 text-sm md:text-base font-semibold text-white hover:bg-gray-700 transition-colors"
+                className="flex items-center justify-start sm:justify-center gap-2 rounded-xl bg-[rgb(36,38,41)] px-4 py-3 text-sm md:text-base font-semibold text-white hover:bg-gray-700 transition-colors"
               >
                 <Eye className="w-5 h-5 text-white" />
                 View My Violations
@@ -426,7 +426,7 @@ const StudentDashboard = () => {
 
               <button
                 onClick={() => window.location.href = '/student/offenses'}
-                className="flex items-center justify-center gap-2 rounded-xl border border-gray-500/30 bg-transparent px-4 py-3 text-sm font-semibold text-white hover:bg-white/10 transition-colors"
+                className="flex items-center justify-start sm:justify-center gap-2 rounded-xl border border-gray-500/30 bg-transparent px-4 py-3 text-sm font-semibold text-white hover:bg-white/10 transition-colors"
               >
                 <ListChecks className="w-4 h-4" />
                 View List of Offenses

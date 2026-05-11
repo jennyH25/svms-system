@@ -402,9 +402,9 @@ const StudentNotification = () => {
     <>
       <AnimatedContent>
         <div className="flex flex-col gap-6">
-          <h2 className="text-2xl font-bold text-white mb-1">NOTIFICATION</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-white mb-1">NOTIFICATION</h2>
           <Card variant="glass" padding="lg" className="w-full">
-          <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between mb-4 gap-3">
             <div className="flex items-center gap-3 flex-wrap">
               {notifications.length > 0 && (
                 showCheckboxes ? (
@@ -448,9 +448,9 @@ const StudentNotification = () => {
                 </>
               )}
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 w-full lg:w-auto">
               <button
-                className="text-gray-400 hover:text-white transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full lg:w-auto text-left lg:text-right text-gray-400 hover:text-white transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={async () => {
                   setError('');
                   try {
@@ -554,13 +554,13 @@ const StudentNotification = () => {
                 <div
                   key={note.id}
                   id={`student-notification-${note.id}`}
-                  className={`bg-[#232528]/60 rounded-lg px-4 py-3 flex items-center gap-3 border-b border-white/10 group transition-all ${!note.read_at ? 'ring-1 ring-blue-500/40 bg-blue-500/10' : ''} ${selectedForDeletion.has(note.id) ? 'ring-2 ring-red-400/60 bg-red-500/10' : ''} ${String(highlightedNotificationId) === String(note.id) ? 'ring-2 ring-yellow-400 bg-yellow-500/20 animate-pulse' : ''}`}
+                  className={`bg-[#232528]/60 rounded-lg px-3 sm:px-4 py-3 flex items-start gap-3 border-b border-white/10 group transition-all ${!note.read_at ? 'ring-1 ring-blue-500/40 bg-blue-500/10' : ''} ${selectedForDeletion.has(note.id) ? 'ring-2 ring-red-400/60 bg-red-500/10' : ''} ${String(highlightedNotificationId) === String(note.id) ? 'ring-2 ring-yellow-400 bg-yellow-500/20 animate-pulse' : ''}`}
                 >
                   <input
                     type="checkbox"
                     checked={selectedForDeletion.has(note.id)}
                     onChange={() => handleCheckboxChange(note.id)}
-                    className={`w-4 h-4 rounded border-white/30 bg-white/10 cursor-pointer accent-blue-500 flex-shrink-0 transition-opacity ${showCheckboxes ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'}`}
+                    className={`mt-1 w-4 h-4 rounded border-white/30 bg-white/10 cursor-pointer accent-blue-500 flex-shrink-0 transition-opacity ${showCheckboxes ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'}`}
                     onClick={(e) => e.stopPropagation()}
                   />
                   <div
@@ -601,17 +601,17 @@ const StudentNotification = () => {
                       window.dispatchEvent(new Event('notificationRead'));
                     }}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-start sm:items-center gap-2">
                       {!note.read_at && <span className="w-2 h-2 rounded-full bg-blue-500" />}
-                      <span className={`text-white text-sm ${!note.read_at ? 'font-bold' : 'font-medium'}`}>{note.title}</span>
+                      <span className={`text-white text-sm leading-snug ${!note.read_at ? 'font-bold' : 'font-medium'}`}>{note.title}</span>
                     </div>
-                    <div className={`text-gray-400 text-xs ${!note.read_at ? 'font-semibold' : ''}`}>{note.description}</div>
+                    <div className={`text-gray-400 text-xs leading-relaxed ${!note.read_at ? 'font-semibold' : ''}`}>{note.description}</div>
                     <div className="text-gray-500 text-xs mt-1">{new Date(note.created_at).toLocaleString()}</div>
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button
-                        className="p-1 rounded-md hover:bg-white/10 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        className="p-1 rounded-md hover:bg-white/10 transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
                         onClick={(e) => e.stopPropagation()}
                         title="More actions"
                       >

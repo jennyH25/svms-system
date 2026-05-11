@@ -293,7 +293,8 @@ const EditProfileModal = ({
       isOpen={isOpen}
       onClose={onClose}
       title={<span className="font-black font-inter">Edit User Profile</span>}
-      size="md"
+      size="lg"
+      className="max-w-3xl"
       showCloseButton={true}
     >
       <form onSubmit={handleSubmit} autoComplete="off">
@@ -308,7 +309,7 @@ const EditProfileModal = ({
         {/* Full Name */}
         <div className="mb-4">
           <p className="text-sm font-semibold text-white mb-2">Full Name</p>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div>
               <label className="block text-sm font-medium text-white mb-2">
                 First Name
@@ -345,7 +346,7 @@ const EditProfileModal = ({
 
         {/* Username and School ID (student only) */}
         <div className="mb-4">
-          <div className={isStudent ? "grid grid-cols-2 gap-4" : ""}>
+          <div className={isStudent ? "grid grid-cols-1 gap-4 sm:grid-cols-2" : ""}>
             <div>
               <label className="block text-sm font-medium text-white mb-2">
                 Username
@@ -542,7 +543,7 @@ const EditProfileModal = ({
             variant="outline"
             onClick={handleCancel}
             disabled={isSaving}
-            className="px-6 py-2.5 rounded-lg bg-white text-[#1a1a1a] border-0 hover:bg-gray-100"
+            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-white text-[#1a1a1a] border-0 hover:bg-gray-100"
           >
             Cancel
           </Button>
@@ -550,7 +551,7 @@ const EditProfileModal = ({
             type="submit"
             variant="primary"
             disabled={isSaveDisabled()}
-            className="px-6 py-2.5 rounded-lg bg-[#4A5568] text-white hover:bg-[#3d4654] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-[#4A5568] text-white hover:bg-[#3d4654] disabled:opacity-50 disabled:cursor-not-allowed"
             title={
               isSaveDisabled() && isEnteringNewPassword
                 ? "Please verify your current password first"

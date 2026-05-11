@@ -465,10 +465,10 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#1a1a1a] flex items-center justify-center p-4 font-inter">
-      <div className="w-full max-w-[1100px] h-[650px] bg-[#0d0d0d] rounded-3xl overflow-hidden flex shadow-2xl border border-white/[0.30]">
+    <div className="min-h-screen bg-[#1a1a1a] flex items-center justify-center p-3 sm:p-4 lg:p-6 font-inter">
+      <div className="w-full max-w-[1100px] bg-[#0d0d0d] rounded-[28px] lg:rounded-3xl overflow-hidden flex flex-col lg:min-h-[650px] lg:flex-row shadow-2xl border border-white/[0.30]">
         {/* Left Panel */}
-        <div className="w-[45%] bg-gradient-to-b from-[#1a1a1a] to-[#0d0d0d] p-12 flex flex-col justify-between relative">
+        <div className="w-full lg:w-[45%] bg-gradient-to-b from-[#1a1a1a] to-[#0d0d0d] px-6 py-8 sm:px-8 sm:py-10 lg:p-12 flex flex-col justify-between relative gap-8 lg:gap-0">
           {/* Logo */}
           <AnimatedContent
             distance={30}
@@ -477,11 +477,11 @@ const Login = () => {
             delay={0}
           >
             <div>
-              <img src={logo} alt="Logo" className="h-14 w-auto" />
+              <img src={logo} alt="Logo" className="h-12 w-auto sm:h-14" />
             </div>
           </AnimatedContent>
           {/* Welcome Text */}
-          <div className="flex-1 flex flex-col justify-center -mt-16">
+          <div className="flex-1 flex flex-col justify-center lg:-mt-16">
             <AnimatedContent
               distance={30}
               direction="vertical"
@@ -515,23 +515,19 @@ const Login = () => {
             duration={0.6}
             delay={0.3}
           >
-            <div className="text-gray-500 text-xs leading-relaxed">
-              Track, manage, and resolve student
-              <br />
-              violations efficiently. Maintain accurate
-              <br />
-              records and promote a safe learning
-              <br />
+            <div className="max-w-md text-gray-500 text-xs sm:text-sm leading-relaxed">
+              Track, manage, and resolve student violations efficiently.
+              Maintain accurate records and promote a safe learning
               environment.
             </div>
           </AnimatedContent>
         </div>
 
         {/* Right Panel */}
-        <div className="w-[55%] bg-[#0F1113]/30 p-12 relative overflow-y-auto">
+        <div className="w-full lg:w-[55%] bg-[#0F1113]/30 px-6 py-8 sm:px-8 sm:py-10 lg:p-12 relative overflow-y-auto">
           {!isForgotPassword ? (
-            <div className="mt-10">
-              <div className="mb-12 flex items-center gap-3">
+            <div className="mt-0 sm:mt-2 lg:mt-10">
+              <div className="mb-8 sm:mb-10 lg:mb-12 flex items-center gap-3">
                 {isSuperAdminVerification && (
                   <button
                     type="button"
@@ -560,7 +556,7 @@ const Login = () => {
                   duration={0.6}
                   delay={0.2}
                 >
-                  <h2 className="text-white text-4xl font-bold">
+                  <h2 className="text-white text-3xl sm:text-4xl font-bold">
                     {isSuperAdminVerification ? "Verify Super Admin" : "Login"}
                   </h2>
                 </AnimatedContent>
@@ -583,7 +579,7 @@ const Login = () => {
                 delay={0.3}
               >
                 {!isSuperAdminVerification ? (
-                  <form onSubmit={handleLogin} className="space-y-8">
+                  <form onSubmit={handleLogin} className="space-y-6 sm:space-y-8">
                     <GlassInput
                       label="USERNAME OR EMAIL"
                       type="text"
@@ -623,7 +619,7 @@ const Login = () => {
                     <button
                       type="submit"
                       disabled={isLoading}
-                      className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest mt-6 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                      className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] text-sm sm:text-base font-bold py-4 rounded-lg tracking-[0.2em] sm:tracking-widest mt-6 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-3"
                     >
                       {isLoading && (
                         <div className="w-5 h-5 border-3 border-[#1a1a1a] border-t-transparent rounded-full animate-spin" />
@@ -636,7 +632,7 @@ const Login = () => {
                     <p className="text-gray-400 text-sm mb-6">
                       Enter the 6-digit verification code sent to your email to continue the super admin login.
                     </p>
-                    <form onSubmit={handleSuperAdminVerifyCode} className="space-y-8">
+                    <form onSubmit={handleSuperAdminVerifyCode} className="space-y-6 sm:space-y-8">
                       <GlassInput
                         label="VERIFICATION CODE"
                         type="text"
@@ -665,7 +661,7 @@ const Login = () => {
                       <button
                         type="submit"
                         disabled={isVerifyingCode}
-                        className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98] disabled:opacity-60"
+                        className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] text-sm sm:text-base font-bold py-4 rounded-lg tracking-[0.2em] sm:tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98] disabled:opacity-60"
                       >
                         {isVerifyingCode ? "VERIFYING..." : "VERIFY CODE"}
                       </button>
@@ -676,8 +672,8 @@ const Login = () => {
             </div>
           ) : (
             // Forgot Password Flow
-            <div className="mt-10">
-              <div className="flex items-center gap-3 mb-12">
+            <div className="mt-0 sm:mt-2 lg:mt-10">
+              <div className="flex items-center gap-3 mb-8 sm:mb-10 lg:mb-12">
                 <button
                   onClick={handleBackToLogin}
                   className="text-gray-400 hover:text-white transition-colors"
@@ -696,7 +692,7 @@ const Login = () => {
                     />
                   </svg>
                 </button>
-                <h2 className="text-white text-4xl font-bold">
+                <h2 className="text-white text-3xl sm:text-4xl font-bold">
                   Reset Password
                 </h2>
               </div>
@@ -738,7 +734,7 @@ const Login = () => {
                     <p className="text-gray-400 text-sm mb-6">
                       Enter your email address to receive a verification code
                     </p>
-                    <form onSubmit={handleSendEmail} className="space-y-8">
+                    <form onSubmit={handleSendEmail} className="space-y-6 sm:space-y-8">
                       <GlassInput
                         label="EMAIL ADDRESS"
                         type="email"
@@ -748,7 +744,7 @@ const Login = () => {
                       <button
                         type="submit"
                         disabled={isSendingCode}
-                        className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
+                        className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] text-sm sm:text-base font-bold py-4 rounded-lg tracking-[0.2em] sm:tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
                       >
                         {isSendingCode ? "SENDING..." : "SEND EMAIL"}
                       </button>
@@ -761,7 +757,7 @@ const Login = () => {
                     <p className="text-gray-400 text-sm mb-6">
                       Enter the 6-digit verification code sent to your email
                     </p>
-                    <form onSubmit={handleVerifyCode} className="space-y-8">
+                    <form onSubmit={handleVerifyCode} className="space-y-6 sm:space-y-8">
                       <GlassInput
                         label="VERIFICATION CODE"
                         type="text"
@@ -790,7 +786,7 @@ const Login = () => {
                       <button
                         type="submit"
                         disabled={isVerifyingCode}
-                        className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
+                        className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] text-sm sm:text-base font-bold py-4 rounded-lg tracking-[0.2em] sm:tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
                       >
                         {isVerifyingCode ? "VERIFYING..." : "VERIFY CODE"}
                       </button>
@@ -808,7 +804,7 @@ const Login = () => {
                         {passwordValidationError}
                       </div>
                     )}
-                    <form onSubmit={handleNewPassword} className="space-y-8">
+                    <form onSubmit={handleNewPassword} className="space-y-6 sm:space-y-8">
                       <div>
                         <label className="block text-sm font-medium text-gray-300 mb-2">
                           NEW PASSWORD <span className="text-red-400">*</span> <span className="text-xs text-gray-500">(Required)</span>
@@ -936,7 +932,7 @@ const Login = () => {
                       <button
                         type="submit"
                         disabled={isResettingPassword}
-                        className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
+                        className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] text-sm sm:text-base font-bold py-4 rounded-lg tracking-[0.2em] sm:tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
                       >
                         {isResettingPassword ? "SAVING..." : "RESET PASSWORD"}
                       </button>
@@ -945,7 +941,7 @@ const Login = () => {
                 )}
 
                 {forgotPasswordStep === 4 && (
-                  <div className="text-center py-12">
+                  <div className="text-center py-8 sm:py-12">
                     <div className="mb-6">
                       <svg
                         className="w-16 h-16 mx-auto text-green-400"
@@ -970,7 +966,7 @@ const Login = () => {
                     </p>
                     <button
                       onClick={handleBackToLogin}
-                      className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] font-bold py-4 rounded-lg tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
+                      className="w-full bg-[#c4c4c4] hover:bg-[#e4e4e4] text-[#1a1a1a] text-sm sm:text-base font-bold py-4 rounded-lg tracking-[0.2em] sm:tracking-widest transition-all duration-300 hover:scale-[1.02] hover:shadow-lg hover:shadow-white/10 active:scale-[0.98]"
                     >
                       BACK TO LOGIN
                     </button>

@@ -262,23 +262,23 @@ const Navbar = ({ onRequestLogout }) => {
 
   return (
     <>
-      <header className="bg-black/30 px-8 py-4 flex justify-between items-center font-inter">
+      <header className="bg-black/30 px-4 py-3 sm:px-6 lg:px-8 lg:py-4 flex justify-between items-center gap-3 font-inter">
         {/* Welcome Message */}
-        <div>
-          <h1 className="text-lg text-white">
+        <div className="min-w-0">
+          <h1 className="text-sm sm:text-base lg:text-lg text-white">
             <span className="font-bold">Welcome,</span>{' '}
             <span className="font-normal">{welcomeRole}</span>!
           </h1>
         </div>
 
         {/* Right Side */}
-        <div className="flex items-center gap-5">
+        <div className="flex items-center gap-2 sm:gap-3 lg:gap-5">
           {/* Notification Bell */}
           {currentUser?.role === 'student' && (
             <DropdownMenu open={isNotificationMenuOpen} onOpenChange={setIsNotificationMenuOpen}>
               <DropdownMenuTrigger asChild>
-                <button className="relative flex h-11 w-11 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-white/5 hover:text-white">
-                  <Bell className="h-6 w-6" strokeWidth={2.1} />
+                <button className="relative flex h-10 w-10 sm:h-11 sm:w-11 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-white/5 hover:text-white">
+                  <Bell className="h-5 w-5 sm:h-6 sm:w-6" strokeWidth={2.1} />
                   {notifCount > 0 && (
                     <span className="absolute -right-1 -top-1 min-w-[1.25rem] rounded-full bg-red-500 px-1.5 py-[2px] text-center text-[10px] font-bold leading-none text-white shadow-md">
                       {notifCount > 9 ? '9+' : notifCount}
@@ -286,7 +286,7 @@ const Navbar = ({ onRequestLogout }) => {
                   )}
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-[#1E1F22]/95 backdrop-blur-md border border-white/10 rounded-xl shadow-lg w-80 p-0">
+              <DropdownMenuContent align="end" className="bg-[#1E1F22]/95 backdrop-blur-md border border-white/10 rounded-xl shadow-lg w-[min(20rem,calc(100vw-1.5rem))] sm:w-80 p-0">
                 <div className="flex items-center justify-between p-4 border-b border-white/10">
                   <h3 className="text-white font-semibold">Notifications</h3>
                   <div className="relative">
