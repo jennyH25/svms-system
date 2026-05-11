@@ -979,6 +979,8 @@ export async function syncSystemSettingsDatabase() {
       theme_color VARCHAR(7),
       current_semester VARCHAR(20) DEFAULT '1ST SEM',
       current_school_year VARCHAR(20) DEFAULT '2025-2026',
+      offenses_handbook_title VARCHAR(255) DEFAULT 'PLP Student Handbook 2025',
+      offenses_handbook_url TEXT DEFAULT 'https://online.fliphtml5.com/befok/lfwi/',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -993,6 +995,16 @@ export async function syncSystemSettingsDatabase() {
   await dbPool.query(`
     ALTER TABLE "SystemSettings"
     ADD COLUMN IF NOT EXISTS current_school_year VARCHAR(20) DEFAULT '2025-2026'
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE "SystemSettings"
+    ADD COLUMN IF NOT EXISTS offenses_handbook_title VARCHAR(255) DEFAULT 'PLP Student Handbook 2025'
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE "SystemSettings"
+    ADD COLUMN IF NOT EXISTS offenses_handbook_url TEXT DEFAULT 'https://online.fliphtml5.com/befok/lfwi/'
   `);
 
   await dbPool.query(`

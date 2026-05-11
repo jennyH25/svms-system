@@ -9,7 +9,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
+import SuspensionTableButton from '@/components/violations/SuspensionTableButton'
 import { getAuditHeaders } from '@/lib/auditHeaders'
+import { cachedFetchJSON, invalidateFetchCache } from '@/lib/fetchHelper'
 import { Plus, Edit, Trash2, ChevronDown, ChevronRight, MoreVertical, CheckCircle } from 'lucide-react'
 
 const DEGREE_ORDER = ['First Degree', 'Second Degree', 'Third Degree', 'Fourth Degree', 'Fifth Degree', 'Sixth Degree', 'Seventh Degree']
@@ -67,8 +69,10 @@ const Violations = () => {
   const [editFormErrors, setEditFormErrors] = useState({ category: '', degree: '', name: '' })
   const [violationsData, setViolationsData] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [expandedRows, setExpandedRows] = useState(new Set())
   const [isAddingViolation, setIsAddingViolation] = useState(false)
+  const [isEditingViolation, setIsEditingViolation] = useState(false)
   const [isDeletingViolation, setIsDeletingViolation] = useState(false)
   const [successModal, setSuccessModal] = useState({
     isOpen: false,
@@ -79,27 +83,51 @@ const Violations = () => {
   const [highlightedViolationId, setHighlightedViolationId] = useState(null)
   const highlightTimeoutRef = useRef(null)
   
-  useEffect(() => {
-    fetchViolations()
-  }, [])
-
-  const fetchViolations = async ({ silent = false } = {}) => {
+  const fetchViolations = async ({ silent = false, forceRefresh = false } = {}) => {
     if (!silent) {
       setLoading(true)
     }
+
     try {
-      const response = await fetch(`/api/violations?t=${Date.now()}`)
-      const data = await response.json()
-      if (data.status === 'ok') {
-        setViolationsData(sortViolations(data.violations || []))
+      if (!silent) {
+        setLoadError('')
       }
+
+      const result = await cachedFetchJSON('/api/violations', {
+        headers: { ...getAuditHeaders() },
+      }, {
+        ttlMs: 20000,
+        staleWhileRevalidate: !forceRefresh,
+        forceRefresh,
+        timeoutMs: 10000,
+        maxRetries: 1,
+      })
+      const data = result.data || {}
+
+      if (result.status !== 'ok' || data.status !== 'ok') {
+        throw new Error(result.error || data.message || 'Unable to load violations.')
+      }
+
+      setViolationsData(Array.isArray(data.violations) ? data.violations : [])
     } catch (error) {
       console.error('Error fetching violations:', error)
+      if (!silent) {
+        setLoadError(error.message || 'Unable to load violations right now.')
+      }
     } finally {
       if (!silent) {
         setLoading(false)
       }
     }
+  }
+
+  useEffect(() => {
+    fetchViolations()
+  }, [])
+
+  const refreshViolationsCache = async () => {
+    invalidateFetchCache('/api/violations')
+    await fetchViolations({ silent: true, forceRefresh: true })
   }
 
   useEffect(() => {
@@ -305,7 +333,7 @@ const Violations = () => {
         title: 'Violation Deleted',
         message: `"${deleteTarget.name}" was deleted successfully.`,
       })
-      fetchViolations({ silent: true })
+      refreshViolationsCache()
     } catch (error) {
       console.error('Error deleting violation:', error)
       setFormError('')
@@ -431,7 +459,7 @@ const Violations = () => {
         title: 'Violation Added',
         message: `"${createdParent.name}" was added successfully.`,
       })
-      fetchViolations({ silent: true })
+      refreshViolationsCache()
     } catch (error) {
       console.error('Error adding violation:', error)
       setFormError(error.message || 'Network error while adding violation.')
@@ -459,34 +487,79 @@ const Violations = () => {
   }
 
   const handleEditViolation = async () => {
+    if (isEditingViolation) return
     if (!validateEditForm()) {
       setEditFormError('Please answer all the required fields.')
       return
     }
-    setEditFormError('');
+    setEditFormError('')
 
+    const payload = {
+      ...editFormData,
+      category: String(editFormData.category || '').trim(),
+      degree: String(editFormData.degree || '').trim(),
+      name: String(editFormData.name || '').trim(),
+      children: (editFormData.children || []).map((c) => c.trim()).filter(Boolean),
+    }
+
+    setIsEditingViolation(true)
     try {
-      const response = await fetch(`/api/violations/${editFormData.id}`, {
+      const response = await fetch(`/api/violations/${payload.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           ...getAuditHeaders(),
         },
-        body: JSON.stringify({
-          ...editFormData,
-          children: (editFormData.children || []).map((c) => c.trim()).filter(Boolean),
-        })
+        body: JSON.stringify(payload)
       })
-      if (response.ok) {
-        setIsEditModalOpen(false)
-        fetchViolations()
-      } else {
-        const data = await response.json();
-        setEditFormError(data.message || 'Failed to update violation.');
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        setEditFormError(data.message || 'Failed to update violation.')
+        return
       }
+
+      const updatedParent = data?.violation
+      if (!updatedParent?.id) {
+        throw new Error('Violation was updated, but the response was incomplete.')
+      }
+
+      const updatedChildren = Array.isArray(data.children) ? data.children : []
+
+      setViolationsData((prev) => {
+        const nextItems = prev.filter(
+          (item) => Number(item.id) !== Number(updatedParent.id) && Number(item.parent_id) !== Number(updatedParent.id),
+        )
+
+        return sortViolations([...nextItems, updatedParent, ...updatedChildren])
+      })
+
+      setCategoryFilter(getCategoryFilterForDegree(updatedParent.degree))
+      setSpecificDegree('')
+      setExpandedRows((prev) => {
+        const next = new Set(prev)
+        if (updatedChildren.length > 0) {
+          next.add(updatedParent.id)
+        } else {
+          next.delete(updatedParent.id)
+        }
+        return next
+      })
+      setHighlightedViolationId(updatedParent.id)
+      setSelectedViolation(updatedParent)
+      setIsEditModalOpen(false)
+      setSuccessModal({
+        isOpen: true,
+        type: 'success',
+        title: 'Violation Updated',
+        message: `"${updatedParent.name}" was updated successfully.`,
+      })
+      refreshViolationsCache()
     } catch (error) {
       console.error('Error editing violation:', error)
-      setEditFormError('Network error while updating violation.');
+      setEditFormError(error.message || 'Network error while updating violation.')
+    } finally {
+      setIsEditingViolation(false)
     }
   }
 
@@ -523,22 +596,25 @@ const Violations = () => {
     <div className="text-white">
       {/* Header */}
       <AnimatedContent>
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-xl font-bold tracking-wide">VIOLATIONS</h2>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="gap-2 flex items-center"
-            onClick={() => {
-              setFormError('')
-              setFormErrors({ category: '', degree: '', name: '' })
-              setFormData({ category: '', degree: '', name: '', parentId: null, children: [] })
-              setIsModalOpen(true)
-            }}
-          >
-            <Plus className="w-4 h-4" />
-            Add Violation
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <SuspensionTableButton canEdit />
+            <Button
+              variant="secondary"
+              size="sm"
+              className="gap-2 flex items-center"
+              onClick={() => {
+                setFormError('')
+                setFormErrors({ category: '', degree: '', name: '' })
+                setFormData({ category: '', degree: '', name: '', parentId: null, children: [] })
+                setIsModalOpen(true)
+              }}
+            >
+              <Plus className="w-4 h-4" />
+              Add Violation
+            </Button>
+          </div>
         </div>
       </AnimatedContent>
 
@@ -605,6 +681,14 @@ const Violations = () => {
       <AnimatedContent distance={40} delay={0.3}>
         <div className="bg-[#23262B] rounded-xl p-6">
           <h3 className="text-lg font-bold mb-4">List of Violation</h3>
+          {loadError && (
+            <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-400/25 bg-red-500/10 px-4 py-3">
+              <p className="text-sm text-red-200">{loadError}</p>
+              <Button variant="secondary" size="sm" onClick={() => fetchViolations({ forceRefresh: true })}>
+                Retry
+              </Button>
+            </div>
+          )}
           <div className="bg-[#EAECF0] rounded-xl overflow-hidden">
             <table className="w-full">
               <thead className="bg-[#FFFFFF]">
@@ -863,6 +947,7 @@ const Violations = () => {
       <Modal
         isOpen={isEditModalOpen}
         onClose={() => {
+          if (isEditingViolation) return
           setIsEditModalOpen(false);
           setEditFormError('');
           setEditFormErrors({ category: '', degree: '', name: '' });
@@ -1005,6 +1090,7 @@ const Violations = () => {
           <Button
             variant="outline"
             onClick={() => setIsEditModalOpen(false)}
+            disabled={isEditingViolation}
             className="min-w-[120px] border-white/15 bg-white text-[#1a1a1a] hover:bg-gray-100"
           >
             Cancel
@@ -1012,9 +1098,17 @@ const Violations = () => {
           <Button
             variant="primary"
             onClick={handleEditViolation}
+            disabled={isEditingViolation}
             className="min-w-[170px] bg-[#556987] text-white hover:bg-[#3d4654]"
           >
-            Update Violation
+            {isEditingViolation ? (
+              <>
+                <Spinner />
+                Updating...
+              </>
+            ) : (
+              'Update Changes'
+            )}
           </Button>
         </ModalFooter>
       </Modal>

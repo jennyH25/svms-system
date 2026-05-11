@@ -9,6 +9,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
+import SuspensionTableButton from '@/components/violations/SuspensionTableButton'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
 const StudentOffensesList = () => {
@@ -283,8 +284,9 @@ const StudentOffensesList = () => {
     <div className="text-white">
       {/* Header */}
       <AnimatedContent>
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg sm:text-xl font-bold tracking-wide">OFFENSES LIST</h2>
+          <SuspensionTableButton className="w-full sm:w-auto sm:min-w-[100px] sm:self-end" />
         </div>
       </AnimatedContent>
 

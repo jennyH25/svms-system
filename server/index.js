@@ -8010,7 +8010,8 @@ app.get("/api/settings", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     const result = await pool.query(
-      `SELECT id, setting_key, display_name, logo_path, theme, theme_color, updated_at
+      `SELECT id, setting_key, display_name, logo_path, theme, theme_color,
+              offenses_handbook_title, offenses_handbook_url, updated_at
        FROM "SystemSettings"
        WHERE setting_key = 'system_config'
        LIMIT 1`,
@@ -8047,6 +8048,11 @@ app.get("/api/settings", async (req, res) => {
           settings.display_name || "Student Violation Management System",
         theme: settings.theme || "dark",
         themeColor: settings.theme_color || "#000000",
+        offensesHandbookTitle:
+          settings.offenses_handbook_title || "PLP Student Handbook 2025",
+        offensesHandbookUrl:
+          settings.offenses_handbook_url ||
+          "https://online.fliphtml5.com/befok/lfwi/",
         updatedAt: settings.updated_at,
       },
     });
@@ -8112,7 +8118,7 @@ app.get("/api/settings/logo", async (_req, res) => {
 
 // POST/PUT system settings (display name and theme)
 app.post("/api/settings", async (req, res) => {
-  const { displayName, theme, themeColor } = req.body ?? {};
+  const { displayName, theme, themeColor, offensesHandbookTitle, offensesHandbookUrl } = req.body ?? {};
 
   if (!hasDbConfig()) {
     return res.status(500).json({
@@ -8127,13 +8133,20 @@ app.post("/api/settings", async (req, res) => {
 
     const result = await pool.query(
       `UPDATE "SystemSettings"
-       SET display_name = $1, theme = $2, theme_color = $3
+       SET display_name = COALESCE($1, display_name),
+           theme = COALESCE($2, theme),
+           theme_color = COALESCE($3, theme_color),
+           offenses_handbook_title = COALESCE($4, offenses_handbook_title),
+           offenses_handbook_url = COALESCE($5, offenses_handbook_url)
        WHERE setting_key = 'system_config'
-       RETURNING id, setting_key, display_name, logo_path, theme, theme_color, updated_at`,
+       RETURNING id, setting_key, display_name, logo_path, theme, theme_color,
+                 offenses_handbook_title, offenses_handbook_url, updated_at`,
       [
-        displayName || "Student Violation Management System",
-        theme || "dark",
-        themeColor || "#000000",
+        displayName || null,
+        theme || null,
+        themeColor || null,
+        offensesHandbookTitle || null,
+        offensesHandbookUrl || null,
       ],
     );
 
@@ -8168,6 +8181,8 @@ app.post("/api/settings", async (req, res) => {
         displayName: settings.display_name,
         theme: settings.theme,
         themeColor: settings.theme_color,
+        offensesHandbookTitle: settings.offenses_handbook_title,
+        offensesHandbookUrl: settings.offenses_handbook_url,
       },
     });
 
@@ -8180,6 +8195,11 @@ app.post("/api/settings", async (req, res) => {
         logoPath: decryptedLogoPath,
         theme: settings.theme,
         themeColor: settings.theme_color,
+        offensesHandbookTitle:
+          settings.offenses_handbook_title || "PLP Student Handbook 2025",
+        offensesHandbookUrl:
+          settings.offenses_handbook_url ||
+          "https://online.fliphtml5.com/befok/lfwi/",
         updatedAt: settings.updated_at,
       },
     });
@@ -8535,80 +8555,128 @@ app.put("/api/violations/:id", async (req, res) => {
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
-
-    const result = await pool.query(
-      `
-      UPDATE violations
-      SET category = COALESCE($1, category),
-          degree = COALESCE($2, degree),
-          name = COALESCE($3, name),
-          parent_id = $4,
-          updated_at = NOW()
-      WHERE id = $5
-      RETURNING id, category, degree, name, parent_id, created_at, updated_at
-      `,
-      [category || null, degree || null, name || null, parentId || null, id],
-    );
-
-    // if editing parent and children provided, wipe existing children then insert new list
-    if (Array.isArray(children)) {
-      await pool.query(`DELETE FROM violations WHERE parent_id = $1`, [id]);
-      for (const childName of children) {
-        await pool.query(
-          `
-          INSERT INTO violations (category, degree, name, parent_id)
-          VALUES ($1, $2, $3, $4)
-          ON CONFLICT (category, degree, name) DO NOTHING
-          `,
-          [
-            category || result.rows[0].category,
-            degree || result.rows[0].degree,
-            childName,
-            id,
-          ],
-        );
-      }
+    const normalizedChildren = Array.isArray(children)
+      ? [...new Set(children.map((child) => String(child || "").trim()).filter(Boolean))]
+      : null;
+    if (!dbSql) {
+      throw new Error("Database connection is not configured.");
     }
 
-    if (!result.rows?.[0]) {
+    const transactionResult = await dbSql.begin(async (tx) => {
+      const updatedRows = await tx.unsafe(
+        `
+        UPDATE violations
+        SET category = COALESCE($1, category),
+            degree = COALESCE($2, degree),
+            name = COALESCE($3, name),
+            parent_id = $4,
+            updated_at = NOW()
+        WHERE id = $5
+        RETURNING id, category, degree, name, parent_id, created_at, updated_at
+        `,
+        [category || null, degree || null, name || null, parentId || null, id],
+      );
+
+      const updatedViolation = updatedRows?.[0] || null;
+      if (!updatedViolation) {
+        return {
+          updatedViolation: null,
+          updatedChildren: [],
+        };
+      }
+
+      let updatedChildren = [];
+
+      if (Array.isArray(normalizedChildren)) {
+        await tx.unsafe(`DELETE FROM violations WHERE parent_id = $1`, [id]);
+
+        if (normalizedChildren.length > 0) {
+          const insertedChildrenResult = await tx.unsafe(
+            `
+            INSERT INTO violations (category, degree, name, parent_id)
+            SELECT $1, $2, child_name, $3
+            FROM unnest($4::text[]) AS child_name
+            ON CONFLICT (category, degree, name) DO NOTHING
+            RETURNING id, category, degree, name, parent_id, created_at, updated_at
+            `,
+            [
+              updatedViolation.category,
+              updatedViolation.degree,
+              updatedViolation.id,
+              normalizedChildren,
+            ],
+          );
+
+          updatedChildren = Array.isArray(insertedChildrenResult)
+            ? insertedChildrenResult
+            : [];
+        }
+      } else {
+        const existingChildrenResult = await tx.unsafe(
+          `
+          SELECT id, category, degree, name, parent_id, created_at, updated_at
+          FROM violations
+          WHERE parent_id = $1
+          ORDER BY name ASC, id ASC
+          `,
+          [updatedViolation.id],
+        );
+        updatedChildren = Array.isArray(existingChildrenResult)
+          ? existingChildrenResult
+          : [];
+      }
+
+      return {
+        updatedViolation,
+        updatedChildren,
+      };
+    });
+
+    const updatedViolation = transactionResult?.updatedViolation || null;
+    const updatedChildren = Array.isArray(transactionResult?.updatedChildren)
+      ? transactionResult.updatedChildren
+      : [];
+
+    if (!updatedViolation) {
       return res.status(404).json({
         status: "error",
         message: "Violation not found.",
       });
     }
 
-    await logAuditEvent(req, {
-      action: "UPDATE_VIOLATION",
-      targetType: "violation",
-      targetId: result.rows[0].id,
-      details: `Updated violation ${result.rows[0].name}.`,
-      metadata: {
-        category: result.rows[0].category,
-        degree: result.rows[0].degree,
-        childCount: Array.isArray(children) ? children.length : undefined,
-      },
-    });
-
-    // notify students about the change
-    try {
-      const notifTitle = "Violation updated";
-      const notifDesc = `The violation \"${result.rows[0].name}\" has been updated.`;
-      await insertNotificationForAllStudents(pool, {
-        title: notifTitle,
-        description: notifDesc,
-        metadata: {
-          type: "violation_updated",
-          violationId: result.rows[0].id,
-        },
-      });
-    } catch (notifErr) {
-      console.warn("Failed to insert violation update notifications", notifErr);
-    }
-
-    return res.status(200).json({
+    res.status(200).json({
       status: "ok",
-      violation: result.rows[0],
+      violation: updatedViolation,
+      children: updatedChildren,
     });
+
+    runBackgroundTask(async () => {
+      await Promise.allSettled([
+        logAuditEvent(req, {
+          action: "UPDATE_VIOLATION",
+          targetType: "violation",
+          targetId: updatedViolation.id,
+          details: `Updated violation ${updatedViolation.name}.`,
+          metadata: {
+            category: updatedViolation.category,
+            degree: updatedViolation.degree,
+            childCount: Array.isArray(normalizedChildren)
+              ? updatedChildren.length
+              : undefined,
+          },
+        }),
+        insertNotificationForAllStudents(pool, {
+          title: "Violation updated",
+          description: `The violation "${updatedViolation.name}" has been updated.`,
+          metadata: {
+            type: "violation_updated",
+            violationId: updatedViolation.id,
+          },
+        }),
+      ]);
+    }, "Update violation follow-up");
+
+    return;
   } catch (error) {
     return res.status(503).json({
       status: "error",
