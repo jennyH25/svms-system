@@ -4,7 +4,7 @@ import SearchBar from "../../components/ui/SearchBar";
 import Button from "../../components/ui/Button";
 import DataTable from "../../components/ui/DataTable";
 import TableTabs from "../../components/ui/TableTabs";
-import { Folder, Download, X, AlertCircle, MoreVertical, Edit, RotateCcw, Trash2, Check, CheckCircle, Tag, CalendarDays, SortAsc, Upload, UserRound, ShieldAlert, Mail, GraduationCap, CalendarClock, FileText, Database, Archive, ArrowUpRight, IdCard, Loader2 } from "lucide-react";
+import { Folder, Download, X, AlertCircle, MoreVertical, Edit, Eye, RotateCcw, Trash2, Check, CheckCircle, Tag, CalendarDays, SortAsc, Upload, UserRound, ShieldAlert, Mail, GraduationCap, CalendarClock, FileText, Database, Archive, ArrowUpRight, IdCard, Loader2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -432,6 +432,7 @@ const Archives = () => {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
   const [editType, setEditType] = useState("user"); // "user" or "violation"
+  const [isReadOnlyEditModal, setIsReadOnlyEditModal] = useState(false);
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
   const [userToRestore, setUserToRestore] = useState(null);
   const [isRestoreLoading, setIsRestoreLoading] = useState(false);
@@ -1034,6 +1035,7 @@ const Archives = () => {
         setIsRestoreModalOpen(false);
         setUserToRestore(null);
         setError("");
+        window.dispatchEvent(new CustomEvent("archiveCompleted"));
       } else {
         setError(data.message || "Failed to restore user");
       }
@@ -1985,6 +1987,10 @@ const Archives = () => {
 
             // Record actions
             if (row.recordType === "user") {
+              const isGraduatedUserInUsersFolder =
+                row.folderKey === "users" &&
+                String(row.status || "").trim().toLowerCase() === "graduated";
+
               return (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -1996,9 +2002,13 @@ const Archives = () => {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
-                    <DropdownMenuItem onClick={() => handleEdit(row, "user")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
-                      <Edit className="w-4 h-4" />
-                      <span>Edit</span>
+                    <DropdownMenuItem onClick={() => handleEdit(row, "user", isGraduatedUserInUsersFolder)} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
+                      {isGraduatedUserInUsersFolder ? (
+                        <Eye className="w-4 h-4" />
+                      ) : (
+                        <Edit className="w-4 h-4" />
+                      )}
+                      <span>{isGraduatedUserInUsersFolder ? "View" : "Edit"}</span>
                     </DropdownMenuItem>
                     {row.status !== "Graduated" && (
                       <DropdownMenuItem onClick={() => handleRestoreClick(row)} className="gap-2 cursor-pointer text-green-700 hover:bg-green-100 hover:text-green-800 focus:bg-green-100 focus:text-green-800">
@@ -2096,9 +2106,27 @@ const Archives = () => {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
-                  <DropdownMenuItem onClick={() => handleEdit(row, "user")} className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900">
-                    <Edit className="w-4 h-4" />
-                    <span>Edit</span>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      const isGraduatedUserInUsersFolder =
+                        row.folderKey === "users" &&
+                        String(row.status || "").trim().toLowerCase() === "graduated";
+                      handleEdit(row, "user", isGraduatedUserInUsersFolder);
+                    }}
+                    className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900"
+                  >
+                    {row.folderKey === "users" &&
+                    String(row.status || "").trim().toLowerCase() === "graduated" ? (
+                      <Eye className="w-4 h-4" />
+                    ) : (
+                      <Edit className="w-4 h-4" />
+                    )}
+                    <span>
+                      {row.folderKey === "users" &&
+                      String(row.status || "").trim().toLowerCase() === "graduated"
+                        ? "View"
+                        : "Edit"}
+                    </span>
                   </DropdownMenuItem>
                   {row.status !== "Graduated" && (
                     <DropdownMenuItem onClick={() => handleRestoreClick(row)} className="gap-2 cursor-pointer text-green-700 hover:bg-green-100 hover:text-green-800 focus:bg-green-100 focus:text-green-800">
@@ -2513,9 +2541,10 @@ const Archives = () => {
     }
   };
 
-  const handleEdit = (row, type) => {
+  const handleEdit = (row, type, readOnly = false) => {
     setSelectedRow(row);
     setEditType(type);
+    setIsReadOnlyEditModal(Boolean(readOnly));
     setIsEditOpen(true);
   };
 
@@ -3715,10 +3744,12 @@ const Archives = () => {
           onClose={() => {
             setIsEditOpen(false);
             setSelectedRow(null);
+            setIsReadOnlyEditModal(false);
           }}
           record={selectedRow}
           editType={editType}
           onSave={handleSaveEdit}
+          readOnly={isReadOnlyEditModal}
         />
       )}
 

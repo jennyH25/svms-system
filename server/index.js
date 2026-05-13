@@ -3197,6 +3197,52 @@ function buildAdminAlertEmailTemplate({
 
 // Cached transporter — created once, reused for all emails.
 let _mailTransporter = null;
+let _mailSendLimitBlockedUntilMs = 0;
+
+function isDailyMailLimitError(error) {
+  const responseText = String(error?.response || "").toLowerCase();
+  const messageText = String(error?.message || "").toLowerCase();
+  return (
+    responseText.includes("daily user sending limit exceeded") ||
+    responseText.includes("sending limit") ||
+    messageText.includes("daily user sending limit exceeded")
+  );
+}
+
+function isMailSendTemporarilyBlocked() {
+  return _mailSendLimitBlockedUntilMs > Date.now();
+}
+
+function blockMailSendsForDailyLimit() {
+  // Gmail quota resets every 24h; block retries during that window.
+  _mailSendLimitBlockedUntilMs = Date.now() + 24 * 60 * 60 * 1000;
+}
+
+async function sendMailWithLimitGuard(mailOptions, contextLabel) {
+  const transporter = getMailTransporter();
+  if (!transporter) {
+    return { sent: false, reason: "smtp-not-configured" };
+  }
+
+  if (isMailSendTemporarilyBlocked()) {
+    console.warn(`SMTP send skipped (${contextLabel}): daily sending limit is on cooldown.`);
+    return { sent: false, reason: "daily-limit-cooldown" };
+  }
+
+  try {
+    await transporter.sendMail(mailOptions);
+    return { sent: true };
+  } catch (error) {
+    if (isDailyMailLimitError(error)) {
+      blockMailSendsForDailyLimit();
+      console.warn(
+        `SMTP send skipped (${contextLabel}): Gmail daily sending limit exceeded.`,
+      );
+      return { sent: false, reason: "daily-limit-exceeded" };
+    }
+    throw error;
+  }
+}
 
 function getMailTransporter() {
   const smtpUser = process.env.SMTP_USER;
@@ -11269,9 +11315,8 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
       );
       const userEmail = studentEmailResult.rows?.[0]?.email;
       if (shouldActivate && userEmail) {
-        const transporter = getMailTransporter();
-        if (transporter) {
-          await transporter.sendMail({
+        const sendResult = await sendMailWithLimitGuard(
+          {
             from: process.env.SMTP_FROM || process.env.SMTP_USER,
             to: userEmail,
             subject: "Account Restored",
@@ -11290,8 +11335,10 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
               `,
               footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
             }),
-          });
-        } else {
+          },
+          "restore-single-user",
+        );
+        if (sendResult.reason === "smtp-not-configured") {
           console.warn("SMTP not configured. Restoration email was skipped for:", userEmail);
         }
       }
@@ -11385,9 +11432,8 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
         );
         const userEmail = studentEmailResult.rows?.[0]?.email;
         if (shouldActivate && userEmail) {
-          const transporter = getMailTransporter();
-          if (transporter) {
-            await transporter.sendMail({
+          const sendResult = await sendMailWithLimitGuard(
+            {
               from: process.env.SMTP_FROM || process.env.SMTP_USER,
               to: userEmail,
               subject: "Account Restored",
@@ -11406,8 +11452,10 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
                 `,
                 footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
               }),
-            });
-          } else {
+            },
+            "restore-all-users",
+          );
+          if (sendResult.reason === "smtp-not-configured") {
             console.warn("SMTP not configured. Restoration email was skipped for:", userEmail);
           }
         }

@@ -289,7 +289,8 @@ const UserManagement = () => {
   }, []);
 
   useEffect(() => {
-    fetchStudents();
+    // Force-refresh on mount so newly restored users are visible immediately.
+    fetchStudents(true);
   }, [fetchStudents]);
 
   useEffect(() => {
@@ -301,6 +302,18 @@ const UserManagement = () => {
     window.addEventListener("studentViolationUpdated", handleStudentViolationUpdate);
     return () => {
       window.removeEventListener("studentViolationUpdated", handleStudentViolationUpdate);
+    };
+  }, [fetchStudents]);
+
+  useEffect(() => {
+    const handleArchiveCompleted = async () => {
+      invalidateFetchCache("/api/students");
+      await fetchStudents(true);
+    };
+
+    window.addEventListener("archiveCompleted", handleArchiveCompleted);
+    return () => {
+      window.removeEventListener("archiveCompleted", handleArchiveCompleted);
     };
   }, [fetchStudents]);
 

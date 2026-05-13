@@ -114,7 +114,14 @@ function splitMiddleInitialFromFirstName(firstName, middleInitial) {
   };
 }
 
-const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }) => {
+const EditArchiveModal = ({
+  isOpen,
+  onClose,
+  record,
+  editType = "user",
+  onSave,
+  readOnly = false,
+}) => {
   const [formData, setFormData] = useState({});
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -192,6 +199,9 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (readOnly) {
+      return;
+    }
     setError("");
     setIsLoading(true);
 
@@ -238,7 +248,13 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
       onClose={onClose}
       title={
         <span className="font-black font-inter">
-          {editType === "user" ? "Edit Archived User" : "Edit Archived Violation"}
+          {editType === "user"
+            ? readOnly
+              ? "View Archived User"
+              : "Edit Archived User"
+            : readOnly
+              ? "View Archived Violation"
+              : "Edit Archived Violation"}
         </span>
       }
       size="lg"
@@ -247,8 +263,12 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
       <form onSubmit={handleSubmit}>
         <p className="text-sm text-gray-400 mb-4">
           {editType === "user"
-            ? "Update the archived student's information."
-            : "Update the archived violation record."}
+            ? readOnly
+              ? "Viewing archived student information."
+              : "Update the archived student's information."
+            : readOnly
+              ? "Viewing archived violation details."
+              : "Update the archived violation record."}
         </p>
 
         {error && (
@@ -267,6 +287,7 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
                 value={formData.firstName}
                 onChange={handleChange}
                 placeholder="First Name"
+                disabled={readOnly}
               />
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">Middle Initial</span>}
@@ -275,6 +296,7 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
                 onChange={handleChange}
                 placeholder="M"
                 maxLength={2}
+                disabled={readOnly}
               />
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">Last Name</span>}
@@ -282,6 +304,7 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
                 value={formData.lastName}
                 onChange={handleChange}
                 placeholder="Last Name"
+                disabled={readOnly}
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -300,6 +323,7 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
                 value={formData.program}
                 onChange={handleChange}
                 placeholder="Program"
+                disabled={readOnly}
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -309,6 +333,7 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
                 value={formData.yearSection}
                 onChange={handleChange}
                 placeholder="e.g., 1A, 2B, 3C"
+                disabled={readOnly}
               />
               <GlassInput
                 label={<span className="text-sm font-medium text-white mb-2">Status</span>}
@@ -437,30 +462,32 @@ const EditArchiveModal = ({ isOpen, onClose, record, editType = "user", onSave }
           </>
         )}
 
-        <ModalFooter>
-          <Button
-            variant="outline"
-            type="button"
-            onClick={onClose}
-            disabled={isLoading}
-            className="px-8 py-2 bg-white text-[#1a1a1a] border-0 hover:bg-gray-100"
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            type="submit"
-            disabled={isLoading}
-            className="px-8 py-2 bg-[#556987] text-white hover:bg-[#3d4654]"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="sr-only">Saving changes</span>
-              </>
-            ) : "Save Changes"}
-          </Button>
-        </ModalFooter>
+        {!readOnly && (
+          <ModalFooter>
+            <Button
+              variant="outline"
+              type="button"
+              onClick={onClose}
+              disabled={isLoading}
+              className="px-8 py-2 bg-white text-[#1a1a1a] border-0 hover:bg-gray-100"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={isLoading}
+              className="px-8 py-2 bg-[#556987] text-white hover:bg-[#3d4654]"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="sr-only">Saving changes</span>
+                </>
+              ) : "Save Changes"}
+            </Button>
+          </ModalFooter>
+        )}
       </form>
     </Modal>
   );
