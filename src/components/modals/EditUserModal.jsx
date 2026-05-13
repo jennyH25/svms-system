@@ -6,6 +6,7 @@ import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 
 const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
+  const allowedEmailDomain = "@plpasig.edu.ph";
   const [formData, setFormData] = useState({
     username: "",
     firstName: "",
@@ -18,6 +19,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
     status: "",
     violationCount: 0,
   });
+  const [emailError, setEmailError] = useState("");
 
   useEffect(() => {
     if (user) {
@@ -33,16 +35,45 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
         status: user.status || "",
         violationCount: Number(user.violationCount) || 0,
       });
+      setEmailError("");
     }
   }, [user]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    if (name === "email" && emailError) {
+      setEmailError("");
+    }
     setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const validateEmail = (value) => {
+    const normalizedEmail = String(value || "").trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      return "Please enter an email address.";
+    }
+
+    if (!normalizedEmail.includes("@")) {
+      return "Please enter a valid email address.";
+    }
+
+    if (!normalizedEmail.endsWith(allowedEmailDomain)) {
+      return `Email must end with ${allowedEmailDomain}.`;
+    }
+
+    return "";
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const errorMessage = validateEmail(formData.email);
+    if (errorMessage) {
+      setEmailError(errorMessage);
+      return;
+    }
+
+    setEmailError("");
     await onSave(user.id, formData);
   };
 
@@ -152,8 +183,14 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
             type="email"
             value={formData.email}
             onChange={handleChange}
-            placeholder="student@email.com"
+            placeholder={`name${allowedEmailDomain}`}
+            aria-describedby="edit-user-email-error"
           />
+          {emailError && (
+            <p id="edit-user-email-error" className="mt-2 text-sm text-red-300">
+              {emailError}
+            </p>
+          )}
         </div>
 
         <ModalDivider />

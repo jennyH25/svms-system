@@ -767,6 +767,49 @@ function buildImportedStudentEmail({ firstName, lastName, fallbackHash }) {
   return `${safeLocalPart}@plpasig.edu.ph`;
 }
 
+const STUDENT_EMAIL_DOMAIN = "@plpasig.edu.ph";
+const BULK_IMPORT_PASSWORD_HASH_ROUNDS = 5;
+
+function isAllowedStudentEmail(email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  return Boolean(normalizedEmail) && normalizedEmail.endsWith(STUDENT_EMAIL_DOMAIN);
+}
+
+function getInvalidStudentEmailMessage(email) {
+  return `Email '${String(email || "").trim()}' is invalid. Only ${STUDENT_EMAIL_DOMAIN} email addresses are allowed.`;
+}
+
+async function syncStudentUserAccountState(pool, student, options = {}) {
+  const userId = Number(student?.user_id || 0);
+  if (!userId) {
+    return;
+  }
+
+  const status = String(student?.status || "")
+    .trim()
+    .toLowerCase();
+  const isArchived = Boolean(student?.is_archived);
+  const shouldDeactivate =
+    status === "graduated" || Boolean(options.deactivateAccount) || false;
+  const shouldActivate =
+    status !== "graduated" && !isArchived && options.reactivateIfEligible === true;
+
+  if (shouldDeactivate) {
+    await pool.query(
+      `UPDATE users SET is_active = FALSE, updated_at = NOW() WHERE id = $1 AND role = 'student'`,
+      [userId],
+    );
+    return;
+  }
+
+  if (shouldActivate) {
+    await pool.query(
+      `UPDATE users SET is_active = TRUE, updated_at = NOW() WHERE id = $1 AND role = 'student'`,
+      [userId],
+    );
+  }
+}
+
 async function getHistoricalWorkbookViolationCount(studentName) {
   const normalizedName = normalizeWorkbookComparisonText(studentName);
   if (!normalizedName) {
@@ -3456,6 +3499,16 @@ async function generateStudentUsername(pool, firstName, lastName) {
   }
 }
 
+function buildBulkImportStudentUsername(schoolId) {
+  const normalized = String(schoolId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return `student_${normalized || "import"}`.slice(0, 24);
+}
+
 async function generateAdminUsername(pool, firstName, lastName) {
   const first = normalizeNamePart(firstName);
   const last = normalizeNamePart(lastName);
@@ -3638,6 +3691,10 @@ function parseStudentWorkbook(buffer) {
       throw new Error(
         `Row ${rowNumber} is missing one or more required columns (Student Id, Name, Program-Year/Section, Email).`,
       );
+    }
+
+    if (!isAllowedStudentEmail(email)) {
+      throw new Error(`Row ${rowNumber}: ${getInvalidStudentEmailMessage(email)}`);
     }
 
     if (seenSchoolIds.has(schoolId.toLowerCase())) {
@@ -5802,22 +5859,51 @@ app.post("/api/students/import", (req, res) => {
       let createdCount = 0;
       let overwrittenCount = 0;
       let skippedDuplicateCount = 0;
+      const pendingNewStudents = [];
 
       if (!dbSql) {
         throw new Error("Database connection is not configured.");
       }
 
+      for (const row of preview.preparedRows) {
+        const { student, existingStudent, isDuplicate } = row;
+
+        if (isDuplicate && !overwriteExisting) {
+          skippedDuplicateCount += 1;
+          continue;
+        }
+
+        if (isDuplicate && overwriteExisting) {
+          pendingNewStudents.push({
+            mode: "overwrite",
+            student,
+            existingStudent,
+          });
+          continue;
+        }
+
+        const generatedPassword = generateTemporaryPassword();
+        const generatedUsername = buildBulkImportStudentUsername(student.schoolId);
+        const passwordHash = await bcrypt.hash(
+          generatedPassword,
+          BULK_IMPORT_PASSWORD_HASH_ROUNDS,
+        );
+
+        pendingNewStudents.push({
+          mode: "create",
+          student,
+          generatedUsername,
+          generatedPassword,
+          passwordHash,
+        });
+      }
+
       try {
         await dbSql.begin(async (tx) => {
-        for (const row of preview.preparedRows) {
-          const { student, existingStudent, isDuplicate } = row;
-
-          if (isDuplicate && !overwriteExisting) {
-            skippedDuplicateCount += 1;
-            continue;
-          }
-
-          if (isDuplicate && overwriteExisting) {
+        await tx.unsafe(`SET LOCAL statement_timeout = 0`);
+        for (const row of pendingNewStudents) {
+          if (row.mode === "overwrite") {
+            const { student, existingStudent } = row;
             let username = String(existingStudent?.username || "").trim();
 
             if (existingStudent?.user_id) {
@@ -5876,69 +5962,96 @@ app.post("/api/students/import", (req, res) => {
             overwrittenCount += 1;
             continue;
           }
+        }
 
-          const generatedUsername = await generateStudentUsername(
-            {
-              query: async (text, params = []) => {
-                const rows =
-                  params.length > 0
-                    ? await tx.unsafe(text, params)
-                    : await tx.unsafe(text);
-                return { rows: Array.isArray(rows) ? rows : [] };
-              },
-            },
-            student.firstName,
-            student.lastName,
-          );
-          const generatedPassword = generateTemporaryPassword();
-          const passwordHash = await bcrypt.hash(generatedPassword, 10);
+        const newStudentRows = pendingNewStudents.filter(
+          (row) => row.mode === "create",
+        );
+        const batchSize = 100;
 
-          const userInsert = await tx.unsafe(
+        for (let startIndex = 0; startIndex < newStudentRows.length; startIndex += batchSize) {
+          const batchRows = newStudentRows.slice(startIndex, startIndex + batchSize);
+          const userPlaceholders = [];
+          const userParams = [];
+
+          batchRows.forEach((row, index) => {
+            const offset = index * 4;
+            userPlaceholders.push(
+              `($${offset + 1}, $${offset + 2}, 'student', $${offset + 3}, $${offset + 4}, TRUE)`,
+            );
+            userParams.push(
+              row.generatedUsername,
+              row.passwordHash,
+              row.student.firstName,
+              row.student.lastName,
+            );
+          });
+
+          const insertedUsers = await tx.unsafe(
             `
             INSERT INTO users (username, password_hash, role, first_name, last_name, is_active)
-            VALUES ($1, $2, 'student', $3, $4, TRUE)
+            VALUES ${userPlaceholders.join(", ")}
             RETURNING id, username
             `,
-            [
-              generatedUsername,
-              passwordHash,
-              student.firstName,
-              student.lastName,
-            ],
+            userParams,
           );
 
-          const userId = userInsert?.[0]?.id;
-          const username = userInsert?.[0]?.username || generatedUsername;
+          const insertedUserIdsByUsername = new Map(
+            (Array.isArray(insertedUsers) ? insertedUsers : []).map((user) => [
+              String(user.username || "").trim(),
+              user.id,
+            ]),
+          );
+
+          const studentPlaceholders = [];
+          const studentParams = [];
+
+          batchRows.forEach((row, index) => {
+            const offset = index * 11;
+            const userId = insertedUserIdsByUsername.get(row.generatedUsername);
+            if (!userId) {
+              throw new Error(
+                `Unable to match imported username ${row.generatedUsername} to a created user record.`,
+              );
+            }
+
+            studentPlaceholders.push(
+              `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, 0)`,
+            );
+            studentParams.push(
+              userId,
+              row.student.email,
+              row.student.schoolId,
+              row.student.firstName,
+              row.student.middleInitial || null,
+              row.student.lastName,
+              row.student.fullName,
+              row.student.program,
+              row.student.yearSection,
+              row.student.yearLevel,
+              row.student.status,
+            );
+          });
 
           await tx.unsafe(
             `
             INSERT INTO "Students"
               (user_id, email, school_id, first_name, middle_initial, last_name, full_name, program, year_section, year_level, status, violation_count)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0)
+            VALUES ${studentPlaceholders.join(", ")}
             `,
-            [
-              userId,
-              student.email,
-              student.schoolId,
-              student.firstName,
-              student.middleInitial || null,
-              student.lastName,
-              student.fullName,
-              student.program,
-              student.yearSection,
-              student.yearLevel,
-              student.status,
-            ],
+            studentParams,
           );
 
-          createdCredentials.push({
-            email: student.email,
-            firstName: student.firstName,
-            username,
-            password: generatedPassword,
-            schoolId: student.schoolId,
+          batchRows.forEach((row) => {
+            createdCredentials.push({
+              email: row.student.email,
+              firstName: row.student.firstName,
+              username: row.generatedUsername,
+              password: row.generatedPassword,
+              schoolId: row.student.schoolId,
+            });
+            createdCount += 1;
           });
-          createdCount += 1;
         }
         });
       } catch (transactionError) {
@@ -6023,7 +6136,14 @@ app.post("/api/students", async (req, res) => {
     return res.status(400).json({
       status: "error",
       message:
-        "schoolId, email, firstName, lastName, program, and yearSection are required.",
+      "schoolId, email, firstName, lastName, program, and yearSection are required.",
+    });
+  }
+
+  if (!isAllowedStudentEmail(normalizedEmail)) {
+    return res.status(400).json({
+      status: "error",
+      message: getInvalidStudentEmailMessage(normalizedEmail),
     });
   }
 
@@ -6264,6 +6384,13 @@ app.put("/api/students/:id", async (req, res) => {
       cleanedLast,
     );
 
+    if (email != null && normalizedEmail && !isAllowedStudentEmail(normalizedEmail)) {
+      return res.status(400).json({
+        status: "error",
+        message: getInvalidStudentEmailMessage(normalizedEmail),
+      });
+    }
+
     const studentData = await pool.query(
       `SELECT year_level, year_section, status FROM "Students" WHERE id = $1 LIMIT 1`,
       [id],
@@ -6438,13 +6565,20 @@ app.put("/api/students/:id", async (req, res) => {
       : null;
     updatedStudent.username = userRow?.rows?.[0]?.username || null;
 
-    // If status is set to "Graduated", deactivate the user account and send email
-    if (normalizedStatus === "Graduated" && updatedStudent.user_id) {
-      await pool.query(
-        `UPDATE users SET is_active = FALSE WHERE id = $1 AND role = 'student'`,
-        [updatedStudent.user_id],
-      );
+    const shouldDeactivateForGraduation = updatedStudent.status === "Graduated";
+    const shouldDeactivateForArchive =
+      updatedStudent.is_archived === true && deactivateAccount === true;
+    const shouldReactivateEligibleStudent =
+      updatedStudent.is_archived === false && updatedStudent.status !== "Graduated";
 
+    await syncStudentUserAccountState(pool, updatedStudent, {
+      deactivateAccount:
+        shouldDeactivateForGraduation || shouldDeactivateForArchive,
+      reactivateIfEligible: shouldReactivateEligibleStudent,
+    });
+
+    // If status is set to "Graduated", deactivate the user account and send email
+    if (shouldDeactivateForGraduation && updatedStudent.user_id) {
       // Send deactivation email
       try {
         const userEmail = updatedStudent.email;
@@ -6476,12 +6610,7 @@ app.put("/api/students/:id", async (req, res) => {
     }
 
     // If archiving and deactivateAccount is true, deactivate the user account and send email
-    if (isArchived === true && deactivateAccount === true && updatedStudent.user_id) {
-      await pool.query(
-        `UPDATE users SET is_active = FALSE WHERE id = $1 AND role = 'student'`,
-        [updatedStudent.user_id],
-      );
-
+    if (shouldDeactivateForArchive && updatedStudent.user_id) {
       // Send deactivation email
       try {
         const userEmail = updatedStudent.email;
@@ -6585,25 +6714,20 @@ app.delete("/api/students/:id", async (req, res) => {
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
-    const result = await pool.query(
+    const deleteResult = await pool.query(
       `DELETE FROM "Students" WHERE id = $1 RETURNING id, user_id`,
       [id],
     );
+    const deletedRow = deleteResult.rows?.[0] || null;
 
-    if (!result.rows?.[0]) {
+    if (!deletedRow) {
       return res.status(404).json({
         status: "error",
         message: "Student not found.",
       });
     }
-
-    const deletedUserId = result.rows?.[0]?.user_id;
-    const deletedStudentId = result.rows?.[0]?.id;
-    if (deletedUserId) {
-      await pool.query(`DELETE FROM users WHERE id = $1 AND role = 'student'`, [
-        deletedUserId,
-      ]);
-    }
+    const deletedUserId = deletedRow?.user_id || null;
+    const deletedStudentId = deletedRow?.id || null;
 
     await logAuditEvent(req, {
       action: "DELETE_STUDENT",

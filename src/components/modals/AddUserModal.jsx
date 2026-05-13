@@ -5,6 +5,7 @@ import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 
 const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
+  const allowedEmailDomain = "@plpasig.edu.ph";
   const [formData, setFormData] = useState({
     firstName: "",
     middleInitial: "",
@@ -53,11 +54,8 @@ const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
       return "Please enter a valid email address.";
     }
 
-    if (
-      !normalizedEmail.endsWith("@gmail.com") &&
-      !normalizedEmail.endsWith("@plpasig.edu.ph")
-    ) {
-      return "Email must end with @gmail.com or @plpasig.edu.ph.";
+    if (!normalizedEmail.endsWith(allowedEmailDomain)) {
+      return `Email must end with ${allowedEmailDomain}.`;
     }
 
     return "";
@@ -172,6 +170,7 @@ const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
             type="email"
             value={formData.email}
             onChange={handleChange}
+            placeholder={`name${allowedEmailDomain}`}
             required
             aria-describedby="add-user-email-error"
           />

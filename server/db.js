@@ -857,6 +857,25 @@ export async function syncStudentsDatabase() {
     ON "Students" (school_id)
   `);
 
+  await dbPool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'students_user_id_fk'
+          AND conrelid = '"Students"'::regclass
+      ) THEN
+        ALTER TABLE "Students"
+        ADD CONSTRAINT students_user_id_fk
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE;
+      END IF;
+    END;
+    $$;
+  `);
+
   // Drop the old CHECK constraint and add the updated one including 'Imported'.
   await dbPool.query(`
     ALTER TABLE "Students"
@@ -899,6 +918,42 @@ export async function syncStudentsDatabase() {
     BEFORE UPDATE ON "Students"
     FOR EACH ROW
     EXECUTE FUNCTION set_students_updated_at()
+  `);
+
+  await dbPool.query(`
+    CREATE OR REPLACE FUNCTION delete_linked_student_user()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF OLD.user_id IS NOT NULL THEN
+        DELETE FROM users
+        WHERE id = OLD.user_id
+          AND role = 'student';
+      END IF;
+
+      RETURN OLD;
+    END;
+    $$ LANGUAGE plpgsql SET search_path = public
+  `);
+
+  await dbPool.query(`
+    DROP TRIGGER IF EXISTS trg_students_delete_linked_user ON "Students"
+  `);
+
+  await dbPool.query(`
+    CREATE TRIGGER trg_students_delete_linked_user
+    AFTER DELETE ON "Students"
+    FOR EACH ROW
+    EXECUTE FUNCTION delete_linked_student_user()
+  `);
+
+  await dbPool.query(`
+    DELETE FROM users u
+    WHERE u.role = 'student'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM "Students" s
+        WHERE s.user_id = u.id
+      )
   `);
 
   return { synced: true };

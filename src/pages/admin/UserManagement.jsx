@@ -90,6 +90,25 @@ const getDisplaySemester = (semester, schoolYear) => {
 
 const pluralize = (word, count) => `${word}${count === 1 ? "" : "s"}`;
 const formatStudentLabel = (count) => `${count} ${pluralize("student", count)}`;
+const unwrapImportErrorMessage = (message) => {
+  const text = String(message || "").trim();
+  const match = text.match(/^Unable to import students \((.*)\)\.?$/i);
+  return match?.[1]?.trim() || text || "Unable to import students.";
+};
+
+const buildImportErrorModalState = (message) => {
+  const normalizedMessage = unwrapImportErrorMessage(message);
+  const rowMatch = normalizedMessage.match(/^(Row\s+\d+):\s*(.*)$/i);
+
+  return {
+    isOpen: true,
+    title: "Import Failed",
+    summary: rowMatch
+      ? "Please fix the highlighted Excel row and try importing again."
+      : "The uploaded workbook could not be processed.",
+    message: rowMatch?.[2] || normalizedMessage,
+  };
+};
 
 const UserManagement = () => {
   const [activeTab, setActiveTab] = useState("regular");
@@ -126,6 +145,12 @@ const UserManagement = () => {
     title: "Import Complete",
     summary: "",
     details: [],
+  });
+  const [importErrorModal, setImportErrorModal] = useState({
+    isOpen: false,
+    title: "Import Failed",
+    summary: "",
+    message: "",
   });
   const importFileInputRef = useRef(null);
 
@@ -496,6 +521,8 @@ const UserManagement = () => {
       if (result.student) {
         setStudentData((prev) => [mapStudentRow(result.student), ...prev]);
       }
+      invalidateFetchCache("/api/students");
+      await fetchStudents(true);
       setShowCreateSuccessModal(true);
       // Notify student notification listeners to refresh immediately
       window.dispatchEvent(new Event('notificationsUpdated'));
@@ -570,6 +597,8 @@ const UserManagement = () => {
       }
 
       setStudentData((prev) => prev.filter((s) => s.id !== deleteCandidate.id));
+      invalidateFetchCache("/api/students");
+      await fetchStudents(true);
       setDeleteCandidate(null);
     } catch (error) {
       alert(error.message || "Unable to delete student.");
@@ -603,7 +632,8 @@ const UserManagement = () => {
         }
       }
 
-      await fetchStudents();
+      invalidateFetchCache("/api/students");
+      await fetchStudents(true);
       setSelectedUserIds(new Set());
       setShowDeleteSelectedModal(false);
 
@@ -758,7 +788,11 @@ const UserManagement = () => {
         await executeImportUsers(false);
       }
     } catch (error) {
-      alert(error.message || "Unable to import students.");
+      setImportErrorModal(
+        buildImportErrorModalState(
+          error?.message || "Unable to import students.",
+        ),
+      );
     } finally {
       setIsImportingUsers(false);
     }
@@ -774,7 +808,11 @@ const UserManagement = () => {
     try {
       await executeImportUsers(overwriteExisting);
     } catch (error) {
-      alert(error.message || "Unable to import students.");
+      setImportErrorModal(
+        buildImportErrorModalState(
+          error?.message || "Unable to import students.",
+        ),
+      );
     } finally {
       setIsImportingUsers(false);
     }
@@ -2386,6 +2424,61 @@ const UserManagement = () => {
               }))
             }
             className="px-6 py-2.5 bg-[#4A5568] hover:bg-[#3d4654] border-0 text-white"
+          >
+            OK
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        isOpen={importErrorModal.isOpen}
+        onClose={() =>
+          setImportErrorModal((prev) => ({
+            ...prev,
+            isOpen: false,
+          }))
+        }
+        title={
+          <span className="font-black font-inter flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-400" />
+            {importErrorModal.title}
+          </span>
+        }
+        size="lg"
+        showCloseButton
+      >
+        <div className="rounded-2xl border border-red-400/25 bg-gradient-to-br from-red-500/12 to-red-500/5 px-5 py-5 mb-4">
+          <div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-red-200/70">
+                Import Error
+              </p>
+              <p className="mt-2 text-base font-semibold text-red-100">
+                {importErrorModal.summary}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-red-100/60 mb-2">
+              Details
+            </p>
+            <p className="text-sm leading-7 text-red-50 break-words whitespace-pre-wrap">
+              {importErrorModal.message}
+            </p>
+          </div>
+        </div>
+        <ModalFooter className="flex justify-end border-t border-white/10 pt-4">
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() =>
+              setImportErrorModal((prev) => ({
+                ...prev,
+                isOpen: false,
+              }))
+            }
+            className="px-6 py-2.5"
           >
             OK
           </Button>
