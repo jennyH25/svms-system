@@ -6881,7 +6881,7 @@ app.post("/api/students/alerts", async (req, res) => {
     }
 
     for (const studentChunk of chunkArray(validNotificationStudents, 12)) {
-      const notificationChunkResults = await Promise.all(
+      const notificationChunkResults = await Promise.allSettled(
         studentChunk.map(async (student) => {
           const activeViolationCount = Number(student.violation_count || 0);
           const metadata = {
@@ -6917,7 +6917,18 @@ app.post("/api/students/alerts", async (req, res) => {
         }),
       );
 
-      insertedNotifications.push(...notificationChunkResults);
+      notificationChunkResults.forEach((result, index) => {
+        const chunkStudent = studentChunk[index];
+        if (result.status === "fulfilled") {
+          insertedNotifications.push(result.value);
+          return;
+        }
+
+        skippedStudents.push({
+          studentId: Number(chunkStudent?.id) || null,
+          reason: result.reason?.message || "Unable to create student notification.",
+        });
+      });
     }
 
     for (const student of emailCandidates) {
@@ -6940,47 +6951,109 @@ app.post("/api/students/alerts", async (req, res) => {
       return studentEmail && studentEmail.includes("@");
     });
 
-    for (const studentChunk of chunkArray(validEmailStudents, 5)) {
-      const emailChunkResults = await Promise.all(
-        studentChunk.map(async (student) => {
-          const studentEmail = String(student.email || "")
+    const ALERT_EMAIL_BACKGROUND_THRESHOLD = Number(process.env.ALERT_EMAIL_BACKGROUND_THRESHOLD || 100);
+
+    async function processEmailChunksSequentially(students) {
+      const delivered = [];
+      const failures = [];
+
+      for (const studentChunk of chunkArray(students, 5)) {
+        const emailChunkResults = await Promise.allSettled(
+          studentChunk.map(async (student) => {
+            const studentEmail = String(student.email || "")
+              .trim()
+              .toLowerCase();
+            const activeViolationCount = Number(student.violation_count || 0);
+            const emailResult = await sendStudentAdminAlertEmail({
+              toEmail: studentEmail,
+              studentName: student.full_name,
+              alertType: normalizedAlertType,
+              message: normalizedMessage,
+              activeViolationCount,
+              program: student.program,
+              yearSection: student.year_section,
+            });
+
+            return {
+              studentId: Number(student.id),
+              email: studentEmail,
+              emailResult,
+            };
+          }),
+        );
+
+        emailChunkResults.forEach((result, index) => {
+          const chunkStudent = studentChunk[index];
+          const chunkEmail = String(chunkStudent?.email || "")
             .trim()
             .toLowerCase();
-          const activeViolationCount = Number(student.violation_count || 0);
-          const emailResult = await sendStudentAdminAlertEmail({
-            toEmail: studentEmail,
-            studentName: student.full_name,
-            alertType: normalizedAlertType,
-            message: normalizedMessage,
-            activeViolationCount,
-            program: student.program,
-            yearSection: student.year_section,
-          });
 
-          return {
-            studentId: Number(student.id),
-            email: studentEmail,
-            emailResult,
-          };
-        }),
-      );
+          if (result.status !== "fulfilled") {
+            failures.push({
+              studentId: Number(chunkStudent?.id) || null,
+              email: chunkEmail,
+              reason: result.reason?.message || "Unable to send student alert email.",
+            });
+            return;
+          }
 
-      emailChunkResults.forEach(({ studentId, email, emailResult }) => {
-        if (emailResult.sent) {
-          emailDelivered.push({
+          const { studentId, email, emailResult } = result.value;
+          if (emailResult.sent) {
+            delivered.push({ studentId, email });
+            return;
+          }
+
+          failures.push({
             studentId,
             email,
+            reason: emailResult.reason || "Unable to send student alert email.",
           });
-          return;
-        }
-
-        emailFailures.push({
-          studentId,
-          email,
-          reason: emailResult.reason || "Unable to send student alert email.",
         });
+      }
+
+      return { delivered, failures };
+    }
+
+    if (validEmailStudents.length > ALERT_EMAIL_BACKGROUND_THRESHOLD) {
+      // Queue email sends in the background so the HTTP request returns quickly.
+      // This prevents request timeouts when sending to many recipients (e.g., 700+).
+      const studentsForBackground = Array.from(validEmailStudents);
+      setImmediate(async () => {
+        try {
+          console.info(`Processing ${studentsForBackground.length} alert emails in background`);
+          const { delivered, failures } = await processEmailChunksSequentially(studentsForBackground);
+          console.info(`Background alert emails processed. delivered=${delivered.length} failed=${failures.length}`);
+        } catch (bgError) {
+          console.error('Background alert email processing failed:', bgError?.message || bgError);
+        }
+      });
+
+      // Respond immediately with queued status.
+      await logAuditEvent(req, {
+        action: "SEND_STUDENT_ALERT",
+        targetType: "student_notification",
+        details: `Queued ${normalizedAlertType} alert for ${insertedNotifications.length} student(s); ${validEmailStudents.length} emails queued for background delivery.`,
+        metadata: {
+          alertType: normalizedAlertType,
+          messageLength: normalizedMessage.length,
+          recipients: insertedNotifications.map((entry) => entry.studentId),
+          queuedEmailRecipients: validEmailStudents.map((s) => Number(s.id)),
+        },
+      });
+
+      return res.status(202).json({
+        status: "ok",
+        sentCount: insertedNotifications.length,
+        emailQueuedCount: validEmailStudents.length,
+        notifications: insertedNotifications,
+        skippedStudents,
       });
     }
+
+    // Process emails synchronously (small recipient sets) and attach results.
+    const { delivered, failures } = await processEmailChunksSequentially(validEmailStudents);
+    emailDelivered.push(...delivered);
+    emailFailures.push(...failures);
 
     if (insertedNotifications.length === 0) {
       return res.status(404).json({
