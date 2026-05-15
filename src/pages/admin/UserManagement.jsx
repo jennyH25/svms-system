@@ -1348,6 +1348,67 @@ const UserManagement = () => {
     [filteredStudents],
   );
 
+  const exportGroups = useMemo(() => {
+    const statusPriority = (status) => {
+      const normalized = String(status || "").toUpperCase();
+      if (normalized === "REGULAR") return 1;
+      if (normalized === "IRREGULAR") return 2;
+      return 99;
+    };
+
+    const groupsByKey = new Map();
+
+    for (const student of filteredStudents) {
+      const row = {
+        schoolId: String(student.schoolId || ""),
+        studentName: String(student.studentName || ""),
+        program: String(student.program || ""),
+        yearSection: String(student.yearSection || ""),
+        status: String(student.status || ""),
+        violationCount: Number(student.violationCount) || 0,
+      };
+      const groupKey = `${row.program} - ${row.yearSection} - ${row.status}`;
+
+      if (!groupsByKey.has(groupKey)) {
+        groupsByKey.set(groupKey, {
+          groupKey,
+          program: row.program,
+          yearSection: row.yearSection,
+          status: row.status,
+          rows: [],
+        });
+      }
+
+      groupsByKey.get(groupKey).rows.push(row);
+    }
+
+    return Array.from(groupsByKey.values())
+      .sort((a, b) => {
+        const programCompare = a.program.localeCompare(b.program, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+        if (programCompare !== 0) return programCompare;
+
+        const yearSectionCompare = a.yearSection.localeCompare(b.yearSection, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+        if (yearSectionCompare !== 0) return yearSectionCompare;
+
+        const statusCompare = statusPriority(a.status) - statusPriority(b.status);
+        if (statusCompare !== 0) return statusCompare;
+
+        return a.status.localeCompare(b.status, undefined, { sensitivity: "base" });
+      })
+      .map((group) => ({
+        ...group,
+        rows: group.rows.sort((a, b) =>
+          a.studentName.localeCompare(b.studentName, undefined, { sensitivity: "base" }),
+        ),
+      }));
+  }, [filteredStudents]);
+
   const formatDateForFileName = () => {
     const now = new Date();
     const y = now.getFullYear();
@@ -1387,20 +1448,18 @@ const UserManagement = () => {
     ]);
 
     const workbook = new Workbook();
-    const sheet = workbook.addWorksheet("User Management", {
-      views: [{ state: "frozen", ySplit: 11 }],
-    });
-    applyExcelPrintLayout(sheet, { orientation: "landscape" });
-
+    const sheet = workbook.addWorksheet("User Management");
     sheet.columns = [
-      { key: "no", width: 6 },
-      { key: "schoolId", width: 18 },
-      { key: "studentName", width: 30 },
-      { key: "program", width: 14 },
-      { key: "yearSection", width: 16 },
-      { key: "status", width: 14 },
-      { key: "violationCount", width: 16 },
+      { key: "no", width: 8 },
+      { key: "schoolId", width: 20 },
+      { key: "studentName", width: 60 },
+      { key: "violations", width: 18 },
     ];
+    applyExcelPrintLayout(sheet, { orientation: "landscape" });
+    // center content when printing but do not force-fit or scale down
+    sheet.pageSetup.fitToPage = false;
+    sheet.pageSetup.horizontalCentered = true;
+    sheet.pageSetup.scale = 100;
 
     const headerCellEnd = getExcelColumnLetter(sheet.columns.length);
     sheet.mergeCells(`A1:${headerCellEnd}8`);
@@ -1431,56 +1490,34 @@ const UserManagement = () => {
       rowEnd: 8,
     });
 
-    const headerRowNumber = 11;
-    const headerRow = sheet.getRow(headerRowNumber);
-    headerRow.values = [
-      "No",
-      "School ID",
-      "Student Name",
-      "Program",
-      "Year/Section",
-      "Status",
-      "Violation Count",
-    ];
-    headerRow.height = 24;
+    const tableHeader = ["No", "School ID", "Student Name", "Violations"];
+    const headerRowStyle = (row) => {
+      row.height = 24;
+      row.eachCell((cell) => {
+        cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF1F2937" } };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFF2F2F2" },
+        };
+        cell.alignment = {
+          horizontal: "left",
+          vertical: "middle",
+          wrapText: true,
+          indent: 1,
+        };
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFCBD5E1" } },
+          left: { style: "thin", color: { argb: "FFCBD5E1" } },
+          bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
+          right: { style: "thin", color: { argb: "FFCBD5E1" } },
+        };
+      });
+    };
 
-    headerRow.eachCell((cell) => {
-      cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FF0F172A" },
-      };
-      cell.alignment = {
-        horizontal: "left",
-        vertical: "middle",
-        wrapText: true,
-        indent: 1,
-      };
-      cell.border = {
-        top: { style: "thin", color: { argb: "FFCBD5E1" } },
-        left: { style: "thin", color: { argb: "FFCBD5E1" } },
-        bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
-        right: { style: "thin", color: { argb: "FFCBD5E1" } },
-      };
-    });
-
-    const firstDataRow = headerRowNumber + 1;
-    for (const [index, row] of exportRows.entries()) {
-      const excelRowNumber = firstDataRow + index;
-      const excelRow = sheet.getRow(excelRowNumber);
-      excelRow.values = [
-        row.no,
-        row.schoolId,
-        row.studentName,
-        row.program,
-        row.yearSection,
-        row.status,
-        row.violationCount,
-      ];
-      excelRow.height = 28;
-
-      excelRow.eachCell((cell) => {
+    const dataRowStyle = (row) => {
+      row.height = 28;
+      row.eachCell((cell) => {
         cell.font = { name: "Calibri", size: 11, color: { argb: "FF1F2937" } };
         cell.alignment = {
           horizontal: "left",
@@ -1494,14 +1531,46 @@ const UserManagement = () => {
           bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
           right: { style: "thin", color: { argb: "FFCBD5E1" } },
         };
-        if (excelRowNumber % 2 === 0) {
-          cell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: "FFF8FAFC" },
-          };
-        }
       });
+    };
+
+    const groupHeaderStyle = (row) => {
+      row.height = 20;
+      const cell = row.getCell(1);
+      cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF0F172A" },
+      };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = {
+        top: { style: "thin", color: { argb: "FFCBD5E1" } },
+        left: { style: "thin", color: { argb: "FFCBD5E1" } },
+        bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
+        right: { style: "thin", color: { argb: "FFCBD5E1" } },
+      };
+    };
+
+    let currentRowNumber = 11;
+    for (const group of exportGroups) {
+      const groupHeaderRow = sheet.getRow(currentRowNumber);
+      groupHeaderRow.getCell(1).value = group.groupKey;
+      sheet.mergeCells(`A${currentRowNumber}:D${currentRowNumber}`);
+      groupHeaderStyle(groupHeaderRow);
+      currentRowNumber += 1;
+
+      const headerRow = sheet.getRow(currentRowNumber);
+      headerRow.values = tableHeader;
+      headerRowStyle(headerRow);
+      currentRowNumber += 1;
+
+      for (const [index, row] of group.rows.entries()) {
+        const dataRow = sheet.getRow(currentRowNumber);
+        dataRow.values = [index + 1, row.schoolId, row.studentName, row.violationCount];
+        dataRowStyle(dataRow);
+        currentRowNumber += 1;
+      }
     }
 
     const buffer = await workbook.xlsx.writeBuffer();
@@ -1510,7 +1579,7 @@ const UserManagement = () => {
     });
     const filename = `user_management_${formatDateForFileName()}.xlsx`;
     downloadBlob(blob, filename);
-  }, [downloadBlob, exportRows, resolveHeaderImage]);
+  }, [downloadBlob, exportGroups, resolveHeaderImage]);
 
   const exportAsPdf = useCallback(async () => {
     const [{ jsPDF }, { default: autoTable }] = await Promise.all([
@@ -1524,7 +1593,7 @@ const UserManagement = () => {
     const tableMarginRight = 10;
     const pageWidth = doc.internal.pageSize.getWidth();
     const tableWidth = pageWidth - tableMarginLeft - tableMarginRight;
-    const baseColumnWidths = [12, 28, 55, 24, 26, 24, 24];
+    const baseColumnWidths = [12, 30, 90, 30];
     const baseTotalWidth = baseColumnWidths.reduce((sum, width) => sum + width, 0);
     const widthScale = tableWidth / baseTotalWidth;
     const tableColumnWidths = baseColumnWidths.map((width) => width * widthScale);
@@ -1548,18 +1617,46 @@ const UserManagement = () => {
       align: "center",
     });
 
+    const tableBody = [];
+    const repeatedHeaderCells = ["No", "School ID", "Student Name", "Violations"].map((value) => ({
+      content: value,
+      styles: {
+        fillColor: [242, 242, 242],
+        textColor: [31, 41, 55],
+        fontStyle: "bold",
+        halign: "left",
+        valign: "middle",
+      },
+    }));
+
+    for (const group of exportGroups) {
+      tableBody.push([
+        {
+          content: group.groupKey,
+          colSpan: 4,
+          styles: {
+            halign: "center",
+            fontStyle: "bold",
+            textColor: [255, 255, 255],
+            fillColor: [15, 23, 42],
+          },
+        },
+      ]);
+      tableBody.push(repeatedHeaderCells);
+
+      group.rows.forEach((row, index) => {
+        tableBody.push([
+          index + 1,
+          row.schoolId,
+          row.studentName,
+          row.violationCount,
+        ]);
+      });
+    }
+
     autoTable(doc, {
       startY: startY + 9,
-      head: [["No", "School ID", "Student Name", "Program", "Year/Section", "Status", "Violation Count"]],
-      body: exportRows.map((row) => [
-        row.no,
-        row.schoolId,
-        row.studentName,
-        row.program,
-        row.yearSection,
-        row.status,
-        row.violationCount,
-      ]),
+      body: tableBody,
       theme: "grid",
       styles: {
         fontSize: 8,
@@ -1568,14 +1665,8 @@ const UserManagement = () => {
         halign: "left",
         valign: "middle",
       },
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        halign: "left",
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252],
+      bodyStyles: {
+        valign: "middle",
       },
       margin: { left: tableMarginLeft, right: tableMarginRight },
       tableWidth,
@@ -1584,14 +1675,11 @@ const UserManagement = () => {
         1: { cellWidth: tableColumnWidths[1] },
         2: { cellWidth: tableColumnWidths[2] },
         3: { cellWidth: tableColumnWidths[3] },
-        4: { cellWidth: tableColumnWidths[4] },
-        5: { cellWidth: tableColumnWidths[5] },
-        6: { cellWidth: tableColumnWidths[6] },
       },
     });
 
     doc.save(`user_management_${formatDateForFileName()}.pdf`);
-  }, [exportRows, resolveHeaderImage]);
+  }, [exportGroups, resolveHeaderImage]);
 
   const handleConfirmExport = async () => {
     if (exportRows.length === 0) {

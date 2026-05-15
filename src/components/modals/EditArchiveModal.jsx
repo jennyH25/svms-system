@@ -114,6 +114,19 @@ function splitMiddleInitialFromFirstName(firstName, middleInitial) {
   };
 }
 
+function stripProgramFromYearSection(program, yearSection) {
+  const ys = String(yearSection || '').trim();
+  const prog = String(program || '').trim();
+  if (!ys) return '';
+  if (prog) {
+    const prefix = `${prog}-`;
+    if (ys.toLowerCase().startsWith(prefix.toLowerCase())) {
+      return ys.substring(prefix.length);
+    }
+  }
+  return ys;
+}
+
 const EditArchiveModal = ({
   isOpen,
   onClose,
@@ -138,6 +151,12 @@ const EditArchiveModal = ({
           record.middleInitial || record.middle_initial || fallbackNames.middleInitial || "",
         );
 
+        // For archived users - strip program from yearSection for display
+        const strippedYearSection = stripProgramFromYearSection(
+          record.program || "",
+          record.yearSection || ""
+        );
+
         // For archived users
         setFormData({
           firstName: normalizedName.firstName || "",
@@ -149,7 +168,7 @@ const EditArchiveModal = ({
             "",
           email: record.email || "",
           program: record.program || "",
-          yearSection: record.yearSection || "",
+          yearSection: strippedYearSection,
           status:
             record.archivedReason ||
             record.archived_reason ||

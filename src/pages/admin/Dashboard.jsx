@@ -103,6 +103,30 @@ const parseYearSection = (value) => {
   };
 };
 
+const formatProgramYearSection = (program, yearSection) => {
+  const programText = String(program || "").trim();
+  const yearSectionText = String(yearSection || "").trim();
+
+  if (programText && yearSectionText) {
+    return `${programText}-${yearSectionText}`;
+  }
+
+  return programText || yearSectionText || "";
+};
+
+const getGroupKeyFromYearSection = (program, yearSection) => {
+  const ys = String(yearSection || "").trim();
+  const prog = String(program || "").trim();
+  
+  // If yearSection already contains a dash (likely already combined), use it as-is
+  if (ys.includes("-")) {
+    return ys || "UNASSIGNED";
+  }
+  
+  // Otherwise, combine program and yearSection
+  return formatProgramYearSection(prog, ys) || "UNASSIGNED";
+};
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const [selectedSemester, setSelectedSemester] = useState("1st Sem");
@@ -856,101 +880,129 @@ const Dashboard = () => {
     ]);
 
     const workbook = new Workbook();
-    const sheet = workbook.addWorksheet("Violation Ranking", {
-      views: [{ state: "frozen", ySplit: 11 }],
-    });
+    const sheet = workbook.addWorksheet("Violation Ranking");
     applyExcelPrintLayout(sheet, { orientation: "landscape" });
 
-    sheet.columns = [
-      { key: "rank", width: 10 },
-      { key: "studentName", width: 30 },
-      { key: "schoolId", width: 18 },
-      { key: "program", width: 14 },
-      { key: "year", width: 10 },
-      { key: "section", width: 10 },
-      { key: "totalViolations", width: 20 },
-    ];
-
-    const headerCellEnd = getExcelColumnLetter(sheet.columns.length);
-    sheet.mergeCells(`A1:${headerCellEnd}8`);
-    sheet.mergeCells(`A9:${headerCellEnd}9`);
-    sheet.mergeCells(`A10:${headerCellEnd}10`);
-    for (let rowIndex = 1; rowIndex <= 8; rowIndex += 1) {
-      sheet.getRow(rowIndex).height = rowIndex <= 7 ? 26 : 18;
-    }
-    sheet.getRow(9).height = 28;
-    sheet.getRow(10).height = 18;
-
-    const titleCell = sheet.getCell("A9");
-    titleCell.value = "Student Violation Ranking Report";
-    titleCell.font = { name: "Calibri", size: 18, bold: true };
-    titleCell.alignment = { horizontal: "center", vertical: "middle" };
-
-    const subtitleCell = sheet.getCell("A10");
-    subtitleCell.value = `Generated: ${new Date().toLocaleString()}`;
-    subtitleCell.font = { name: "Calibri", size: 11, color: { argb: "FF4B5563" } };
-    subtitleCell.alignment = { horizontal: "center", vertical: "middle" };
-    addCenteredExcelHeaderImage({
-      workbook,
-      sheet,
-      dataUrl,
-      extension,
-      dimensions,
-      rowStart: 1,
-      rowEnd: 8,
-    });
-
-    const headerRowNumber = 11;
-    const headerRow = sheet.getRow(headerRowNumber);
-    headerRow.values = [
+    const headers = [
       "Rank",
       "Student Name",
       "School ID",
-      "Program",
-      "Year",
-      "Section",
       "Total Violations",
     ];
-    headerRow.height = 24;
 
-    headerRow.eachCell((cell) => {
-      cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FF0F172A" },
-      };
-      cell.alignment = {
-        horizontal: "left",
-        vertical: "middle",
-        wrapText: true,
-        indent: 1,
-      };
-      cell.border = {
-        top: { style: "thin", color: { argb: "FFCBD5E1" } },
-        left: { style: "thin", color: { argb: "FFCBD5E1" } },
-        bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
-        right: { style: "thin", color: { argb: "FFCBD5E1" } },
-      };
-    });
+    const columnWidths = [12, 40, 24, 24];
+    sheet.columns = headers.map((header, index) => ({
+      key: header,
+      width: columnWidths[index] || 20,
+    }));
 
-    const firstDataRow = headerRowNumber + 1;
-    for (const [index, row] of rankingExportRows.entries()) {
-      const excelRowNumber = firstDataRow + index;
-      const excelRow = sheet.getRow(excelRowNumber);
-      excelRow.values = [
-        row.rank,
-        row.studentName,
-        row.schoolId,
-        row.program,
-        row.year,
-        row.section,
-        row.totalViolations,
-      ];
-      excelRow.height = 28;
+    const headerCellEnd = getExcelColumnLetter(headers.length);
+    sheet.mergeCells(`A1:${headerCellEnd}4`);
+    sheet.mergeCells(`A5:${headerCellEnd}5`);
+    sheet.mergeCells(`A6:${headerCellEnd}6`);
 
-      excelRow.eachCell((cell) => {
-        cell.font = { name: "Calibri", size: 11, color: { argb: "FF1F2937" } };
+    // Reserve sufficient space for header image to avoid overlap with title
+    for (let i = 1; i <= 4; i += 1) {
+      sheet.getRow(i).height = 36;
+    }
+    sheet.getRow(5).height = 24;
+    sheet.getRow(6).height = 20;
+    sheet.getRow(7).height = 20;
+
+    // Add header image if available
+    if (dataUrl && dimensions) {
+      addCenteredExcelHeaderImage({
+        workbook,
+        sheet,
+        dataUrl,
+        extension,
+        dimensions,
+        rowStart: 1,
+        rowEnd: 4,
+      });
+    }
+
+    // Title and subtitle
+    const titleCell = sheet.getCell("A5");
+    titleCell.value = "Student Violation Ranking Report";
+    titleCell.font = { name: "Calibri", size: 18, bold: true, color: { argb: "FF000000" } };
+    titleCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+
+    const generatedCell = sheet.getCell("A6");
+    const generatedDateRaw = new Date();
+    const month = generatedDateRaw.toLocaleString(undefined, { month: "long" });
+    const day = generatedDateRaw.getDate();
+    const year = generatedDateRaw.getFullYear();
+    const time = generatedDateRaw.toLocaleString(undefined, { hour: "numeric", minute: "2-digit", hour12: true });
+    generatedCell.value = `Generated: ${month} ${day}, ${year}, ${time}`;
+    generatedCell.font = { name: "Calibri", size: 11, color: { argb: "FF4B5563" } };
+    generatedCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+
+    const buildExportGroups = (rows) => {
+      const grouped = new Map();
+      rows.forEach((item) => {
+        const program = String(item.program || "").trim();
+        const yearText = String(item.year || "").trim();
+        const sectionText = String(item.section || "").trim();
+        const yearSection = yearText + sectionText;
+        const groupKey = getGroupKeyFromYearSection(program, yearSection);
+
+        const yearNum = yearText ? Number(yearText) : 0;
+        const sectionSuffix = sectionText || "";
+
+        if (!grouped.has(groupKey)) {
+          grouped.set(groupKey, { rows: [], sortKey: { program, yearNum, sectionSuffix } });
+        }
+        grouped.get(groupKey).rows.push(item);
+      });
+
+      const arr = Array.from(grouped.entries()).map(([groupKey, val]) => ({
+        groupKey,
+        rows: val.rows,
+        sortKey: val.sortKey,
+      }));
+      arr.sort((a, b) => {
+        if ((a.sortKey.yearNum || 0) !== (b.sortKey.yearNum || 0))
+          return (a.sortKey.yearNum || 0) - (b.sortKey.yearNum || 0);
+        if ((a.sortKey.program || "") < (b.sortKey.program || "")) return -1;
+        if ((a.sortKey.program || "") > (b.sortKey.program || "")) return 1;
+        if ((a.sortKey.sectionSuffix || "") < (b.sortKey.sectionSuffix || "")) return -1;
+        if ((a.sortKey.sectionSuffix || "") > (b.sortKey.sectionSuffix || "")) return 1;
+        return 0;
+      });
+      return arr;
+    };
+
+    const exportGroups = buildExportGroups(rankingExportRows);
+
+    const groupHeaderStyle = (row) => {
+      row.height = 20;
+      row.eachCell((cell) => {
+        cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FF0F172A" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFCBD5E1" } },
+          left: { style: "thin", color: { argb: "FFCBD5E1" } },
+          bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
+          right: { style: "thin", color: { argb: "FFCBD5E1" } },
+        };
+      });
+    };
+
+    const headerRowStyle = (row) => {
+      row.height = 24;
+      row.eachCell((cell) => {
+        cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF1F2937" } };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFF2F2F2" },
+        };
         cell.alignment = {
           horizontal: "left",
           vertical: "middle",
@@ -963,15 +1015,55 @@ const Dashboard = () => {
           bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
           right: { style: "thin", color: { argb: "FFCBD5E1" } },
         };
-        if (excelRowNumber % 2 === 0) {
-          cell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: "FFF8FAFC" },
-          };
-        }
       });
-    }
+    };
+
+    const dataRowStyle = (row) => {
+      row.height = 50;
+      row.eachCell((cell, colNumber) => {
+        cell.font = { name: "Calibri", size: 11, color: { argb: "FF1F2937" } };
+        cell.alignment = {
+          horizontal: colNumber === 1 ? "center" : "left",
+          vertical: "middle",
+          wrapText: true,
+          indent: colNumber === 1 ? 0 : 1,
+        };
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFCBD5E1" } },
+          left: { style: "thin", color: { argb: "FFCBD5E1" } },
+          bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
+          right: { style: "thin", color: { argb: "FFCBD5E1" } },
+        };
+      });
+    };
+
+    let currentRow = 8;
+
+    exportGroups.forEach((group) => {
+      const groupHeaderRow = sheet.getRow(currentRow);
+      groupHeaderRow.getCell(1).value = group.groupKey;
+      sheet.mergeCells(`A${currentRow}:${String.fromCharCode(64 + headers.length)}${currentRow}`);
+      groupHeaderStyle(groupHeaderRow);
+      currentRow += 1;
+
+      const tableHeaderRow = sheet.getRow(currentRow);
+      tableHeaderRow.values = headers;
+      headerRowStyle(tableHeaderRow);
+      currentRow += 1;
+
+      group.rows.forEach((item, index) => {
+        const rowValues = [
+          item.rank,
+          item.studentName,
+          item.schoolId,
+          item.totalViolations,
+        ];
+        const dataRow = sheet.getRow(currentRow);
+        dataRow.values = rowValues;
+        dataRowStyle(dataRow);
+        currentRow += 1;
+      });
+    });
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
@@ -992,7 +1084,7 @@ const Dashboard = () => {
     const tableMarginRight = 10;
     const pageWidth = doc.internal.pageSize.getWidth();
     const tableWidth = pageWidth - tableMarginLeft - tableMarginRight;
-    const baseColumnWidths = [14, 58, 30, 24, 16, 16, 28];
+    const baseColumnWidths = [14, 70, 40, 24];
     const baseTotalWidth = baseColumnWidths.reduce((sum, width) => sum + width, 0);
     const widthScale = tableWidth / baseTotalWidth;
     const tableColumnWidths = baseColumnWidths.map((width) => width * widthScale);
@@ -1016,18 +1108,70 @@ const Dashboard = () => {
       align: "center",
     });
 
+    const buildExportGroups = (rows) => {
+      const grouped = new Map();
+
+      rows.forEach((item) => {
+        const program = String(item.program || "").trim();
+        const yearText = String(item.year || "").trim();
+        const sectionText = String(item.section || "").trim();
+        const yearSection = `${yearText}${sectionText}`;
+        const groupKey = getGroupKeyFromYearSection(program, yearSection);
+        const yearNum = yearText ? Number(yearText) : 0;
+        const sectionSuffix = sectionText || "";
+
+        if (!grouped.has(groupKey)) {
+          grouped.set(groupKey, { rows: [], sortKey: { program, yearNum, sectionSuffix } });
+        }
+        grouped.get(groupKey).rows.push(item);
+      });
+
+      return Array.from(grouped.entries())
+        .map(([groupKey, val]) => ({ groupKey, rows: val.rows, sortKey: val.sortKey }))
+        .sort((a, b) => {
+          if ((a.sortKey.yearNum || 0) !== (b.sortKey.yearNum || 0)) {
+            return (a.sortKey.yearNum || 0) - (b.sortKey.yearNum || 0);
+          }
+          if ((a.sortKey.program || "") < (b.sortKey.program || "")) return -1;
+          if ((a.sortKey.program || "") > (b.sortKey.program || "")) return 1;
+          if ((a.sortKey.sectionSuffix || "") < (b.sortKey.sectionSuffix || "")) return -1;
+          if ((a.sortKey.sectionSuffix || "") > (b.sortKey.sectionSuffix || "")) return 1;
+          return 0;
+        });
+    };
+
+    const exportGroups = buildExportGroups(rankingExportRows);
+    const tableBody = [];
+
+    exportGroups.forEach((group) => {
+      tableBody.push([
+        {
+          content: group.groupKey,
+          colSpan: 4,
+          styles: {
+            halign: "center",
+            valign: "middle",
+            fontStyle: "bold",
+            fillColor: [15, 23, 42],
+            textColor: [255, 255, 255],
+          },
+        },
+      ]);
+      tableBody.push(["Rank", "Student Name", "School ID", "Total Violations"]);
+      group.rows.forEach((item, index) => {
+        tableBody.push([
+          item.rank,
+          item.studentName,
+          item.schoolId,
+          item.totalViolations,
+        ]);
+      });
+    });
+
     autoTable(doc, {
       startY: startY + 9,
-      head: [["Rank", "Student Name", "School ID", "Program", "Year", "Section", "Total Violations"]],
-      body: rankingExportRows.map((row) => [
-        row.rank,
-        row.studentName,
-        row.schoolId,
-        row.program,
-        row.year,
-        row.section,
-        row.totalViolations,
-      ]),
+      head: [],
+      body: tableBody,
       theme: "grid",
       styles: {
         fontSize: 8,
@@ -1036,25 +1180,33 @@ const Dashboard = () => {
         halign: "left",
         valign: "middle",
       },
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        halign: "left",
-      },
       alternateRowStyles: {
         fillColor: [248, 250, 252],
       },
       margin: { left: tableMarginLeft, right: tableMarginRight },
       tableWidth,
       columnStyles: {
-        0: { cellWidth: tableColumnWidths[0] },
+        0: { cellWidth: tableColumnWidths[0], halign: "center" },
         1: { cellWidth: tableColumnWidths[1] },
         2: { cellWidth: tableColumnWidths[2] },
-        3: { cellWidth: tableColumnWidths[3] },
-        4: { cellWidth: tableColumnWidths[4] },
-        5: { cellWidth: tableColumnWidths[5] },
-        6: { cellWidth: tableColumnWidths[6] },
+        3: { cellWidth: tableColumnWidths[3], halign: "center" },
+      },
+      didParseCell: (data) => {
+        if (data.row.raw?.[0]?.colSpan === 4) {
+          data.cell.styles.fillColor = [15, 23, 42];
+          data.cell.styles.textColor = [255, 255, 255];
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.halign = "center";
+          data.cell.styles.valign = "middle";
+        }
+
+        if (data.row.raw?.[0] === "Rank") {
+          data.cell.styles.fillColor = [242, 242, 242];
+          data.cell.styles.textColor = [31, 41, 55];
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.halign = data.column.index === 0 ? "center" : "left";
+          data.cell.styles.valign = "middle";
+        }
       },
     });
 

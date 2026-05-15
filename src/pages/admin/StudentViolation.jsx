@@ -86,6 +86,32 @@ const formatProgramYearSection = (program, yearSection) => {
   return programText || yearSectionText || "";
 };
 
+const stripProgramFromYearSection = (program, yearSection) => {
+  const ys = String(yearSection || "").trim();
+  const prog = String(program || "").trim();
+  if (!ys) return "";
+  if (prog) {
+    const prefix = `${prog}-`;
+    if (ys.toLowerCase().startsWith(prefix.toLowerCase())) {
+      return ys.substring(prefix.length);
+    }
+  }
+  return ys;
+};
+
+const getGroupKeyFromYearSection = (program, yearSection) => {
+  const ys = String(yearSection || "").trim();
+  const prog = String(program || "").trim();
+  
+  // If yearSection already contains a dash (likely already combined), use it as-is
+  if (ys.includes("-")) {
+    return ys || "UNASSIGNED";
+  }
+  
+  // Otherwise, combine program and yearSection
+  return formatProgramYearSection(prog, ys) || "UNASSIGNED";
+};
+
 const normalizeRemarksText = (value) => {
   const text = String(value ?? "").trim();
   if (!text || text === "-") return "";
@@ -1400,114 +1426,144 @@ const StudentViolation = () => {
     ]);
 
     const workbook = new Workbook();
-    const sheet = workbook.addWorksheet("Student Violations", {
-      views: [{ state: "frozen", ySplit: 11 }],
-    });
+    const sheet = workbook.addWorksheet("Student Violations");
     applyExcelPrintLayout(sheet, { orientation: "landscape" });
 
-    sheet.columns = [
-      { key: "no", width: 6 },
-      { key: "date", width: 13 },
-      { key: "studentName", width: 22 },
-      { key: "schoolId", width: 14 },
-      { key: "yearSection", width: 22.22 },
-      { key: "violation", width: 38 },
-      { key: "reportedBy", width: 17 },
-      { key: "remarks", width: 24 },
-      { key: "signature", width: 16 },
-      { key: "status", width: 14 },
-    ];
-
-    const headerCellEnd = getExcelColumnLetter(sheet.columns.length);
-    sheet.mergeCells(`A1:${headerCellEnd}8`);
-    sheet.mergeCells(`A9:${headerCellEnd}9`);
-    sheet.mergeCells(`A10:${headerCellEnd}10`);
-    for (let i = 1; i <= 8; i += 1) {
-      sheet.getRow(i).height = i <= 7 ? 26 : 18;
-    }
-    sheet.getRow(9).height = 28;
-    sheet.getRow(10).height = 18;
-
-    const titleCell = sheet.getCell("A9");
-    titleCell.value = "Student Violation Report";
-    titleCell.font = { name: "Calibri", size: 18, bold: true };
-    titleCell.alignment = { horizontal: "center", vertical: "middle" };
-
-    const subtitleCell = sheet.getCell("A10");
-    subtitleCell.value = `Generated: ${new Date().toLocaleString()}`;
-    subtitleCell.font = { name: "Calibri", size: 11, color: { argb: "FF4B5563" } };
-    subtitleCell.alignment = { horizontal: "center", vertical: "middle" };
-
-    const dimensions = await getDataUrlDimensions(dataUrl);
-    addCenteredExcelHeaderImage({
-      workbook,
-      sheet,
-      dataUrl,
-      extension: "png",
-      dimensions,
-      rowStart: 1,
-      rowEnd: 8,
-    });
-
-    // Table header.
-    const headerRowNumber = 11;
-    const headerRow = sheet.getRow(headerRowNumber);
-    headerRow.values = [
+    const headers = [
       "No",
       "Date",
       "Student Name",
       "School ID",
-      "Program - year/section",
       "Violation",
       "Reported By",
       "Remarks",
       "Signature",
       "Status",
     ];
-    headerRow.height = 24;
 
-    headerRow.eachCell((cell) => {
-      cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "FF0F172A" },
-      };
-      cell.alignment = {
-        horizontal: "left",
-        vertical: "middle",
-        wrapText: true,
-        indent: 1,
-      };
-      cell.border = {
-        top: { style: "thin", color: { argb: "FFCBD5E1" } },
-        left: { style: "thin", color: { argb: "FFCBD5E1" } },
-        bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
-        right: { style: "thin", color: { argb: "FFCBD5E1" } },
-      };
-    });
+    const columnWidths = [10, 18, 35, 25, 44, 22, 30, 16, 18];
+    sheet.columns = headers.map((header, index) => ({
+      key: header,
+      width: columnWidths[index] || 20,
+    }));
 
-    // Data rows.
-    const firstDataRow = headerRowNumber + 1;
-    for (const [index, row] of resolvedExportRows.entries()) {
-      const excelRowNumber = firstDataRow + index;
-      const excelRow = sheet.getRow(excelRowNumber);
-      excelRow.values = [
-        row.no,
-        row.date,
-        row.studentName,
-        row.schoolId,
-        row.yearSection,
-        row.violation,
-        row.reportedBy,
-        row.remarks,
-        "",
-        row.status,
-      ];
-      excelRow.height = 34;
+    const headerCellEnd = getExcelColumnLetter(headers.length);
+    sheet.mergeCells(`A1:${headerCellEnd}8`);
+    sheet.mergeCells(`A9:${headerCellEnd}9`);
+    sheet.mergeCells(`A10:${headerCellEnd}10`);
+    sheet.mergeCells(`A11:${headerCellEnd}11`);
+    sheet.mergeCells(`A12:${headerCellEnd}12`);
 
-      excelRow.eachCell((cell) => {
-        cell.font = { name: "Calibri", size: 11, color: { argb: "FF1F2937" } };
+    // Reserve sufficient space for header image to avoid overlap with title
+    for (let i = 1; i <= 8; i += 1) {
+      sheet.getRow(i).height = 48;
+    }
+    sheet.getRow(9).height = 36;
+    sheet.getRow(10).height = 20;
+    sheet.getRow(11).height = 20;
+    sheet.getRow(12).height = 20;
+    sheet.getRow(13).height = 26;
+
+    // Add header image if available
+    if (dataUrl) {
+      const dimensions = await getDataUrlDimensions(dataUrl);
+      addCenteredExcelHeaderImage({
+        workbook,
+        sheet,
+        dataUrl,
+        extension: "png",
+        dimensions,
+        rowStart: 1,
+        rowEnd: 8,
+      });
+    }
+
+    // Title and subtitle
+    const titleCell = sheet.getCell("A9");
+    titleCell.value = "Student Violation Report";
+    titleCell.font = { name: "Calibri", size: 18, bold: true, color: { argb: "FF000000" } };
+    titleCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+
+    const semesterCell = sheet.getCell("A10");
+    semesterCell.value = "School Year: " + (new Date().getFullYear()) + "-" + (new Date().getFullYear() + 1);
+    semesterCell.font = { name: "Calibri", size: 12, color: { argb: "FF1F2937" } };
+    semesterCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+
+    const generatedCell = sheet.getCell("A12");
+    const generatedDateRaw = new Date();
+    const month = generatedDateRaw.toLocaleString(undefined, { month: "long" });
+    const day = generatedDateRaw.getDate();
+    const year = generatedDateRaw.getFullYear();
+    const time = generatedDateRaw.toLocaleString(undefined, { hour: "numeric", minute: "2-digit", hour12: true });
+    generatedCell.value = `Generated: ${month} ${day}, ${year}, ${time}`;
+    generatedCell.font = { name: "Calibri", size: 11, color: { argb: "FF4B5563" } };
+    generatedCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+
+    const buildExportGroups = (rows) => {
+      const grouped = new Map();
+      rows.forEach((item) => {
+        const program = String(item.program || "").trim();
+        const ysRaw = String(item.yearSection || "").trim();
+        const groupKey = getGroupKeyFromYearSection(program, ysRaw);
+
+        const yearMatch = ysRaw.match(/(\d+)/);
+        const yearNum = yearMatch ? Number(yearMatch[1]) : 0;
+        const sectionMatch = ysRaw.match(/([A-Za-z]+)$/);
+        const sectionSuffix = sectionMatch ? sectionMatch[1] : "";
+
+        if (!grouped.has(groupKey)) {
+          grouped.set(groupKey, { rows: [], sortKey: { program, yearNum, sectionSuffix } });
+        }
+        grouped.get(groupKey).rows.push(item);
+      });
+
+      const arr = Array.from(grouped.entries()).map(([groupKey, val]) => ({
+        groupKey,
+        rows: val.rows,
+        sortKey: val.sortKey,
+      }));
+      arr.sort((a, b) => {
+        if ((a.sortKey.yearNum || 0) !== (b.sortKey.yearNum || 0))
+          return (a.sortKey.yearNum || 0) - (b.sortKey.yearNum || 0);
+        if ((a.sortKey.program || "") < (b.sortKey.program || "")) return -1;
+        if ((a.sortKey.program || "") > (b.sortKey.program || "")) return 1;
+        if ((a.sortKey.sectionSuffix || "") < (b.sortKey.sectionSuffix || "")) return -1;
+        if ((a.sortKey.sectionSuffix || "") > (b.sortKey.sectionSuffix || "")) return 1;
+        return 0;
+      });
+      return arr;
+    };
+
+    const exportGroups = buildExportGroups(resolvedExportRows);
+
+    const groupHeaderStyle = (row) => {
+      row.height = 20;
+      row.eachCell((cell) => {
+        cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FF0F172A" },
+        };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFCBD5E1" } },
+          left: { style: "thin", color: { argb: "FFCBD5E1" } },
+          bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
+          right: { style: "thin", color: { argb: "FFCBD5E1" } },
+        };
+      });
+    };
+
+    const headerRowStyle = (row) => {
+      row.height = 24;
+      row.eachCell((cell) => {
+        cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF1F2937" } };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFF2F2F2" },
+        };
         cell.alignment = {
           horizontal: "left",
           vertical: "middle",
@@ -1520,48 +1576,112 @@ const StudentViolation = () => {
           bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
           right: { style: "thin", color: { argb: "FFCBD5E1" } },
         };
-        if (excelRowNumber % 2 === 0) {
-          cell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: "FFF8FAFC" },
-          };
-        }
       });
+    };
 
-      // Place signature image in the Signature cell (I column) for this row.
-      if (row.signatureImage) {
-        const sigExt = String(row.signatureImage).startsWith("data:image/jpeg")
-          ? "jpeg"
-          : "png";
-        const sigDims = await getDataUrlDimensions(row.signatureImage);
-        const signatureColWidthUnits = sheet.columns[8]?.width || 16;
-        const signatureColWidthPx = signatureColWidthUnits * 7.5;
-        const rowHeightPx = (excelRow.height || 34) * 1.333;
-        const maxSigWidth = Math.max(signatureColWidthPx - 12, 8);
-        const maxSigHeight = Math.max(rowHeightPx - 8, 8);
-        const sigScale = Math.min(
-          maxSigWidth / sigDims.width,
-          maxSigHeight / sigDims.height,
-          1,
-        );
-        const drawWidth = Math.max(8, Math.round(sigDims.width * sigScale));
-        const drawHeight = Math.max(8, Math.round(sigDims.height * sigScale));
-        const xOffsetPx = (signatureColWidthPx - drawWidth) / 2;
-        const yOffsetPx = (rowHeightPx - drawHeight) / 2;
-        const signatureImageId = workbook.addImage({
-          base64: row.signatureImage,
-          extension: sigExt,
-        });
+    const dataRowStyle = (row) => {
+      row.height = 50;
+      row.eachCell((cell, colNumber) => {
+        cell.font = { name: "Calibri", size: 11, color: { argb: "FF1F2937" } };
+        cell.alignment = {
+          horizontal: colNumber === 1 ? "center" : "left",
+          vertical: "middle",
+          wrapText: true,
+          indent: colNumber === 1 ? 0 : 1,
+        };
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFCBD5E1" } },
+          left: { style: "thin", color: { argb: "FFCBD5E1" } },
+          bottom: { style: "thin", color: { argb: "FFCBD5E1" } },
+          right: { style: "thin", color: { argb: "FFCBD5E1" } },
+        };
+      });
+    };
 
+    let currentRow = 13;
+    const signatureRowPositions = [];
+
+    exportGroups.forEach((group) => {
+      const groupHeaderRow = sheet.getRow(currentRow);
+      groupHeaderRow.getCell(1).value = group.groupKey;
+      sheet.mergeCells(`A${currentRow}:${String.fromCharCode(64 + headers.length)}${currentRow}`);
+      groupHeaderStyle(groupHeaderRow);
+      currentRow += 1;
+
+      const tableHeaderRow = sheet.getRow(currentRow);
+      tableHeaderRow.values = headers;
+      headerRowStyle(tableHeaderRow);
+      currentRow += 1;
+
+      group.rows.forEach((item, index) => {
+        const rowValues = [
+          index + 1,
+          item.date,
+          item.studentName,
+          item.schoolId,
+          item.violation,
+          item.reportedBy,
+          item.remarks,
+          "",
+          item.status,
+        ];
+        const dataRow = sheet.getRow(currentRow);
+        dataRow.values = rowValues;
+        dataRowStyle(dataRow);
+        signatureRowPositions.push({ rowIndex: signatureRowPositions.length, rowNumber: currentRow });
+        currentRow += 1;
+      });
+    });
+
+    const signatureColumnIndex = headers.indexOf("Signature") + 1;
+    if (signatureColumnIndex > 0) {
+      signatureRowPositions.forEach((position) => {
+        const signatureImageData = resolvedExportRows[position.rowIndex]?.signatureImage;
+        if (!signatureImageData) return;
+
+        const signatureRowIndex = position.rowNumber;
+        const colWidthPx = sheet.getColumn(signatureColumnIndex).width * 7.5;
+        const rowHeightPx = sheet.getRow(signatureRowIndex).height * 1.333;
+        const maxWidth = colWidthPx * 0.8;
+        const maxHeight = rowHeightPx * 0.8;
+        const sigWidth = Math.min(maxWidth, 80);
+        const sigHeight = Math.min(maxHeight, 24);
+        const sigLeftOffset = (colWidthPx - sigWidth) / 2;
+        const sigTopOffset = (rowHeightPx - sigHeight) / 2;
+
+        const toColCoordinateForSig = (pixelOffset) => {
+          const colWidth = sheet.getColumn(signatureColumnIndex).width || 15;
+          const colPx = colWidth * 7.5;
+          if (pixelOffset <= colPx) {
+            return signatureColumnIndex - 1 + pixelOffset / colPx;
+          }
+          return signatureColumnIndex - 1;
+        };
+
+        const toRowCoordinateForSig = (pixelOffset) => {
+          const rowPx = Number(sheet.getRow(signatureRowIndex).height || 15) * 1.333;
+          if (pixelOffset <= rowPx) {
+            return signatureRowIndex - 1 + pixelOffset / rowPx;
+          }
+          return signatureRowIndex - 1;
+        };
+
+        const extension = String(signatureImageData).startsWith("data:image/jpeg") ? "jpeg" : "png";
+        const signatureImageId = workbook.addImage({ base64: signatureImageData, extension });
         sheet.addImage(signatureImageId, {
           tl: {
-            col: 8 + xOffsetPx / 7.5,
-            row: excelRowNumber - 1 + yOffsetPx / rowHeightPx,
+            col: toColCoordinateForSig(sigLeftOffset),
+            row: toRowCoordinateForSig(sigTopOffset),
           },
-          ext: { width: drawWidth, height: drawHeight },
+          ext: {
+            width: sigWidth,
+            height: sigHeight,
+          },
         });
-      }
+
+        const signatureCell = sheet.getCell(`${String.fromCharCode(65 + signatureColumnIndex - 1)}${signatureRowIndex}`);
+        signatureCell.value = "";
+      });
     }
 
     const buffer = await workbook.xlsx.writeBuffer();
@@ -1580,107 +1700,188 @@ const StudentViolation = () => {
     ]);
 
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-    const margin = 10;
     const pageWidth = doc.internal.pageSize.getWidth();
+    const tableMarginLeft = 10;
+    const tableMarginRight = 10;
+    const tableWidth = pageWidth - tableMarginLeft - tableMarginRight;
+    const tableCenterX = tableMarginLeft + tableWidth / 2;
     const { dataUrl, imageFormat } = await resolveHeaderImage();
-    let startY = 22;
+    let startY = 20;
 
     if (dataUrl) {
       const imgProps = doc.getImageProperties(dataUrl);
-      const headerWidth = pageWidth - margin * 2;
+      const headerWidth = tableWidth;
       const headerHeight = (imgProps.height * headerWidth) / imgProps.width;
-      const headerX = margin;
-      doc.addImage(dataUrl, imageFormat, headerX, 8, headerWidth, headerHeight);
-      startY = 8 + headerHeight + 8;
+      const headerX = tableMarginLeft;
+      doc.addImage(dataUrl, imageFormat, headerX, 10, headerWidth, headerHeight);
+      startY = 10 + headerHeight + 8;
     }
 
+    const generatedDateRaw = new Date();
+    const month = generatedDateRaw.toLocaleString(undefined, { month: "long" });
+    const day = generatedDateRaw.getDate();
+    const year = generatedDateRaw.getFullYear();
+    const time = generatedDateRaw.toLocaleString(undefined, { hour: "numeric", minute: "2-digit", hour12: true });
+    const generatedAt = `Generated: ${month} ${day}, ${year}, ${time}`;
+
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.text("Student Violation Report", 148.5, startY, { align: "center" });
+    doc.setFontSize(18);
+    doc.text("Student Violation Report", tableCenterX, startY + 5, { align: "center" });
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 148.5, startY + 5, {
-      align: "center",
+    doc.setFontSize(11);
+    doc.text(generatedAt, tableCenterX, startY + 13, { align: "center" });
+
+    const headers = [
+      "No",
+      "Date",
+      "Student Name",
+      "School ID",
+      "Violation",
+      "Reported By",
+      "Remarks",
+      "Signature",
+      "Status",
+    ];
+
+    const rawColumnWidths = [12, 22, 35, 26, 40, 26, 50, 22, 18];
+    const totalRawWidth = rawColumnWidths.reduce((sum, width) => sum + width, 0);
+    const scaledColumnWidths = rawColumnWidths.map((width) => (width * tableWidth) / totalRawWidth);
+    const tableStartY = startY + 20;
+
+    const buildExportGroups = (rows) => {
+      const grouped = new Map();
+      rows.forEach((item) => {
+        const program = String(item.program || "").trim();
+        const ysRaw = String(item.yearSection || "").trim();
+        const groupKey = getGroupKeyFromYearSection(program, ysRaw);
+
+        const yearMatch = ysRaw.match(/(\d+)/);
+        const yearNum = yearMatch ? Number(yearMatch[1]) : 0;
+        const sectionMatch = ysRaw.match(/([A-Za-z]+)$/);
+        const sectionSuffix = sectionMatch ? sectionMatch[1] : "";
+
+        if (!grouped.has(groupKey)) {
+          grouped.set(groupKey, { rows: [], sortKey: { program, yearNum, sectionSuffix } });
+        }
+        grouped.get(groupKey).rows.push(item);
+      });
+
+      const arr = Array.from(grouped.entries()).map(([groupKey, val]) => ({
+        groupKey,
+        rows: val.rows,
+        sortKey: val.sortKey,
+      }));
+      arr.sort((a, b) => {
+        if ((a.sortKey.yearNum || 0) !== (b.sortKey.yearNum || 0))
+          return (a.sortKey.yearNum || 0) - (b.sortKey.yearNum || 0);
+        if ((a.sortKey.program || "") < (b.sortKey.program || "")) return -1;
+        if ((a.sortKey.program || "") > (b.sortKey.program || "")) return 1;
+        if ((a.sortKey.sectionSuffix || "") < (b.sortKey.sectionSuffix || "")) return -1;
+        if ((a.sortKey.sectionSuffix || "") > (b.sortKey.sectionSuffix || "")) return 1;
+        return 0;
+      });
+      return arr;
+    };
+
+    const exportGroups = buildExportGroups(resolvedExportRows);
+    const pdfRowIndexMap = new Map();
+    const tableBody = [];
+    let bodyIndex = 0;
+    let flattenedIndex = 0;
+
+    const headerCells = headers.map((header) => ({
+      content: header,
+      styles: {
+        fillColor: [242, 242, 242],
+        textColor: [31, 41, 55],
+        fontStyle: "bold",
+        halign: "left",
+        valign: "middle",
+      },
+    }));
+
+    exportGroups.forEach((group) => {
+      tableBody.push([
+        {
+          content: group.groupKey,
+          colSpan: headers.length,
+          styles: {
+            halign: "center",
+            fontStyle: "bold",
+            textColor: [255, 255, 255],
+            fillColor: [15, 23, 42],
+          },
+        },
+      ]);
+      bodyIndex += 1;
+
+      tableBody.push(headerCells);
+      bodyIndex += 1;
+
+      group.rows.forEach((item, idx) => {
+        const rowValues = [
+          idx + 1,
+          item.date,
+          item.studentName,
+          item.schoolId,
+          item.violation,
+          item.reportedBy,
+          item.remarks,
+          "",
+          item.status,
+        ];
+        tableBody.push(rowValues);
+        pdfRowIndexMap.set(bodyIndex, flattenedIndex);
+        bodyIndex += 1;
+        flattenedIndex += 1;
+      });
     });
 
+    const signatureColumnIndex = headers.indexOf("Signature");
+    const didDrawCell = (data) => {
+      if (data.section === "body" && signatureColumnIndex >= 0 && data.column.index === signatureColumnIndex) {
+        const mappedIndex = pdfRowIndexMap.get(data.row.index);
+        if (mappedIndex === undefined) return;
+        const signatureImageData = resolvedExportRows[mappedIndex]?.signatureImage;
+        if (!signatureImageData) return;
+
+        const cellWidth = data.cell.width;
+        const cellHeight = data.cell.height;
+        const x = data.cell.x + 1;
+        const y = data.cell.y + 1;
+
+        const maxWidth = cellWidth - 2;
+        const maxHeight = cellHeight - 2;
+        const scale = Math.min(maxWidth / 80, maxHeight / 24, 1);
+        const sigWidth = 80 * scale;
+        const sigHeight = 24 * scale;
+        const sigX = x + (maxWidth - sigWidth) / 2;
+        const sigY = y + (maxHeight - sigHeight) / 2;
+        const imageType = detectDataUrlImageFormat(signatureImageData);
+        data.doc.addImage(signatureImageData, imageType, sigX, sigY, sigWidth, sigHeight);
+      }
+    };
+
     autoTable(doc, {
-      startY: startY + 9,
-      head: [
-        [
-          "No",
-          "Date",
-          "Student Name",
-          "School ID",
-          "Program - year/section",
-          "Violation",
-          "Reported By",
-          "Remarks",
-          "Signature",
-          "Status",
-        ],
-      ],
-      body: resolvedExportRows.map((row) => [
-        row.no,
-        row.date,
-        row.studentName,
-        row.schoolId,
-        row.yearSection,
-        row.violation,
-        row.reportedBy,
-        row.remarks,
-        "",
-        row.status,
-      ]),
+      startY: tableStartY,
+      body: tableBody,
       theme: "grid",
       styles: {
         fontSize: 8,
-        cellPadding: 2.4,
+        cellPadding: 2,
         textColor: [31, 41, 55],
         halign: "left",
         valign: "middle",
       },
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        halign: "left",
-      },
       alternateRowStyles: {
         fillColor: [248, 250, 252],
       },
-      margin: { left: 10, right: 10 },
-      columnStyles: {
-        0: { cellWidth: 10 },
-        1: { cellWidth: 22 },
-        2: { cellWidth: 36 },
-        3: { cellWidth: 26 },
-        4: { cellWidth: 24.44 },
-        5: { cellWidth: 40 },
-        6: { cellWidth: 26 },
-        7: { cellWidth: 50 },
-        8: { cellWidth: 22, minCellHeight: 12 },
-        9: { cellWidth: 22 },
-      },
-      didDrawCell: (data) => {
-        if (data.section !== "body" || data.column.index !== 8) {
-          return;
-        }
-
-        const signatureImage = resolvedExportRows[data.row.index]?.signatureImage;
-        if (!signatureImage) {
-          return;
-        }
-
-        const imgFormat = detectDataUrlImageFormat(signatureImage);
-        const maxW = Math.max(data.cell.width - 2, 2);
-        const maxH = Math.max(data.cell.height - 2, 2);
-        const imgW = Math.min(maxW, 18);
-        const imgH = Math.min(maxH, 8);
-        const imgX = data.cell.x + (data.cell.width - imgW) / 2;
-        const imgY = data.cell.y + (data.cell.height - imgH) / 2;
-
-        data.doc.addImage(signatureImage, imgFormat, imgX, imgY, imgW, imgH);
-      },
+      margin: { left: tableMarginLeft, right: tableMarginRight },
+      columnStyles: scaledColumnWidths.reduce((obj, width, idx) => {
+        obj[idx] = { cellWidth: width, minCellHeight: 12 };
+        return obj;
+      }, {}),
+      didDrawCell,
     });
 
     doc.save(`student_violations_${formatDateForFileName()}.pdf`);

@@ -179,6 +179,19 @@ const formatProgramYearSection = (program, yearSection) => {
   return programText || yearSectionText || '';
 };
 
+const stripProgramFromYearSection = (program, yearSection) => {
+  const ys = String(yearSection || '').trim();
+  const prog = String(program || '').trim();
+  if (!ys) return '';
+  if (prog) {
+    const prefix = `${prog}-`;
+    if (ys.toLowerCase().startsWith(prefix.toLowerCase())) {
+      return ys.substring(prefix.length);
+    }
+  }
+  return ys;
+};
+
 const getArchiveRowKey = (row) => {
   if (!row) return "";
 
@@ -1269,6 +1282,8 @@ const Archives = () => {
             normalizedName.middleInitial,
           );
 
+          const combinedYearSection = formatProgramYearSection(user.program, user.year_section);
+          const yearSectionOnly = stripProgramFromYearSection(user.program, user.year_section);
           return {
           id: user.id,
           no: "",
@@ -1285,7 +1300,7 @@ const Archives = () => {
           school_id: user.school_id || user.schoolId || '',
           email: user.email,
           program: user.program,
-          yearSection: user.year_section,
+          yearSection: combinedYearSection,
           status: user.status,
           archivedReason: user.archived_reason,
           statusDisplay: user.archived_reason ? (
@@ -1302,7 +1317,7 @@ const Archives = () => {
           recordType: "user",
           sourceType: "archive",
           sourceImportKey: "",
-          searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${user.year_section || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
+          searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${combinedYearSection || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
           };
         });
       } else if (activeFolder === "unresolved" && selectedUnresolvedYear === "users") {
@@ -1321,6 +1336,8 @@ const Archives = () => {
               normalizedName.middleInitial,
             );
 
+            const combinedYearSection = formatProgramYearSection(user.program, user.year_section);
+            const yearSectionOnly = stripProgramFromYearSection(user.program, user.year_section);
             return {
             id: user.id,
             no: "",
@@ -1337,7 +1354,7 @@ const Archives = () => {
             school_id: user.school_id || user.schoolId || '',
             email: user.email,
             program: user.program,
-            yearSection: user.year_section,
+            yearSection: combinedYearSection,
             status: user.status,
             archivedReason: user.archived_reason,
             statusDisplay: user.archived_reason ? (
@@ -1354,7 +1371,7 @@ const Archives = () => {
             recordType: "user",
             sourceType: "archive",
             sourceImportKey: "",
-            searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${user.year_section || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
+            searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${combinedYearSection || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
             };
           });
       } else {
@@ -1451,6 +1468,8 @@ const Archives = () => {
           (user.email && user.email.trim());
         if (!hasUser) return;
 
+        const combinedYearSection = formatProgramYearSection(user.program, user.year_section);
+
         allData.push({
           id: user.id,
           no: "",
@@ -1467,7 +1486,7 @@ const Archives = () => {
           school_id: user.school_id || user.schoolId || '',
           email: user.email,
           program: user.program,
-          yearSection: user.year_section,
+          yearSection: formatProgramYearSection(user.program, user.year_section),
           status: user.status,
           archivedReason: user.archived_reason,
           statusDisplay: user.archived_reason ? (
@@ -1485,7 +1504,7 @@ const Archives = () => {
           sourceType: "archive",
           sourceImportKey: "",
           // Add searchable text for global search
-          searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${user.year_section || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
+          searchableText: `${formattedFullName || ""} ${user.school_id || ""} ${user.email || ""} ${user.program || ""} ${combinedYearSection || ""} ${user.status || ""} ${user.archived_reason || ""}`.toLowerCase(),
         });
       });
 
@@ -2072,10 +2091,6 @@ const Archives = () => {
           {
             key: "email",
             label: "Email",
-          },
-          {
-            key: "program",
-            label: "Program",
           },
           {
             key: "yearSection",
@@ -2759,7 +2774,7 @@ const Archives = () => {
 
     if (activeFolder === 'users') {
       title = 'ARCHIVED USERS REPORT';
-      headers = ['No', 'Student No.', 'Full Name', 'Email', 'Program', 'Year/Section', 'Status', 'Violation Count', 'Archived Date'];
+      headers = ['No', 'Student No.', 'Full Name', 'Email', 'Status', 'Violation Count', 'Archived Date'];
       sheetData = filteredData.map((item, index) => {
         const statusValue =
           item.archivedReason ||
@@ -2776,8 +2791,6 @@ const Archives = () => {
           'Student No.': studentNo,
           'Full Name': fullName,
           'Email': item.email || '',
-          'Program': item.program || '',
-          'Year/Section': item.yearSection || '',
           'Status': statusValue,
           'Violation Count': item.violationCount || 0,
           'Archived Date': item.archivedDate || '',
@@ -2786,12 +2799,11 @@ const Archives = () => {
     } else {
       // Violations (both archived and unresolved)
       title = activeFolder === 'unresolved' ? 'UNRESOLVED VIOLATIONS REPORT' : 'ARCHIVED VIOLATIONS REPORT';
-      headers = ['No', 'Date', 'Student Name', 'Program-Year/Section', 'Violation', 'Type', 'Reported by', 'Remarks', 'Signature', 'Status'];
+      headers = ['No', 'Date', 'Student Name', 'Violation', 'Type', 'Reported by', 'Remarks', 'Signature', 'Status'];
       sheetData = filteredData.map((item, index) => ({
         'No': index + 1,
         'Date': item.date || '-',
         'Student Name': item.studentName?.props?.children?.[0]?.props?.children || item.studentName || '-',
-        'Program-Year/Section': item.yearSection || '-',
         'Violation': item.violation || '-',
         'Type': item.type || '-',
         'Reported by': item.reportedBy || '-',
@@ -2824,17 +2836,15 @@ const Archives = () => {
         ]);
 
         const workbook = new Workbook();
-        const sheet = workbook.addWorksheet('Archive Report', {
-          views: [{ state: 'frozen', ySplit: activeFolder === 'users' ? 11 : 13 }],
-        });
+        const sheet = workbook.addWorksheet('Archive Report');
         applyExcelPrintLayout(sheet, {
           orientation: activeFolder === 'users' ? 'portrait' : 'landscape',
         });
 
         // Set column widths
         const columnWidths = activeFolder === 'users'
-          ? [10, 18, 35, 35, 20, 20, 15, 15, 18]
-          : [10, 18, 35, 20, 40, 24, 20, 44, 22, 16];
+          ? [10, 18, 35, 35, 20, 18, 18]
+          : [10, 18, 35, 40, 24, 20, 44, 22, 18];
         
         sheet.columns = headers.map((header, index) => ({
           key: header,
@@ -2854,20 +2864,21 @@ const Archives = () => {
           sheet.mergeCells(`A12:${headerCellEnd}12`);
         }
 
+        // Reserve sufficient space for header image to avoid overlap with title
         for (let i = 1; i <= 8; i += 1) {
-          sheet.getRow(i).height = i <= 7 ? 26 : 18;
+          sheet.getRow(i).height = 48;
         }
         
         if (activeFolder === 'users') {
-          sheet.getRow(9).height = 28;
-          sheet.getRow(10).height = 18;
-          sheet.getRow(11).height = 24;
+          sheet.getRow(9).height = 36;
+          sheet.getRow(10).height = 20;
+          sheet.getRow(11).height = 26;
         } else {
-          sheet.getRow(9).height = 28;
-          sheet.getRow(10).height = 18;
-          sheet.getRow(11).height = 18;
-          sheet.getRow(12).height = 18;
-          sheet.getRow(13).height = 24;
+          sheet.getRow(9).height = 36;
+          sheet.getRow(10).height = 20;
+          sheet.getRow(11).height = 20;
+          sheet.getRow(12).height = 20;
+          sheet.getRow(13).height = 26;
         }
 
         // Add header image if available
@@ -2926,41 +2937,49 @@ const Archives = () => {
           generatedCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         }
 
-        // Header row
-        const headerRow = sheet.getRow(activeFolder === 'users' ? 11 : 13);
-        headerRow.values = headers;
-        headerRow.height = 24;
-        headerRow.eachCell((cell) => {
-          cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
-          cell.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FF0F172A' },
-          };
-          cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-          cell.border = {
-            top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-            left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-            bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-            right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-          };
-        });
+        const buildExportGroups = (rows) => {
+          const grouped = new Map();
+          rows.forEach((item) => {
+            const program = String(item.program || '').trim();
+            const ysRaw = String(item.yearSection || '').trim();
+            const groupKey = formatProgramYearSection(program, ysRaw) || 'UNASSIGNED';
 
-        // Data rows
-        const dataRowStart = activeFolder === 'users' ? 12 : 14;
-        sheetData.forEach((row, index) => {
-          const excelRow = sheet.getRow(dataRowStart + index);
-          excelRow.values = Object.values(row);
-          excelRow.height = 28;
+            // parse year number and section suffix for sorting
+            const yearMatch = ysRaw.match(/(\d+)/);
+            const yearNum = yearMatch ? Number(yearMatch[1]) : 0;
+            const sectionMatch = ysRaw.match(/([A-Za-z]+)$/);
+            const sectionSuffix = sectionMatch ? sectionMatch[1] : '';
 
-          excelRow.eachCell((cell, cellNum) => {
-            cell.font = { name: 'Calibri', size: 11, color: { argb: 'FF1F2937' } };
-            // Center align No column and Status column
-            if (cellNum === 1 || (activeFolder !== 'users' && cellNum === 10) || (activeFolder === 'users' && cellNum === 7)) {
-              cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-            } else {
-              cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+            if (!grouped.has(groupKey)) {
+              grouped.set(groupKey, { rows: [], sortKey: { program, yearNum, sectionSuffix } });
             }
+            grouped.get(groupKey).rows.push(item);
+          });
+
+          const arr = Array.from(grouped.entries()).map(([groupKey, val]) => ({ groupKey, rows: val.rows, sortKey: val.sortKey }));
+          arr.sort((a, b) => {
+            if ((a.sortKey.yearNum || 0) !== (b.sortKey.yearNum || 0)) return (a.sortKey.yearNum || 0) - (b.sortKey.yearNum || 0);
+            if ((a.sortKey.program || '') < (b.sortKey.program || '')) return -1;
+            if ((a.sortKey.program || '') > (b.sortKey.program || '')) return 1;
+            if ((a.sortKey.sectionSuffix || '') < (b.sortKey.sectionSuffix || '')) return -1;
+            if ((a.sortKey.sectionSuffix || '') > (b.sortKey.sectionSuffix || '')) return 1;
+            return 0;
+          });
+          return arr;
+        };
+
+        const exportGroups = buildExportGroups(filteredData);
+
+        const groupHeaderStyle = (row) => {
+          row.height = 20;
+          row.eachCell((cell) => {
+            cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FF0F172A' },
+            };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
             cell.border = {
               top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
               left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
@@ -2968,63 +2987,159 @@ const Archives = () => {
               right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
             };
           });
+        };
+
+        const headerRowStyle = (row) => {
+          row.height = 24;
+          row.eachCell((cell) => {
+            cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF1F2937' } };
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFF2F2F2' },
+            };
+            cell.alignment = {
+              horizontal: 'left',
+              vertical: 'middle',
+              wrapText: true,
+              indent: 1,
+            };
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+              left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+              bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+              right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+            };
+          });
+        };
+
+        const dataRowStyle = (row) => {
+          row.height = 28;
+          row.eachCell((cell, colNumber) => {
+            cell.font = { name: 'Calibri', size: 11, color: { argb: 'FF1F2937' } };
+            cell.alignment = {
+              horizontal: colNumber === 1 ? 'center' : 'left',
+              vertical: 'middle',
+              wrapText: true,
+              indent: colNumber === 1 ? 0 : 1,
+            };
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+              left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+              bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+              right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+            };
+          });
+        };
+
+        const createRowValues = (item, index) => {
+          if (activeFolder === 'users') {
+            const statusValue =
+              item.archivedReason ||
+              (typeof item.status === 'string'
+                ? item.status
+                : item.status?.toString?.() || '') ||
+              '';
+            return {
+              'No': index + 1,
+              'Student No.': (item.school_id || item.schoolId || '').toString().trim(),
+              'Full Name': item.full_name || '',
+              'Email': item.email || '',
+              'Status': statusValue,
+              'Violation Count': item.violationCount || 0,
+              'Archived Date': item.archivedDate || '',
+            };
+          }
+          return {
+            'No': index + 1,
+            'Date': item.date || '-',
+            'Student Name': item.studentName?.props?.children?.[0]?.props?.children || item.studentName || '-',
+            'Violation': item.violation || '-',
+            'Type': item.type || '-',
+            'Reported by': item.reportedBy || '-',
+            'Remarks': item.remarks || '-',
+            'Signature': item.signature || 'No Signature',
+            'Status': item.status || '-',
+          };
+        };
+
+        let currentRow = activeFolder === 'users' ? 11 : 13;
+        const signatureRowPositions = [];
+
+        exportGroups.forEach((group) => {
+          const groupHeaderRow = sheet.getRow(currentRow);
+          groupHeaderRow.getCell(1).value = group.groupKey;
+          sheet.mergeCells(`A${currentRow}:${String.fromCharCode(64 + headers.length)}${currentRow}`);
+          groupHeaderStyle(groupHeaderRow);
+          currentRow += 1;
+
+          const tableHeaderRow = sheet.getRow(currentRow);
+          tableHeaderRow.values = headers;
+          headerRowStyle(tableHeaderRow);
+          currentRow += 1;
+
+          group.rows.forEach((item, index) => {
+            const rowValues = createRowValues(item, index);
+            const dataRow = sheet.getRow(currentRow);
+            dataRow.values = headers.map((header) => rowValues[header]);
+            dataRowStyle(dataRow);
+            if (activeFolder !== 'users') {
+              signatureRowPositions.push({ rowIndex: signatureRowPositions.length, rowNumber: currentRow });
+            }
+            currentRow += 1;
+          });
         });
 
-        // Add signature images for violations
-        if (activeFolder !== 'users') {
-          filteredData.forEach((item, index) => {
-            const signatureImageData = signatureImageDataByRow[index];
-            if (signatureImageData) {
-              const signatureColIndex = 9; // Column I (0-indexed as 8, but 1-indexed as 9)
-              const signatureRowIndex = dataRowStart + index;
+        const signatureColumnIndex = headers.indexOf('Signature') + 1;
+        if (activeFolder !== 'users' && signatureColumnIndex > 0) {
+          signatureRowPositions.forEach((position) => {
+            const signatureImageData = signatureImageDataByRow[position.rowIndex];
+            if (!signatureImageData) return;
 
-              const colWidthPx = sheet.getColumn(signatureColIndex).width * 7.5;
-              const rowHeightPx = sheet.getRow(signatureRowIndex).height * 1.333;
+            const signatureRowIndex = position.rowNumber;
+            const colWidthPx = sheet.getColumn(signatureColumnIndex).width * 7.5;
+            const rowHeightPx = sheet.getRow(signatureRowIndex).height * 1.333;
+            const maxWidth = colWidthPx * 0.8;
+            const maxHeight = rowHeightPx * 0.8;
+            const sigWidth = Math.min(maxWidth, 80);
+            const sigHeight = Math.min(maxHeight, 24);
+            const sigLeftOffset = (colWidthPx - sigWidth) / 2;
+            const sigTopOffset = (rowHeightPx - sigHeight) / 2;
 
-              const maxWidth = colWidthPx * 0.8;
-              const maxHeight = rowHeightPx * 0.8;
-              const sigWidth = Math.min(maxWidth, 80);
-              const sigHeight = Math.min(maxHeight, 24);
+            const toColCoordinateForSig = (pixelOffset) => {
+              let remaining = pixelOffset;
+              const colWidth = sheet.getColumn(signatureColumnIndex).width || 15;
+              const colPx = colWidth * 7.5;
+              if (remaining <= colPx) {
+                return (signatureColumnIndex - 1) + remaining / colPx;
+              }
+              return signatureColumnIndex - 1;
+            };
 
-              const sigLeftOffset = (colWidthPx - sigWidth) / 2;
-              const sigTopOffset = (rowHeightPx - sigHeight) / 2;
+            const toRowCoordinateForSig = (pixelOffset) => {
+              let remaining = pixelOffset;
+              const rowPx = Number(sheet.getRow(signatureRowIndex).height || 15) * 1.333;
+              if (remaining <= rowPx) {
+                return (signatureRowIndex - 1) + remaining / rowPx;
+              }
+              return signatureRowIndex - 1;
+            };
 
-              const toColCoordinateForSig = (pixelOffset) => {
-                let remaining = pixelOffset;
-                const colWidth = sheet.getColumn(signatureColIndex).width || 15;
-                const colPx = colWidth * 7.5;
-                if (remaining <= colPx) {
-                  return (signatureColIndex - 1) + remaining / colPx;
-                }
-                return signatureColIndex - 1;
-              };
+            const extension = getImageTypeFromDataUrl(signatureImageData).toLowerCase();
+            const signatureImageId = workbook.addImage({ base64: signatureImageData, extension });
+            sheet.addImage(signatureImageId, {
+              tl: {
+                col: toColCoordinateForSig(sigLeftOffset),
+                row: toRowCoordinateForSig(sigTopOffset),
+              },
+              ext: {
+                width: sigWidth,
+                height: sigHeight,
+              },
+            });
 
-              const toRowCoordinateForSig = (pixelOffset) => {
-                let remaining = pixelOffset;
-                const rowPx = Number(sheet.getRow(signatureRowIndex).height || 15) * 1.333;
-                if (remaining <= rowPx) {
-                  return (signatureRowIndex - 1) + remaining / rowPx;
-                }
-                return signatureRowIndex - 1;
-              };
-
-              const extension = getImageTypeFromDataUrl(signatureImageData).toLowerCase();
-              const signatureImageId = workbook.addImage({ base64: signatureImageData, extension });
-              sheet.addImage(signatureImageId, {
-                tl: {
-                  col: toColCoordinateForSig(sigLeftOffset),
-                  row: toRowCoordinateForSig(sigTopOffset),
-                },
-                ext: {
-                  width: sigWidth,
-                  height: sigHeight,
-                },
-              });
-
-              // Clear the text in the signature cell since we have an image
-              const signatureCell = sheet.getCell(`${String.fromCharCode(65 + signatureColIndex - 1)}${signatureRowIndex}`);
-              signatureCell.value = '';
-            }
+            const signatureCell = sheet.getCell(`${String.fromCharCode(65 + signatureColumnIndex - 1)}${signatureRowIndex}`);
+            signatureCell.value = '';
           });
         }
 
@@ -3093,46 +3208,134 @@ const Archives = () => {
         doc.text(generatedAt, tableCenterX, currentY + 2, { align: 'center' });
 
         const rawColumnWidths = activeFolder === 'users'
-          ? [12, 24, 35, 35, 22, 18, 20, 18, 18]
-          : [12, 22, 35, 20, 40, 28, 25, 50, 25, 18];
+          ? [12, 24, 35, 35, 22, 18, 18]
+          : [12, 22, 35, 40, 28, 25, 44, 22, 18];
         const totalRawWidth = rawColumnWidths.reduce((sum, width) => sum + width, 0);
         const scaledColumnWidths = rawColumnWidths.map((width) => (width * tableWidth) / totalRawWidth);
         const tableStartY = currentY + 10;
 
-        // Custom renderer for signature column
-        const didDrawCell = (data) => {
-          if (data.section === 'body' && activeFolder !== 'users') {
-            const signatureColumnIndex = 8; // Signature column index
-            if (data.column.index === signatureColumnIndex) {
-              const signatureImageData = signatureImageDataByRow[data.row.index];
-              if (signatureImageData) {
-                const cellWidth = data.cell.width;
-                const cellHeight = data.cell.height;
-                const x = data.cell.x + 1;
-                const y = data.cell.y + 1;
+        const buildExportGroups = (rows) => {
+          const grouped = new Map();
+          rows.forEach((item) => {
+            const program = String(item.program || '').trim();
+            const ysRaw = String(item.yearSection || '').trim();
+            const groupKey = formatProgramYearSection(program, ysRaw) || 'UNASSIGNED';
 
-                const maxWidth = cellWidth - 2;
-                const maxHeight = cellHeight - 2;
-                const scale = Math.min(maxWidth / 80, maxHeight / 24, 1);
-                const sigWidth = 80 * scale;
-                const sigHeight = 24 * scale;
+            const yearMatch = ysRaw.match(/(\d+)/);
+            const yearNum = yearMatch ? Number(yearMatch[1]) : 0;
+            const sectionMatch = ysRaw.match(/([A-Za-z]+)$/);
+            const sectionSuffix = sectionMatch ? sectionMatch[1] : '';
 
-                const sigX = x + (maxWidth - sigWidth) / 2;
-                const sigY = y + (maxHeight - sigHeight) / 2;
-
-                const imageType = getImageTypeFromDataUrl(signatureImageData);
-                doc.addImage(signatureImageData, imageType, sigX, sigY, sigWidth, sigHeight);
-              }
+            if (!grouped.has(groupKey)) {
+              grouped.set(groupKey, { rows: [], sortKey: { program, yearNum, sectionSuffix } });
             }
+            grouped.get(groupKey).rows.push(item);
+          });
+
+          const arr = Array.from(grouped.entries()).map(([groupKey, val]) => ({ groupKey, rows: val.rows, sortKey: val.sortKey }));
+          arr.sort((a, b) => {
+            if ((a.sortKey.yearNum || 0) !== (b.sortKey.yearNum || 0)) return (a.sortKey.yearNum || 0) - (b.sortKey.yearNum || 0);
+            if ((a.sortKey.program || '') < (b.sortKey.program || '')) return -1;
+            if ((a.sortKey.program || '') > (b.sortKey.program || '')) return 1;
+            if ((a.sortKey.sectionSuffix || '') < (b.sortKey.sectionSuffix || '')) return -1;
+            if ((a.sortKey.sectionSuffix || '') > (b.sortKey.sectionSuffix || '')) return 1;
+            return 0;
+          });
+          return arr;
+        };
+
+        const exportGroups = buildExportGroups(filteredData);
+        const pdfRowIndexMap = new Map();
+        const tableBody = [];
+        let bodyIndex = 0;
+        let flattenedIndex = 0;
+
+        const headerCells = headers.map((header) => ({
+          content: header,
+          styles: {
+            fillColor: [242, 242, 242],
+            textColor: [31, 41, 55],
+            fontStyle: 'bold',
+            halign: 'left',
+            valign: 'middle',
+          },
+        }));
+
+        exportGroups.forEach((group) => {
+          tableBody.push([
+            {
+              content: group.groupKey,
+              colSpan: headers.length,
+              styles: {
+                halign: 'center',
+                fontStyle: 'bold',
+                textColor: [255, 255, 255],
+                fillColor: [15, 23, 42],
+              },
+            },
+          ]);
+          bodyIndex += 1;
+
+          tableBody.push(headerCells);
+          bodyIndex += 1;
+
+          group.rows.forEach((item, idx) => {
+            const rowValues = headers.map((header) => {
+              if (activeFolder === 'users') {
+                if (header === 'No') return idx + 1;
+                if (header === 'Student No.') return (item.school_id || item.schoolId || '').toString().trim();
+                if (header === 'Full Name') return item.full_name || '';
+                if (header === 'Email') return item.email || '';
+                if (header === 'Status') return item.archivedReason || (typeof item.status === 'string' ? item.status : item.status?.toString?.() || '') || '';
+                if (header === 'Violation Count') return item.violationCount || 0;
+                if (header === 'Archived Date') return item.archivedDate || '';
+              }
+              if (header === 'No') return idx + 1;
+              if (header === 'Date') return item.date || '-';
+              if (header === 'Student Name') return item.studentName?.props?.children?.[0]?.props?.children || item.studentName || '-';
+              if (header === 'Violation') return item.violation || '-';
+              if (header === 'Type') return item.type || '-';
+              if (header === 'Reported by') return item.reportedBy || '-';
+              if (header === 'Remarks') return item.remarks || '-';
+              if (header === 'Signature') return item.signature || 'No Signature';
+              if (header === 'Status') return item.status || '-';
+              return '';
+            });
+            tableBody.push(rowValues);
+            pdfRowIndexMap.set(bodyIndex, flattenedIndex);
+            bodyIndex += 1;
+            flattenedIndex += 1;
+          });
+        });
+
+        const signatureColumnIndex = headers.indexOf('Signature');
+        const didDrawCell = (data) => {
+          if (data.section === 'body' && signatureColumnIndex >= 0 && data.column.index === signatureColumnIndex) {
+            const mappedIndex = pdfRowIndexMap.get(data.row.index);
+            if (mappedIndex === undefined) return;
+            const signatureImageData = signatureImageDataByRow[mappedIndex];
+            if (!signatureImageData) return;
+
+            const cellWidth = data.cell.width;
+            const cellHeight = data.cell.height;
+            const x = data.cell.x + 1;
+            const y = data.cell.y + 1;
+
+            const maxWidth = cellWidth - 2;
+            const maxHeight = cellHeight - 2;
+            const scale = Math.min(maxWidth / 80, maxHeight / 24, 1);
+            const sigWidth = 80 * scale;
+            const sigHeight = 24 * scale;
+            const sigX = x + (maxWidth - sigWidth) / 2;
+            const sigY = y + (maxHeight - sigHeight) / 2;
+            const imageType = getImageTypeFromDataUrl(signatureImageData);
+            doc.addImage(signatureImageData, imageType, sigX, sigY, sigWidth, sigHeight);
           }
         };
 
-        const bodyData = sheetData.map(row => Object.values(row));
-
         autoTable(doc, {
           startY: tableStartY,
-          head: [headers],
-          body: bodyData,
+          body: tableBody,
           theme: 'grid',
           styles: {
             fontSize: 8,
@@ -3141,39 +3344,16 @@ const Archives = () => {
             halign: 'left',
             valign: 'middle',
           },
-          headStyles: {
-            fillColor: [15, 23, 42],
-            textColor: [255, 255, 255],
-            fontStyle: 'bold',
-            halign: 'center',
-          },
           alternateRowStyles: {
             fillColor: [248, 250, 252],
           },
           margin: { left: tableMarginLeft, right: tableMarginRight },
           tableWidth: tableWidth,
-          columnStyles: activeFolder === 'users' ? {
-            0: { cellWidth: scaledColumnWidths[0], halign: 'center' },
-            1: { cellWidth: scaledColumnWidths[1], halign: 'center' },
-            2: { cellWidth: scaledColumnWidths[2] },
-            3: { cellWidth: scaledColumnWidths[3] },
-            4: { cellWidth: scaledColumnWidths[4] },
-            5: { cellWidth: scaledColumnWidths[5] },
-            6: { cellWidth: scaledColumnWidths[6], halign: 'center' },
-            7: { cellWidth: scaledColumnWidths[7], halign: 'center' },
-            8: { cellWidth: scaledColumnWidths[8], halign: 'center' },
-          } : {
-            0: { cellWidth: scaledColumnWidths[0], halign: 'center' },
-            1: { cellWidth: scaledColumnWidths[1] },
-            2: { cellWidth: scaledColumnWidths[2] },
-            3: { cellWidth: scaledColumnWidths[3] },
-            4: { cellWidth: scaledColumnWidths[4] },
-            5: { cellWidth: scaledColumnWidths[5] },
-            6: { cellWidth: scaledColumnWidths[6] },
-            7: { cellWidth: scaledColumnWidths[7] },
-            8: { cellWidth: scaledColumnWidths[8], halign: 'center' },
-            9: { cellWidth: scaledColumnWidths[9] },
-          },
+          columnStyles: headers.reduce((styles, _, index) => {
+            styles[index] = { cellWidth: scaledColumnWidths[index] };
+            if (index === 0) styles[index].halign = 'center';
+            return styles;
+          }, {}),
           didDrawCell,
         });
 
