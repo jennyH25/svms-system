@@ -38,51 +38,91 @@ const port = Number(process.env.API_PORT || process.env.PORT || 3001);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, "../dist");
-const EMAIL_LOGO_PATH = path.resolve(__dirname, "../src/assets/css_logo.png");
-const EMAIL_LOGO_CID = "css_logo@svms.local";
-let EMAIL_LOGO_BASE64 = "";
+const publicDir = path.resolve(__dirname, "../public");
+const EMAIL_LOGO_FILE_PATH = path.resolve(publicDir, "ccs_logo.png");
+const EMAIL_LOGO_PUBLIC_PATH = "/ccs_logo.png";
+const EMAIL_LOGO_DISPLAY_WIDTH = 72;
+const EMAIL_LOGO_DISPLAY_HEIGHT = 41;
+const STUDENT_NOTIFICATIONS_PATH = "/student/notifications";
 
-async function loadEmailLogo() {
-  try {
-    const logoBuffer = await readFile(EMAIL_LOGO_PATH);
-    EMAIL_LOGO_BASE64 = logoBuffer.toString("base64");
-    console.log("Email logo loaded successfully.");
-  } catch (error) {
-    console.warn(`Failed to load email logo: ${error.message}`);
-    EMAIL_LOGO_BASE64 = "";
-  }
-}
-
-function getEmailLogoAttachment() {
-  if (!EMAIL_LOGO_BASE64) {
-    return null;
+function getEmailLogoUrl() {
+  const explicitLogoUrl = String(process.env.EMAIL_LOGO_URL || "").trim();
+  if (explicitLogoUrl) {
+    return explicitLogoUrl;
   }
 
-  return {
-    filename: "css_logo.png",
-    content: Buffer.from(EMAIL_LOGO_BASE64, "base64"),
-    cid: EMAIL_LOGO_CID,
-    contentType: "image/png",
-  };
-}
+  const configuredBaseUrl = String(
+    process.env.EMAIL_ASSET_BASE_URL ||
+      process.env.PUBLIC_APP_URL ||
+      process.env.APP_URL ||
+      process.env.CLIENT_URL ||
+      process.env.PUBLIC_URL ||
+      process.env.SITE_URL ||
+      "",
+  )
+    .trim()
+    .replace(/\/+$/, "");
 
-function addEmailLogoAttachment(mailOptions) {
-  const logoAttachment = getEmailLogoAttachment();
-  if (!logoAttachment) {
-    return mailOptions;
+  if (configuredBaseUrl) {
+    return `${configuredBaseUrl}${EMAIL_LOGO_PUBLIC_PATH}`;
   }
 
-  return {
-    ...mailOptions,
-    attachments: Array.isArray(mailOptions.attachments)
-      ? [...mailOptions.attachments, logoAttachment]
-      : [logoAttachment],
-  };
+  const vercelUrl = String(process.env.VERCEL_URL || "").trim().replace(/\/+$/, "");
+  if (vercelUrl) {
+    return `https://${vercelUrl}${EMAIL_LOGO_PUBLIC_PATH}`;
+  }
+
+  if (!isServerlessRuntime) {
+    return `http://localhost:${port}${EMAIL_LOGO_PUBLIC_PATH}`;
+  }
+
+  return "";
 }
 
-function getEmailLogoCid() {
-  return EMAIL_LOGO_BASE64 ? `cid:${EMAIL_LOGO_CID}` : "";
+function getEmailAppBaseUrl() {
+  const explicitAppUrl = String(
+    process.env.EMAIL_APP_URL ||
+      process.env.APP_URL ||
+      process.env.PUBLIC_APP_URL ||
+      process.env.CLIENT_URL ||
+      process.env.PUBLIC_URL ||
+      process.env.SITE_URL ||
+      process.env.EMAIL_ASSET_BASE_URL ||
+      "",
+  )
+    .trim()
+    .replace(/\/+$/, "");
+
+  if (explicitAppUrl) {
+    return explicitAppUrl;
+  }
+
+  const vercelUrl = String(process.env.VERCEL_URL || "").trim().replace(/\/+$/, "");
+  if (vercelUrl) {
+    return `https://${vercelUrl}`;
+  }
+
+  if (!isServerlessRuntime) {
+    return `http://localhost:${port}`;
+  }
+
+  return "";
 }
+
+function getStudentNotificationsUrl() {
+  const appBaseUrl = getEmailAppBaseUrl();
+  return appBaseUrl ? `${appBaseUrl}${STUDENT_NOTIFICATIONS_PATH}` : "";
+}
+
+app.get("/api/email-logo", (req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  return res.sendFile(EMAIL_LOGO_FILE_PATH, (error) => {
+    if (error && !res.headersSent) {
+      return res.status(404).send("Email logo not found.");
+    }
+    return undefined;
+  });
+});
 
 const FORGOT_CODE_EXPIRY_MS = 10 * 60 * 1000;
 const FORGOT_RESEND_COOLDOWN_MS = 15 * 1000;
@@ -3087,7 +3127,7 @@ async function purgeExpiredNotifications() {
   }
 }
 
-function buildCredentialEmailTemplate({
+function legacyLightBuildCredentialEmailTemplate({
   firstName,
   username,
   password,
@@ -3123,16 +3163,17 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function buildSystemEmailShell({
+function legacyLightBuildSystemEmailShell({
   eyebrow,
   heading,
   lead,
   contentHtml,
   footerNote,
 }) {
-  const logoHtml = EMAIL_LOGO_BASE64
-    ? `<img src="cid:${EMAIL_LOGO_CID}" width="52" height="52" alt="CSS Logo" style="display:block;border-radius:14px;background:#ffffff;padding:6px;min-width:52px;max-width:52px;" />`
-    : `<div style="width:52px;height:52px;border-radius:14px;background:#ffffff;display:inline-block;"></div>`;
+  const logoUrl = getEmailLogoUrl();
+  const logoHtml = logoUrl
+    ? `<div style="display:inline-block;background:#ffffff;border-radius:14px;padding:8px;"><img src="${escapeHtml(logoUrl)}" width="${EMAIL_LOGO_DISPLAY_WIDTH}" height="${EMAIL_LOGO_DISPLAY_HEIGHT}" alt="CCS Logo" style="display:block;width:${EMAIL_LOGO_DISPLAY_WIDTH}px;height:${EMAIL_LOGO_DISPLAY_HEIGHT}px;border:0;outline:none;text-decoration:none;" /></div>`
+    : `<div style="width:${EMAIL_LOGO_DISPLAY_WIDTH}px;height:${EMAIL_LOGO_DISPLAY_HEIGHT}px;border-radius:14px;background:rgba(255,255,255,0.14);display:block;"></div>`;
 
   return `
     <div style="margin:0;padding:0;background:#eef4fb;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
@@ -3141,24 +3182,24 @@ function buildSystemEmailShell({
           <td align="center" style="padding:28px 12px;">
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:680px;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 14px 40px rgba(15,23,42,0.08);">
               <tr>
-                <td style="padding:24px 24px 20px 24px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);">
-                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">
+                <td align="left" style="padding:24px 24px 20px 24px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);text-align:left;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;">
                     <tr>
-                      <td valign="top" style="padding-right:14px;">
+                      <td valign="middle" width="96" style="width:96px;padding:0 16px 0 0;">
                         ${logoHtml}
                       </td>
-                      <td valign="middle">
-                        <p style="margin:0 0 6px 0;color:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">College of Computer Studies</p>
-                        <p style="margin:0 0 10px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">${escapeHtml(eyebrow || "SVMS")}</p>
-                        <h1 style="margin:0;color:#f8fafc;font-size:26px;font-weight:800;line-height:1.2;">${escapeHtml(heading || "Student Violation Management System")}</h1>
+                      <td valign="middle" style="vertical-align:middle;text-align:left;">
+                        <p style="margin:0 0 6px 0;color:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;line-height:1.4;">College of Computer Studies</p>
+                        <p style="margin:0 0 10px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;line-height:1.4;">${escapeHtml(eyebrow || "SVMS")}</p>
+                        <h1 style="margin:0;color:#f8fafc;font-size:26px;font-weight:800;line-height:1.2;text-align:left;">${escapeHtml(heading || "Student Violation Management System")}</h1>
                       </td>
                     </tr>
-                    ${lead ? `<tr><td colspan="2" style="padding-top:18px;"><p style="margin:0;color:#cbd5e1;font-size:14px;line-height:1.6;">${escapeHtml(lead)}</p></td></tr>` : ""}
+                    ${lead ? `<tr><td colspan="2" style="padding-top:18px;text-align:left;"><p style="margin:0;color:#cbd5e1;font-size:14px;line-height:1.6;text-align:left;">${escapeHtml(lead)}</p></td></tr>` : ""}
                   </table>
                 </td>
               </tr>
               <tr>
-                <td style="padding:24px;background:#ffffff;">
+                <td align="left" style="padding:24px;background:#ffffff;text-align:left;">
                   ${contentHtml}
                   ${footerNote ? `<p style="margin:24px 0 0 0;color:#64748b;font-size:12px;line-height:1.6;">${escapeHtml(footerNote)}</p>` : ""}
                 </td>
@@ -3171,7 +3212,7 @@ function buildSystemEmailShell({
   `;
 }
 
-function buildForgotPasswordEmailTemplate({ code }) {
+function legacyLightBuildForgotPasswordEmailTemplate({ code }) {
   const safeCode = escapeHtml(code);
   return buildSystemEmailShell({
     eyebrow: "SVMS Security",
@@ -3191,9 +3232,9 @@ function buildForgotPasswordEmailTemplate({ code }) {
   });
 }
 
-function buildSuperAdminLoginCodeEmailTemplate({ code }) {
+function legacyLightBuildSuperAdminLoginCodeEmailTemplate({ code }) {
   const safeCode = escapeHtml(code);
-  return buildSystemEmailShell({
+  return legacyLightBuildSystemEmailShell({
     eyebrow: "SVMS Security",
     heading: "Super Admin Login Verification",
     lead: "Use this one-time 6-digit verification code to finish signing in to your super admin account.",
@@ -3211,7 +3252,7 @@ function buildSuperAdminLoginCodeEmailTemplate({ code }) {
   });
 }
 
-function buildAdminAlertEmailTemplate({
+function legacyLightBuildAdminAlertEmailTemplate({
   studentName,
   alertType,
   message,
@@ -3261,6 +3302,238 @@ function buildAdminAlertEmailTemplate({
   });
 }
 
+function buildSystemNoticeCard({ title, body, tone = "info" }) {
+  const tones = {
+    info: {
+      panel: "#1b2230",
+      border: "#42556d",
+      title: "#8ad2ff",
+      body: "#d7e2f0",
+    },
+    danger: {
+      panel: "#211b1b",
+      border: "#5a4545",
+      title: "#fca5a5",
+      body: "#f3d6d6",
+    },
+    success: {
+      panel: "#16261d",
+      border: "#3d5a49",
+      title: "#8ce6b0",
+      body: "#d8f2e3",
+    },
+  };
+  const palette = tones[tone] || tones.info;
+  return `
+    <div style="margin:0 0 18px 0;padding:18px;border-radius:20px;background:${palette.panel};border:1px solid ${palette.border};">
+      <p style="margin:0 0 10px 0;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:${palette.title};">${escapeHtml(title)}</p>
+      <p style="margin:0;color:${palette.body};font-size:14px;line-height:1.75;">${body}</p>
+    </div>
+  `;
+}
+
+// Override email templates with the unified dark design used across all recipients.
+function buildCredentialEmailTemplate({
+  firstName,
+  username,
+  password,
+  accountLabel = "Student",
+}) {
+  return buildSystemEmailShell({
+    eyebrow: "SVMS Account Created",
+    heading: `Your ${escapeHtml(accountLabel)} Account Credentials`,
+    lead: `Hello ${escapeHtml(firstName || "Student")},`,
+    contentHtml: `
+      <div style="margin:0 0 18px 0;padding:18px;border-radius:20px;background:#1b2230;border:1px solid #344256;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);">
+        <p style="margin:0;color:#d7e2f0;font-size:15px;line-height:1.75;">An account has been created for you in the Student Violation Management System. Use the credentials below to sign in.</p>
+      </div>
+      <div style="margin:0 0 18px 0;padding:20px;border-radius:22px;background:#1b2230;border:1px solid #42556d;box-shadow:0 10px 24px rgba(0,0,0,0.22);">
+        <p style="margin:0 0 12px 0;font-size:12px;font-weight:700;color:#8ad2ff;letter-spacing:0.08em;text-transform:uppercase;">Username</p>
+        <p style="margin:0 0 18px 0;padding:14px 16px;border-radius:16px;background:#0f172a;border:1px solid #23314b;color:#f8fafc;font-size:16px;font-weight:700;letter-spacing:0.03em;">${escapeHtml(username)}</p>
+        <p style="margin:0 0 12px 0;font-size:12px;font-weight:700;color:#8ad2ff;letter-spacing:0.08em;text-transform:uppercase;">Temporary Password</p>
+        <p style="margin:0;padding:14px 16px;border-radius:16px;background:#0f172a;border:1px solid #23314b;color:#f8fafc;font-size:16px;font-weight:700;letter-spacing:0.03em;">${escapeHtml(password)}</p>
+      </div>
+      <div style="margin:0;padding:18px;border-radius:20px;background:#211b1b;border:1px solid #5a4545;">
+        <p style="margin:0;color:#f3d6b0;font-size:14px;line-height:1.7;font-weight:500;">&#9888; For security, please log in and change your password immediately.</p>
+      </div>
+    `,
+    footerNote:
+      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+  });
+}
+
+function buildSystemEmailShell({
+  eyebrow,
+  heading,
+  lead,
+  contentHtml,
+  footerNote,
+}) {
+  const logoUrl = getEmailLogoUrl();
+  const logoHtml = logoUrl
+    ? `<div style="width:62px;height:62px;border-radius:16px;background:#1d2026;border:1px solid #343942;text-align:center;vertical-align:middle;"><img src="${escapeHtml(logoUrl)}" width="${EMAIL_LOGO_DISPLAY_WIDTH}" height="${EMAIL_LOGO_DISPLAY_HEIGHT}" alt="CCS Logo" style="display:inline-block;width:${EMAIL_LOGO_DISPLAY_WIDTH}px;height:${EMAIL_LOGO_DISPLAY_HEIGHT}px;border:0;outline:none;text-decoration:none;margin-top:10px;" /></div>`
+    : `<div style="width:62px;height:62px;border-radius:16px;background:#1d2026;border:1px solid #343942;display:block;"></div>`;
+
+  return `
+    <div style="margin:0;padding:0;background:#1f2229;font-family:Segoe UI,Arial,sans-serif;color:#e5eef8;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;background:#1f2229;">
+        <tr>
+          <td align="center" style="padding:28px 12px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:separate;border-spacing:0;max-width:680px;background:#12161d;border:1px solid #303845;border-radius:24px;overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,0.35);">
+              <tr>
+                <td align="left" style="padding:32px 36px;background:#17191d;text-align:left;border-bottom:1px solid #292d34;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;">
+                    <tr>
+                      <td valign="middle" width="76" style="width:76px;padding:0 16px 0 0;vertical-align:middle;">
+                        ${logoHtml}
+                      </td>
+                      <td valign="middle" style="vertical-align:middle;text-align:left;padding-left:12px;">
+                        <p style="margin:0;color:#f3f4f6;font-size:13px;font-weight:700;line-height:1.45;">College of Computer Studies</p>
+                        <p style="margin:6px 0 0;color:#8fa3bd;font-size:12px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;line-height:1.45;">Student Violation System</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              <tr>
+                <td align="left" style="padding:34px 36px 30px;background:#0b0c0e;text-align:left;">
+                  <p style="margin:0 0 14px 0;font-size:11px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#8fa3bd;">${escapeHtml(eyebrow || "SVMS")}</p>
+                  <h1 style="margin:0 0 14px 0;color:#ffffff;font-size:31px;font-weight:800;line-height:1.2;letter-spacing:-0.02em;text-align:left;">${escapeHtml(heading || "Student Violation Management System")}</h1>
+                  ${lead ? `<p style="margin:0 0 28px 0;color:#c8d0dc;font-size:14px;line-height:1.8;text-align:left;">${escapeHtml(lead)}</p>` : ""}
+                  ${contentHtml}
+                  ${footerNote ? `<p style="margin:24px 0 0 0;color:#9aa7bb;font-size:12px;line-height:1.75;">${escapeHtml(footerNote)}</p>` : ""}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `;
+}
+
+function buildForgotPasswordEmailTemplate({ code }) {
+  const safeCode = escapeHtml(code);
+  return buildSystemEmailShell({
+    eyebrow: "SVMS Security",
+    heading: "Password Reset Verification",
+    lead: "Use the one-time code below to continue resetting your account password.",
+    contentHtml: `
+      <div style="margin:0 0 18px 0;padding:20px;border-radius:22px;background:#1b2230;border:1px solid #42556d;box-shadow:0 10px 24px rgba(0,0,0,0.22);">
+        <p style="margin:0 0 14px 0;color:#f1f5f9;font-size:15px;line-height:1.7;">Enter this 6-digit code in the app:</p>
+        <p style="margin:0;padding:16px 10px;text-align:center;border-radius:18px;background:#10192f;border:1px solid #223150;color:#f8fafc;font-size:34px;font-weight:800;letter-spacing:0.22em;">${safeCode}</p>
+      </div>
+      <div style="margin-top:14px;padding:18px;border-radius:20px;background:#1d1f24;border:1px solid #42464e;">
+        <p style="margin:0;color:#d6dfeb;font-size:14px;line-height:1.75;">This code expires in 10 minutes. If you did not request a password reset, you can safely ignore this email.</p>
+      </div>
+    `,
+    footerNote:
+      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+  });
+}
+
+function buildSuperAdminLoginCodeEmailTemplate({ code }) {
+  const safeCode = escapeHtml(code);
+  return buildSystemEmailShell({
+    eyebrow: "SVMS Security",
+    heading: "Super Admin Login Verification",
+    lead: "Use this one-time 6-digit verification code to finish signing in to your super admin account.",
+    contentHtml: `
+      <div style="margin:0 0 18px 0;padding:20px;border-radius:22px;background:#1b2230;border:1px solid #42556d;box-shadow:0 10px 24px rgba(0,0,0,0.22);">
+        <p style="margin:0 0 14px 0;color:#f1f5f9;font-size:15px;line-height:1.7;">Enter this code in the login page:</p>
+        <p style="margin:0;padding:16px 10px;text-align:center;border-radius:18px;background:#10192f;border:1px solid #223150;color:#f8fafc;font-size:34px;font-weight:800;letter-spacing:0.22em;">${safeCode}</p>
+      </div>
+      <div style="margin-top:14px;padding:18px;border-radius:20px;background:#1d1f24;border:1px solid #42464e;">
+        <p style="margin:0;color:#d6dfeb;font-size:14px;line-height:1.75;">This code expires in 10 minutes. If this login attempt was not made by you, change your password immediately.</p>
+      </div>
+    `,
+    footerNote:
+      "This is an automated security message from Student Violation Management System. Please do not reply to this email.",
+  });
+}
+
+function buildAdminAlertEmailTemplate({
+  studentName,
+  alertType,
+  message,
+  activeViolationCount,
+  program,
+  yearSection,
+}) {
+  const safeStudentName = escapeHtml(studentName || "Student");
+  const safeAlertType = escapeHtml(alertType || "Admin Alert");
+  const safeMessage = escapeHtml(message || "No message provided.");
+  const safeProgram = escapeHtml(program || "-");
+  const safeYearSection = escapeHtml(yearSection || "-");
+  const safeViolationCount = Number.isFinite(Number(activeViolationCount))
+    ? Number(activeViolationCount)
+    : 0;
+  const studentNotificationsUrl = getStudentNotificationsUrl();
+  const actionButtonHtml = studentNotificationsUrl
+    ? `
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-top:28px;border-collapse:collapse;">
+        <tr>
+          <td>
+            <a href="${escapeHtml(studentNotificationsUrl)}" style="display:block;background:#d9d9d9;color:#08090b;text-align:center;text-decoration:none;padding:15px 20px;border-radius:11px;font-size:13px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;">
+              Open Notification Panel
+            </a>
+          </td>
+        </tr>
+      </table>
+    `
+    : "";
+
+  return buildSystemEmailShell({
+    eyebrow: "Student Violation Notification",
+    heading: "Administrative Alert",
+    lead: `Hello ${safeStudentName}, you have received a new alert from the Student Violation Management System.`,
+    contentHtml: `
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:24px;border-collapse:collapse;">
+        <tr>
+          <td style="background:#181b20;border:1px solid #303640;border-radius:16px;padding:0;">
+            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+              <tr>
+                <td style="width:7px;background:#8fa3bd;border-radius:16px 0 0 16px;"></td>
+                <td style="padding:20px 22px;">
+                  <p style="margin:0;font-size:11px;color:#7f8b99;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Alert Type</p>
+                  <p style="margin:8px 0 0;font-size:23px;color:#ffffff;font-weight:800;">${safeAlertType}</p>
+                </td>
+                <td align="right" style="padding:20px 22px;">
+                  <span style="display:inline-block;padding:8px 13px;border-radius:999px;background:#242933;border:1px solid #3a4350;color:#c4ccd8;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;">
+                    New Alert
+                  </span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <div style="margin-bottom:14px;padding:18px;border-radius:20px;background:#1b2230;border:1px solid #42556d;">
+        <p style="margin:0 0 8px 0;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#8ad2ff;">Message From Administrator</p>
+        <p style="margin:0;color:#d7e2f0;font-size:14px;line-height:1.75;white-space:pre-line;">${safeMessage}</p>
+      </div>
+      <p style="margin:0 0 12px 0;font-size:11px;color:#7f8b99;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;">Student Record Summary</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;border:1px solid #42556d;border-radius:20px;overflow:hidden;background:#1b2230;">
+        <tr>
+          <td style="padding:12px 14px;border-bottom:1px solid #42556d;background:#171d29;color:#a9bbd1;font-size:13px;font-weight:600;">Program</td>
+          <td style="padding:12px 14px;border-bottom:1px solid #42556d;color:#f8fafc;font-size:13px;">${safeProgram}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 14px;border-bottom:1px solid #42556d;background:#171d29;color:#a9bbd1;font-size:13px;font-weight:600;">Year/Section</td>
+          <td style="padding:12px 14px;border-bottom:1px solid #42556d;color:#f8fafc;font-size:13px;">${safeYearSection}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 14px;background:#171d29;color:#a9bbd1;font-size:13px;font-weight:600;">Active Violations</td>
+          <td style="padding:12px 14px;color:#f8fafc;font-size:13px;">${safeViolationCount}</td>
+        </tr>
+      </table>
+      ${actionButtonHtml}
+    `,
+    footerNote:
+      "You can also view this alert in your SVMS student notifications panel.",
+  });
+}
+
 // Cached transporter — created once, reused for all emails.
 let _mailTransporter = null;
 let _mailSendLimitBlockedUntilMs = 0;
@@ -3289,8 +3562,6 @@ async function sendMailWithLimitGuard(mailOptions, contextLabel) {
   if (!transporter) {
     return { sent: false, reason: "smtp-not-configured" };
   }
-
-  mailOptions = addEmailLogoAttachment(mailOptions);
 
   if (isMailSendTemporarilyBlocked()) {
     console.warn(`SMTP send skipped (${contextLabel}): daily sending limit is on cooldown.`);
@@ -3377,15 +3648,18 @@ async function deactivateGraduatedStudentAccounts() {
             heading: "Account Deactivated",
             lead: "Your account status has been updated.",
             contentHtml: `
-              <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
-                <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#991b1b;">Account Status Changed</p>
-                <p style="margin:0;color:#7f1d1d;font-size:14px;line-height:1.6;">Your status has been updated to "Graduated" and your account has been deactivated. You will no longer be able to log in to the Student Violation Management System.</p>
-              </div>
-              <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
-                <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">
-                  <strong>If you believe this is an error</strong>, please contact your administrator immediately.
-                </p>
-              </div>
+              ${buildSystemNoticeCard({
+                title: "Account Status Changed",
+                tone: "danger",
+                body:
+                  'Your status has been updated to "Graduated" and your account has been deactivated. You will no longer be able to log in to the Student Violation Management System.',
+              })}
+              ${buildSystemNoticeCard({
+                title: "Need Help?",
+                tone: "info",
+                body:
+                  "If you believe this is an error, please contact your administrator immediately.",
+              })}
             `,
             footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
           }),
@@ -4598,10 +4872,10 @@ app.post("/api/auth/forgot-password/request", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
 
-    const existingSession = await getPasswordResetSession(
-      pool,
-      normalizedEmail,
-    );
+    const [existingSession, user] = await Promise.all([
+      getPasswordResetSession(pool, normalizedEmail),
+      findUserByEmail(pool, normalizedEmail),
+    ]);
     const now = Date.now();
     const existingResendAt = existingSession?.resend_available_at
       ? new Date(existingSession.resend_available_at).getTime()
@@ -4614,7 +4888,6 @@ app.post("/api/auth/forgot-password/request", async (req, res) => {
       });
     }
 
-    const user = await findUserByEmail(pool, normalizedEmail);
     if (!user) {
       return res.status(404).json({
         status: "error",
@@ -4629,15 +4902,17 @@ app.post("/api/auth/forgot-password/request", async (req, res) => {
       now + FORGOT_RESEND_COOLDOWN_MS,
     ).toISOString();
 
-    const delivery = await sendForgotPasswordCodeEmail({
-      toEmail: normalizedEmail,
-      code,
-    });
-
-    if (!delivery.sent) {
+    if (!getMailTransporter()) {
       return res.status(503).json({
         status: "error",
-        message: `Unable to send verification code (${delivery.reason || "unknown reason"}).`,
+        message: "Unable to send verification code (smtp-not-configured).",
+      });
+    }
+
+    if (isMailSendTemporarilyBlocked()) {
+      return res.status(503).json({
+        status: "error",
+        message: "Unable to send verification code (daily-limit-cooldown).",
       });
     }
 
@@ -4664,6 +4939,19 @@ app.post("/api/auth/forgot-password/request", async (req, res) => {
       `,
       [normalizedEmail, user.id, codeHash, expiresAtIso, resendAvailableAtIso],
     );
+
+    const delivery = await sendForgotPasswordCodeEmail({
+      toEmail: normalizedEmail,
+      code,
+    });
+
+    if (!delivery.sent) {
+      await removePasswordResetSession(pool, normalizedEmail);
+      return res.status(503).json({
+        status: "error",
+        message: `Unable to send verification code (${delivery.reason || "unknown reason"}).`,
+      });
+    }
 
     return res.status(200).json({
       status: "ok",
@@ -6686,13 +6974,18 @@ app.put("/api/students/:id", async (req, res) => {
                 heading: "Account Deactivated",
                 lead: "Your account is now deactivated.",
                 contentHtml: `
-                  <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
-                    <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#991b1b;">Account Status Changed</p>
-                    <p style="margin:0;color:#7f1d1d;font-size:14px;line-height:1.6;">Your account has been deactivated because your status has been updated to "Graduated". You will no longer be able to log in to the system.</p>
-                  </div>
-                  <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
-                    <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">If you believe this is an error, please contact your administrator immediately.</p>
-                  </div>
+                  ${buildSystemNoticeCard({
+                    title: "Account Status Changed",
+                    tone: "danger",
+                    body:
+                      'Your account has been deactivated because your status has been updated to "Graduated". You will no longer be able to log in to the system.',
+                  })}
+                  ${buildSystemNoticeCard({
+                    title: "Need Help?",
+                    tone: "info",
+                    body:
+                      "If you believe this is an error, please contact your administrator immediately.",
+                  })}
                 `,
                 footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
               }),
@@ -6726,14 +7019,18 @@ app.put("/api/students/:id", async (req, res) => {
                 heading: "Account Deactivated",
                 lead: "Your student record has been archived.",
                 contentHtml: `
-                  <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
-                    <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#991b1b;">Record Archived</p>
-                    <p style="margin:0 0 8px 0;color:#7f1d1d;font-size:14px;line-height:1.6;">Your account has been deactivated because your record has been archived.</p>
-                    <p style="margin:0;color:#7f1d1d;font-size:14px;line-height:1.6;"><strong>Reason:</strong> ${escapeHtml(normalizedArchivedReason || "Not specified")}</p>
-                  </div>
-                  <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
-                    <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">You will no longer be able to log in to the Student Violation Management System. If you believe this is an error, please contact your administrator.</p>
-                  </div>
+                  ${buildSystemNoticeCard({
+                    title: "Record Archived",
+                    tone: "danger",
+                    body:
+                      `Your account has been deactivated because your record has been archived.<br /><br /><strong>Reason:</strong> ${escapeHtml(normalizedArchivedReason || "Not specified")}`,
+                  })}
+                  ${buildSystemNoticeCard({
+                    title: "Need Help?",
+                    tone: "info",
+                    body:
+                      "You will no longer be able to log in to the Student Violation Management System. If you believe this is an error, please contact your administrator.",
+                  })}
                 `,
                 footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
               }),
@@ -11453,17 +11750,22 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
             to: userEmail,
             subject: "Account Restored",
             html: buildSystemEmailShell({
-              eyebrow: "SVMS Security",
-              heading: "Account Restored",
-              lead: "Your account is now active and ready to use.",
-              contentHtml: `
-                <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#f0fdf4;border:1px solid #86efac;">
-                  <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#166534;">Account Status Changed</p>
-                  <p style="margin:0;color:#15803d;font-size:14px;line-height:1.6;">Your archive has been removed and your account has been reactivated. You can now log in to the Student Violation Management System with your credentials.</p>
-                </div>
-                <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
-                  <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">If you have any questions or need assistance, please contact your administrator.</p>
-                </div>
+            eyebrow: "SVMS Security",
+            heading: "Account Restored",
+            lead: "Your account is now active and ready to use.",
+            contentHtml: `
+                ${buildSystemNoticeCard({
+                  title: "Account Status Changed",
+                  tone: "success",
+                  body:
+                    "Your archive has been removed and your account has been reactivated. You can now log in to the Student Violation Management System with your credentials.",
+                })}
+                ${buildSystemNoticeCard({
+                  title: "Need Help?",
+                  tone: "info",
+                  body:
+                    "If you have any questions or need assistance, please contact your administrator.",
+                })}
               `,
               footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
             }),
@@ -11574,13 +11876,18 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
                 heading: "Account Restored",
                 lead: "Your account is now active and ready to use.",
                 contentHtml: `
-                  <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#f0fdf4;border:1px solid #86efac;">
-                    <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#166534;">Account Status Changed</p>
-                    <p style="margin:0;color:#15803d;font-size:14px;line-height:1.6;">Your archive has been removed and your account has been reactivated. You can now log in to the Student Violation Management System with your credentials.</p>
-                  </div>
-                  <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
-                    <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;\">If you have any questions or need assistance, please contact your administrator.</p>
-                  </div>
+                  ${buildSystemNoticeCard({
+                    title: "Account Status Changed",
+                    tone: "success",
+                    body:
+                      "Your archive has been removed and your account has been reactivated. You can now log in to the Student Violation Management System with your credentials.",
+                  })}
+                  ${buildSystemNoticeCard({
+                    title: "Need Help?",
+                    tone: "info",
+                    body:
+                      "If you have any questions or need assistance, please contact your administrator.",
+                  })}
                 `,
                 footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
               }),
@@ -12289,6 +12596,7 @@ app.delete("/api/archive/violations/:id", async (req, res) => {
 if (!isServerlessRuntime) {
   // In non-serverless mode, keep serving local assets and SPA fallback from Express.
   app.use("/uploads", express.static(uploadsDir));
+  app.use(express.static(publicDir));
   app.use(express.static(distPath));
 
   app.get("/{*path}", (req, res, next) => {
@@ -12381,8 +12689,6 @@ async function ensureAuthDatabaseReady() {
 }
 
 async function startServer() {
-  await loadEmailLogo();
-
   server = app.listen(port, () => {
     console.log(`SVMS API running on port ${port}`);
   });

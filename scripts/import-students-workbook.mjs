@@ -2,7 +2,6 @@ import "dotenv/config";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile } from "node:fs/promises";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import postgres from "postgres";
@@ -10,22 +9,38 @@ import XLSX from "xlsx";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const EMAIL_LOGO_PATH = path.resolve(__dirname, "../src/assets/css_logo.png");
-let EMAIL_LOGO_BASE64 = "";
+const EMAIL_LOGO_PUBLIC_PATH = "/ccs_logo.png";
+const EMAIL_LOGO_DISPLAY_WIDTH = 72;
+const EMAIL_LOGO_DISPLAY_HEIGHT = 41;
 
-async function loadEmailLogo() {
-  try {
-    const logoBuffer = await readFile(EMAIL_LOGO_PATH);
-    EMAIL_LOGO_BASE64 = logoBuffer.toString("base64");
-    console.log("Email logo loaded successfully.");
-  } catch (error) {
-    console.warn(`Failed to load email logo: ${error.message}`);
-    EMAIL_LOGO_BASE64 = "";
+function getEmailLogoUrl() {
+  const explicitLogoUrl = String(process.env.EMAIL_LOGO_URL || "").trim();
+  if (explicitLogoUrl) {
+    return explicitLogoUrl;
   }
-}
 
-function getEmailLogoDataUrl() {
-  return EMAIL_LOGO_BASE64 ? `data:image/png;base64,${EMAIL_LOGO_BASE64}` : "";
+  const configuredBaseUrl = String(
+    process.env.EMAIL_ASSET_BASE_URL ||
+      process.env.PUBLIC_APP_URL ||
+      process.env.APP_URL ||
+      process.env.CLIENT_URL ||
+      process.env.PUBLIC_URL ||
+      process.env.SITE_URL ||
+      "",
+  )
+    .trim()
+    .replace(/\/+$/, "");
+
+  if (configuredBaseUrl) {
+    return `${configuredBaseUrl}${EMAIL_LOGO_PUBLIC_PATH}`;
+  }
+
+  const vercelUrl = String(process.env.VERCEL_URL || "").trim().replace(/\/+$/, "");
+  if (vercelUrl) {
+    return `https://${vercelUrl}${EMAIL_LOGO_PUBLIC_PATH}`;
+  }
+
+  return "";
 }
 
 function usage() {
@@ -98,6 +113,148 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function legacyLightBuildSystemEmailShell({
+  eyebrow,
+  heading,
+  lead,
+  contentHtml,
+  footerNote,
+}) {
+  const logoUrl = getEmailLogoUrl();
+  const logoHtml = logoUrl
+    ? `<div style="display:inline-block;background:#ffffff;border-radius:14px;padding:8px;"><img src="${escapeHtml(logoUrl)}" width="${EMAIL_LOGO_DISPLAY_WIDTH}" height="${EMAIL_LOGO_DISPLAY_HEIGHT}" alt="CCS Logo" style="display:block;width:${EMAIL_LOGO_DISPLAY_WIDTH}px;height:${EMAIL_LOGO_DISPLAY_HEIGHT}px;border:0;outline:none;text-decoration:none;" /></div>`
+    : `<div style="width:${EMAIL_LOGO_DISPLAY_WIDTH}px;height:${EMAIL_LOGO_DISPLAY_HEIGHT}px;border-radius:14px;background:rgba(255,255,255,0.14);display:block;"></div>`;
+
+  return `
+    <div style="margin:0;padding:0;background:#eef4fb;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;background:#eef4fb;">
+        <tr>
+          <td align="center" style="padding:28px 12px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:680px;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 14px 40px rgba(15,23,42,0.08);">
+              <tr>
+                <td align="left" style="padding:24px 24px 20px 24px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);text-align:left;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;">
+                    <tr>
+                      <td valign="middle" width="96" style="width:96px;padding:0 16px 0 0;">
+                        ${logoHtml}
+                      </td>
+                      <td valign="middle" style="vertical-align:middle;text-align:left;">
+                        <p style="margin:0 0 6px 0;color:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;line-height:1.4;">College of Computer Studies</p>
+                        <p style="margin:0 0 10px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;line-height:1.4;">${escapeHtml(eyebrow || "SVMS")}</p>
+                        <h1 style="margin:0;color:#f8fafc;font-size:26px;font-weight:800;line-height:1.2;text-align:left;">${escapeHtml(heading || "Student Violation Management System")}</h1>
+                      </td>
+                    </tr>
+                    ${lead ? `<tr><td colspan="2" style="padding-top:18px;text-align:left;"><p style="margin:0;color:#cbd5e1;font-size:14px;line-height:1.6;text-align:left;">${escapeHtml(lead)}</p></td></tr>` : ""}
+                  </table>
+                </td>
+              </tr>
+              <tr>
+                <td align="left" style="padding:24px;background:#ffffff;text-align:left;">
+                  ${contentHtml}
+                  ${footerNote ? `<p style="margin:24px 0 0 0;color:#64748b;font-size:12px;line-height:1.6;">${escapeHtml(footerNote)}</p>` : ""}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `;
+}
+
+function legacyLightBuildCredentialEmailTemplate({
+  firstName,
+  username,
+  password,
+  schoolId,
+  program,
+  yearSection,
+}) {
+  return legacyLightBuildSystemEmailShell({
+    eyebrow: "SVMS Account Created",
+    heading: "Your Student Account Credentials",
+    lead: `Hello ${escapeHtml(firstName || "Student")},`,
+    contentHtml: `
+      <p style="margin:0 0 20px 0;color:#4b5563;font-size:14px;line-height:1.6;">An account has been created for you in the Student Violation Management System. Use the account details below to sign in.</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#ffffff;margin-bottom:18px;">
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;">Student ID</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;">${escapeHtml(schoolId)}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;">Program</td>
+          <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;">${escapeHtml(program)}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;">Year/Section</td>
+          <td style="padding:10px 12px;color:#0f172a;font-size:13px;">${escapeHtml(yearSection)}</td>
+        </tr>
+      </table>
+      <div style="background:linear-gradient(180deg,#f0f9ff 0%,#f8fbff 100%);border:1px solid #cfe9ff;border-radius:14px;padding:18px;margin:20px 0;">
+        <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Username</p>
+        <p style="margin:0 0 18px 0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(username)}</p>
+        <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Temporary Password</p>
+        <p style="margin:0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(password)}</p>
+      </div>
+      <div style="margin:20px 0;padding:12px 14px;border-radius:12px;background:#fef3c7;border:1px solid #fde68a;">
+        <p style="margin:0;color:#92400e;font-size:13px;line-height:1.6;font-weight:500;">&#9888; For security, please log in and change your password immediately.</p>
+      </div>
+    `,
+    footerNote:
+      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+  });
+}
+
+function buildSystemEmailShell({
+  eyebrow,
+  heading,
+  lead,
+  contentHtml,
+  footerNote,
+}) {
+  const logoUrl = getEmailLogoUrl();
+  const logoHtml = logoUrl
+    ? `<div style="width:62px;height:62px;border-radius:16px;background:#1d2026;border:1px solid #343942;text-align:center;vertical-align:middle;"><img src="${escapeHtml(logoUrl)}" width="${EMAIL_LOGO_DISPLAY_WIDTH}" height="${EMAIL_LOGO_DISPLAY_HEIGHT}" alt="CCS Logo" style="display:inline-block;width:${EMAIL_LOGO_DISPLAY_WIDTH}px;height:${EMAIL_LOGO_DISPLAY_HEIGHT}px;border:0;outline:none;text-decoration:none;margin-top:10px;" /></div>`
+    : `<div style="width:62px;height:62px;border-radius:16px;background:#1d2026;border:1px solid #343942;display:block;"></div>`;
+
+  return `
+    <div style="margin:0;padding:0;background:#1f2229;font-family:Segoe UI,Arial,sans-serif;color:#e5eef8;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;background:#1f2229;">
+        <tr>
+          <td align="center" style="padding:28px 12px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:separate;border-spacing:0;max-width:680px;background:#12161d;border:1px solid #303845;border-radius:24px;overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,0.35);">
+              <tr>
+                <td align="left" style="padding:32px 36px;background:#17191d;text-align:left;border-bottom:1px solid #292d34;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;">
+                    <tr>
+                      <td valign="middle" width="76" style="width:76px;padding:0 16px 0 0;vertical-align:middle;">
+                        ${logoHtml}
+                      </td>
+                      <td valign="middle" style="vertical-align:middle;text-align:left;padding-left:12px;">
+                        <p style="margin:0;color:#f3f4f6;font-size:13px;font-weight:700;line-height:1.45;">College of Computer Studies</p>
+                        <p style="margin:6px 0 0;color:#8fa3bd;font-size:12px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;line-height:1.45;">Student Violation System</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              <tr>
+                <td align="left" style="padding:34px 36px 30px;background:#0b0c0e;text-align:left;">
+                  <p style="margin:0 0 14px 0;font-size:11px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#8fa3bd;">${escapeHtml(eyebrow || "SVMS")}</p>
+                  <h1 style="margin:0 0 14px 0;color:#ffffff;font-size:31px;font-weight:800;line-height:1.2;letter-spacing:-0.02em;text-align:left;">${escapeHtml(heading || "Student Violation Management System")}</h1>
+                  ${lead ? `<p style="margin:0 0 28px 0;color:#c8d0dc;font-size:14px;line-height:1.8;text-align:left;">${escapeHtml(lead)}</p>` : ""}
+                  ${contentHtml}
+                  ${footerNote ? `<p style="margin:24px 0 0 0;color:#9aa7bb;font-size:12px;line-height:1.75;">${escapeHtml(footerNote)}</p>` : ""}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `;
+}
+
 function buildCredentialEmailTemplate({
   firstName,
   username,
@@ -106,49 +263,41 @@ function buildCredentialEmailTemplate({
   program,
   yearSection,
 }) {
-  return `
-    <div style="background:linear-gradient(180deg,#eaf6fb 0%,#f4f8fc 45%,#f8fafc 100%);padding:36px 18px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
-      <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 12px 36px rgba(2,6,23,0.08);">
-        <div style="padding:22px 26px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);border-bottom:1px solid rgba(255,255,255,0.12);">
-          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-            ${getEmailLogoDataUrl() ? `<img src="${getEmailLogoDataUrl()}" width="52" height="52" alt="CSS Logo" style="display:block;border-radius:12px;background:#ffffff;padding:4px;flex-shrink:0;" />` : ""}
-            <div style="min-width:0;">
-              <p style="margin:0 0 4px 0;color:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">College of Computer Studies</p>
-              <p style="margin:0 0 8px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">SVMS Account Created</p>
-              <h2 style="margin:0;color:#f8fafc;font-size:22px;font-weight:800;line-height:1.3;overflow-wrap:break-word;">Your Student Account Credentials</h2>
-            </div>
-          </div>
-        </div>
-        <div style="padding:24px 26px;background:#ffffff;">
-          <p style="margin:0 0 14px 0;color:#1f2937;font-size:14px;line-height:1.6;">Hello ${escapeHtml(firstName || "Student")},</p>
-          <p style="margin:0 0 20px 0;color:#4b5563;font-size:14px;line-height:1.6;">An account has been created for you in the Student Violation Management System. Use the account details below to sign in.</p>
-          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#ffffff;margin-bottom:18px;">
-            <tr>
-              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;">Student ID</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;">${escapeHtml(schoolId)}</td>
-            </tr>
-            <tr>
-              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;">Program</td>
-              <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;">${escapeHtml(program)}</td>
-            </tr>
-            <tr>
-              <td style="padding:10px 12px;background:#f8fafc;color:#334155;font-size:13px;font-weight:600;">Year/Section</td>
-              <td style="padding:10px 12px;color:#0f172a;font-size:13px;">${escapeHtml(yearSection)}</td>
-            </tr>
-          </table>
-          <div style="background:linear-gradient(180deg,#f0f9ff 0%,#f8fbff 100%);border:1px solid #cfe9ff;border-radius:14px;padding:18px;margin:20px 0;">
-            <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Username</p>
-            <p style="margin:0 0 18px 0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(username)}</p>
-            <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Temporary Password</p>
-            <p style="margin:0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(password)}</p>
-          </div>
-          <div style="margin:20px 0;padding:12px 14px;border-radius:12px;background:#fef3c7;border:1px solid #fde68a;">
-            <p style="margin:0;color:#92400e;font-size:13px;line-height:1.6;font-weight:500;">For security, please log in and change your password immediately.</p>
-          </div>
-        </div>
+  return buildSystemEmailShell({
+    eyebrow: "SVMS Account Created",
+    heading: "Your Student Account Credentials",
+    lead: `Hello ${escapeHtml(firstName || "Student")},`,
+    contentHtml: `
+      <div style="margin:0 0 18px 0;padding:18px;border-radius:20px;background:#1b2230;border:1px solid #344256;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);">
+        <p style="margin:0;color:#d7e2f0;font-size:15px;line-height:1.75;">An account has been created for you in the Student Violation Management System. Use the account details below to sign in.</p>
       </div>
-    </div>
-  `;
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;border:1px solid #42556d;border-radius:20px;overflow:hidden;background:#1b2230;margin-bottom:18px;">
+        <tr>
+          <td style="padding:12px 14px;border-bottom:1px solid #42556d;background:#171d29;color:#a9bbd1;font-size:13px;font-weight:600;">Student ID</td>
+          <td style="padding:12px 14px;border-bottom:1px solid #42556d;color:#f8fafc;font-size:13px;">${escapeHtml(schoolId)}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 14px;border-bottom:1px solid #42556d;background:#171d29;color:#a9bbd1;font-size:13px;font-weight:600;">Program</td>
+          <td style="padding:12px 14px;border-bottom:1px solid #42556d;color:#f8fafc;font-size:13px;">${escapeHtml(program)}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 14px;background:#171d29;color:#a9bbd1;font-size:13px;font-weight:600;">Year/Section</td>
+          <td style="padding:12px 14px;color:#f8fafc;font-size:13px;">${escapeHtml(yearSection)}</td>
+        </tr>
+      </table>
+      <div style="margin:0 0 18px 0;padding:20px;border-radius:22px;background:#1b2230;border:1px solid #42556d;box-shadow:0 10px 24px rgba(0,0,0,0.22);">
+        <p style="margin:0 0 12px 0;font-size:12px;font-weight:700;color:#8ad2ff;letter-spacing:0.08em;text-transform:uppercase;">Username</p>
+        <p style="margin:0 0 18px 0;padding:14px 16px;border-radius:16px;background:#0f172a;border:1px solid #23314b;color:#f8fafc;font-size:16px;font-weight:700;letter-spacing:0.03em;">${escapeHtml(username)}</p>
+        <p style="margin:0 0 12px 0;font-size:12px;font-weight:700;color:#8ad2ff;letter-spacing:0.08em;text-transform:uppercase;">Temporary Password</p>
+        <p style="margin:0;padding:14px 16px;border-radius:16px;background:#0f172a;border:1px solid #23314b;color:#f8fafc;font-size:16px;font-weight:700;letter-spacing:0.03em;">${escapeHtml(password)}</p>
+      </div>
+      <div style="margin:0;padding:18px;border-radius:20px;background:#211b1b;border:1px solid #5a4545;">
+        <p style="margin:0;color:#f3d6b0;font-size:14px;line-height:1.7;font-weight:500;">&#9888; For security, please log in and change your password immediately.</p>
+      </div>
+    `,
+    footerNote:
+      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+  });
 }
 
 function parseStudentWorkbook(workbookPath) {
@@ -278,8 +427,6 @@ async function main() {
     usage();
     process.exit(1);
   }
-
-  await loadEmailLogo();
 
   const workbookPath = path.resolve(workbookArg);
   const students = parseStudentWorkbook(workbookPath);

@@ -21,6 +21,8 @@ Optional backend variables:
 - `SMTP_USER`
 - `SMTP_PASS`
 - `SMTP_FROM`
+- `EMAIL_ASSET_BASE_URL`
+- `EMAIL_LOGO_URL`
 - `SMTP_HOST`
 - `SMTP_PORT`
 - `SMTP_SECURE`
