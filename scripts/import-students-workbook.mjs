@@ -1,10 +1,32 @@
 import "dotenv/config";
 import crypto from "node:crypto";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import postgres from "postgres";
 import XLSX from "xlsx";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const EMAIL_LOGO_PATH = path.resolve(__dirname, "../src/assets/css_logo.png");
+let EMAIL_LOGO_BASE64 = "";
+
+async function loadEmailLogo() {
+  try {
+    const logoBuffer = await readFile(EMAIL_LOGO_PATH);
+    EMAIL_LOGO_BASE64 = logoBuffer.toString("base64");
+    console.log("Email logo loaded successfully.");
+  } catch (error) {
+    console.warn(`Failed to load email logo: ${error.message}`);
+    EMAIL_LOGO_BASE64 = "";
+  }
+}
+
+function getEmailLogoDataUrl() {
+  return EMAIL_LOGO_BASE64 ? `data:image/png;base64,${EMAIL_LOGO_BASE64}` : "";
+}
 
 function usage() {
   console.error("Usage: node scripts/import-students-workbook.mjs <path-to-workbook>");
@@ -88,8 +110,14 @@ function buildCredentialEmailTemplate({
     <div style="background:linear-gradient(180deg,#eaf6fb 0%,#f4f8fc 45%,#f8fafc 100%);padding:36px 18px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
       <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 12px 36px rgba(2,6,23,0.08);">
         <div style="padding:22px 26px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);border-bottom:1px solid rgba(255,255,255,0.12);">
-          <p style="margin:0 0 8px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">SVMS Account Created</p>
-          <h2 style="margin:0;color:#f8fafc;font-size:22px;font-weight:800;line-height:1.3;">Your Student Account Credentials</h2>
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            ${getEmailLogoDataUrl() ? `<img src="${getEmailLogoDataUrl()}" width="52" height="52" alt="CSS Logo" style="display:block;border-radius:12px;background:#ffffff;padding:4px;flex-shrink:0;" />` : ""}
+            <div style="min-width:0;">
+              <p style="margin:0 0 4px 0;color:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">College of Computer Studies</p>
+              <p style="margin:0 0 8px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">SVMS Account Created</p>
+              <h2 style="margin:0;color:#f8fafc;font-size:22px;font-weight:800;line-height:1.3;overflow-wrap:break-word;">Your Student Account Credentials</h2>
+            </div>
+          </div>
         </div>
         <div style="padding:24px 26px;background:#ffffff;">
           <p style="margin:0 0 14px 0;color:#1f2937;font-size:14px;line-height:1.6;">Hello ${escapeHtml(firstName || "Student")},</p>
@@ -250,6 +278,8 @@ async function main() {
     usage();
     process.exit(1);
   }
+
+  await loadEmailLogo();
 
   const workbookPath = path.resolve(workbookArg);
   const students = parseStudentWorkbook(workbookPath);

@@ -38,6 +38,52 @@ const port = Number(process.env.API_PORT || process.env.PORT || 3001);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, "../dist");
+const EMAIL_LOGO_PATH = path.resolve(__dirname, "../src/assets/css_logo.png");
+const EMAIL_LOGO_CID = "css_logo@svms.local";
+let EMAIL_LOGO_BASE64 = "";
+
+async function loadEmailLogo() {
+  try {
+    const logoBuffer = await readFile(EMAIL_LOGO_PATH);
+    EMAIL_LOGO_BASE64 = logoBuffer.toString("base64");
+    console.log("Email logo loaded successfully.");
+  } catch (error) {
+    console.warn(`Failed to load email logo: ${error.message}`);
+    EMAIL_LOGO_BASE64 = "";
+  }
+}
+
+function getEmailLogoAttachment() {
+  if (!EMAIL_LOGO_BASE64) {
+    return null;
+  }
+
+  return {
+    filename: "css_logo.png",
+    content: Buffer.from(EMAIL_LOGO_BASE64, "base64"),
+    cid: EMAIL_LOGO_CID,
+    contentType: "image/png",
+  };
+}
+
+function addEmailLogoAttachment(mailOptions) {
+  const logoAttachment = getEmailLogoAttachment();
+  if (!logoAttachment) {
+    return mailOptions;
+  }
+
+  return {
+    ...mailOptions,
+    attachments: Array.isArray(mailOptions.attachments)
+      ? [...mailOptions.attachments, logoAttachment]
+      : [logoAttachment],
+  };
+}
+
+function getEmailLogoCid() {
+  return EMAIL_LOGO_BASE64 ? `cid:${EMAIL_LOGO_CID}` : "";
+}
+
 const FORGOT_CODE_EXPIRY_MS = 10 * 60 * 1000;
 const FORGOT_RESEND_COOLDOWN_MS = 15 * 1000;
 const SUPER_ADMIN_LOGIN_CODE_EXPIRY_MS = 10 * 60 * 1000;
@@ -3047,29 +3093,25 @@ function buildCredentialEmailTemplate({
   password,
   accountLabel = "Student",
 }) {
-  return `
-    <div style="background:linear-gradient(180deg,#eaf6fb 0%,#f4f8fc 45%,#f8fafc 100%);padding:36px 18px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
-      <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 12px 36px rgba(2,6,23,0.08);">
-        <div style="padding:22px 26px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);border-bottom:1px solid rgba(255,255,255,0.12);">
-          <p style="margin:0 0 8px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">SVMS Account Created</p>
-          <h2 style="margin:0;color:#f8fafc;font-size:22px;font-weight:800;line-height:1.3;">Your ${escapeHtml(accountLabel)} Account Credentials</h2>
-        </div>
-        <div style="padding:24px 26px;background:#ffffff;">
-          <p style="margin:0 0 14px 0;color:#1f2937;font-size:14px;line-height:1.6;">Hello ${escapeHtml(firstName || "Student")},</p>
-          <p style="margin:0 0 20px 0;color:#4b5563;font-size:14px;line-height:1.6;">An account has been created for you in the Student Violation Management System. Use the credentials below to sign in.</p>
-          <div style="background:linear-gradient(180deg,#f0f9ff 0%,#f8fbff 100%);border:1px solid #cfe9ff;border-radius:14px;padding:18px;margin:20px 0;">
-            <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Username</p>
-            <p style="margin:0 0 18px 0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(username)}</p>
-            <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Temporary Password</p>
-            <p style="margin:0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(password)}</p>
-          </div>
-          <div style="margin:20px 0;padding:12px 14px;border-radius:12px;background:#fef3c7;border:1px solid #fde68a;">
-            <p style="margin:0;color:#92400e;font-size:13px;line-height:1.6;font-weight:500;">⚠ For security, please log in and change your password immediately.</p>
-          </div>
-        </div>
+  return buildSystemEmailShell({
+    eyebrow: "SVMS Account Created",
+    heading: `Your ${escapeHtml(accountLabel)} Account Credentials`,
+    lead: `Hello ${escapeHtml(firstName || "Student")},`,
+    contentHtml: `
+      <p style="margin:0 0 14px 0;color:#4b5563;font-size:14px;line-height:1.6;">An account has been created for you in the Student Violation Management System. Use the credentials below to sign in.</p>
+      <div style="background:linear-gradient(180deg,#f0f9ff 0%,#f8fbff 100%);border:1px solid #cfe9ff;border-radius:14px;padding:18px;margin:20px 0;">
+        <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Username</p>
+        <p style="margin:0 0 18px 0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(username)}</p>
+        <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Temporary Password</p>
+        <p style="margin:0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(password)}</p>
       </div>
-    </div>
-  `;
+      <div style="margin:20px 0;padding:12px 14px;border-radius:12px;background:#fef3c7;border:1px solid #fde68a;">
+        <p style="margin:0;color:#92400e;font-size:13px;line-height:1.6;font-weight:500;">⚠ For security, please log in and change your password immediately.</p>
+      </div>
+    `,
+    footerNote:
+      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+  });
 }
 
 function escapeHtml(value) {
@@ -3088,19 +3130,43 @@ function buildSystemEmailShell({
   contentHtml,
   footerNote,
 }) {
+  const logoHtml = EMAIL_LOGO_BASE64
+    ? `<img src="cid:${EMAIL_LOGO_CID}" width="52" height="52" alt="CSS Logo" style="display:block;border-radius:14px;background:#ffffff;padding:6px;min-width:52px;max-width:52px;" />`
+    : `<div style="width:52px;height:52px;border-radius:14px;background:#ffffff;display:inline-block;"></div>`;
+
   return `
-    <div style="background:linear-gradient(180deg,#eaf6fb 0%,#f4f8fc 45%,#f8fafc 100%);padding:36px 18px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
-      <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 12px 36px rgba(2,6,23,0.08);">
-        <div style="padding:22px 26px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);border-bottom:1px solid rgba(255,255,255,0.12);">
-          <p style="margin:0 0 8px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">${escapeHtml(eyebrow || "SVMS")}</p>
-          <h2 style="margin:0;color:#f8fafc;font-size:22px;font-weight:800;line-height:1.3;">${escapeHtml(heading || "Student Violation Management System")}</h2>
-          ${lead ? `<p style="margin:10px 0 0 0;color:#cbd5e1;font-size:14px;line-height:1.6;">${escapeHtml(lead)}</p>` : ""}
-        </div>
-        <div style="padding:24px 26px;background:#ffffff;">
-          ${contentHtml}
-          ${footerNote ? `<p style="margin:22px 0 0 0;font-size:12px;color:#64748b;line-height:1.6;">${escapeHtml(footerNote)}</p>` : ""}
-        </div>
-      </div>
+    <div style="margin:0;padding:0;background:#eef4fb;font-family:Segoe UI,Arial,sans-serif;color:#0f172a;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;background:#eef4fb;">
+        <tr>
+          <td align="center" style="padding:28px 12px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:680px;background:#ffffff;border:1px solid #dbe7f2;border-radius:18px;overflow:hidden;box-shadow:0 14px 40px rgba(15,23,42,0.08);">
+              <tr>
+                <td style="padding:24px 24px 20px 24px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 70%,#0f172a 100%);">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">
+                    <tr>
+                      <td valign="top" style="padding-right:14px;">
+                        ${logoHtml}
+                      </td>
+                      <td valign="middle">
+                        <p style="margin:0 0 6px 0;color:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">College of Computer Studies</p>
+                        <p style="margin:0 0 10px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">${escapeHtml(eyebrow || "SVMS")}</p>
+                        <h1 style="margin:0;color:#f8fafc;font-size:26px;font-weight:800;line-height:1.2;">${escapeHtml(heading || "Student Violation Management System")}</h1>
+                      </td>
+                    </tr>
+                    ${lead ? `<tr><td colspan="2" style="padding-top:18px;"><p style="margin:0;color:#cbd5e1;font-size:14px;line-height:1.6;">${escapeHtml(lead)}</p></td></tr>` : ""}
+                  </table>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:24px;background:#ffffff;">
+                  ${contentHtml}
+                  ${footerNote ? `<p style="margin:24px 0 0 0;color:#64748b;font-size:12px;line-height:1.6;">${escapeHtml(footerNote)}</p>` : ""}
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
     </div>
   `;
 }
@@ -3224,6 +3290,8 @@ async function sendMailWithLimitGuard(mailOptions, contextLabel) {
     return { sent: false, reason: "smtp-not-configured" };
   }
 
+  mailOptions = addEmailLogoAttachment(mailOptions);
+
   if (isMailSendTemporarilyBlocked()) {
     console.warn(`SMTP send skipped (${contextLabel}): daily sending limit is on cooldown.`);
     return { sent: false, reason: "daily-limit-cooldown" };
@@ -3294,17 +3362,13 @@ async function deactivateGraduatedStudentAccounts() {
        RETURNING s.email, s.full_name`,
     );
 
-    const transporter = getMailTransporter();
     for (const row of result.rows || []) {
-      if (!transporter) {
-        console.warn("SMTP not configured. Graduation deactivation email skipped for:", row.email);
-        continue;
-      }
       if (!row.email) {
         continue;
       }
-      try {
-        await transporter.sendMail({
+
+      const sendResult = await sendMailWithLimitGuard(
+        {
           from: process.env.SMTP_FROM || process.env.SMTP_USER,
           to: row.email,
           subject: "Account Deactivated - Graduation Status",
@@ -3325,9 +3389,15 @@ async function deactivateGraduatedStudentAccounts() {
             `,
             footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
           }),
-        });
-      } catch (emailError) {
-        console.error("Failed to send graduated deactivation email:", emailError);
+        },
+        "graduated-deactivation-startup",
+      );
+
+      if (sendResult.reason === "smtp-not-configured") {
+        console.warn("SMTP not configured. Graduation deactivation email skipped for:", row.email);
+      }
+      if (sendResult.reason && sendResult.reason !== "smtp-not-configured" && sendResult.reason !== "daily-limit-cooldown") {
+        console.error("Failed to send graduated deactivation email for:", row.email, sendResult.reason);
       }
     }
 
@@ -3345,27 +3415,22 @@ async function sendStudentCredentialEmail({
   username,
   password,
 }) {
-  const transporter = getMailTransporter();
-  if (!transporter) {
-    return {
-      sent: false,
-      reason: "SMTP_USER/SMTP_PASS not configured.",
-    };
-  }
+  const sendResult = await sendMailWithLimitGuard(
+    {
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: toEmail,
+      subject: "Your SVMS Student Account Credentials",
+      html: buildCredentialEmailTemplate({
+        firstName,
+        username,
+        password,
+        accountLabel: "Student",
+      }),
+    },
+    "student-credential-email",
+  );
 
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: toEmail,
-    subject: "Your SVMS Student Account Credentials",
-    html: buildCredentialEmailTemplate({
-      firstName,
-      username,
-      password,
-      accountLabel: "Student",
-    }),
-  });
-
-  return { sent: true };
+  return sendResult;
 }
 
 async function sendAdminCredentialEmail({
@@ -3375,68 +3440,53 @@ async function sendAdminCredentialEmail({
   password,
   role,
 }) {
-  const transporter = getMailTransporter();
-  if (!transporter) {
-    return {
-      sent: false,
-      reason: "SMTP_USER/SMTP_PASS not configured.",
-    };
-  }
-
   const accountLabel =
     role === "super_admin" ? "Super Admin" : "Admin";
 
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: toEmail,
-    subject: `Your SVMS ${accountLabel} Account Credentials`,
-    html: buildCredentialEmailTemplate({
-      firstName,
-      username,
-      password,
-      accountLabel,
-    }),
-  });
+  const sendResult = await sendMailWithLimitGuard(
+    {
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: toEmail,
+      subject: `Your SVMS ${accountLabel} Account Credentials`,
+      html: buildCredentialEmailTemplate({
+        firstName,
+        username,
+        password,
+        accountLabel,
+      }),
+    },
+    "admin-credential-email",
+  );
 
-  return { sent: true };
+  return sendResult;
 }
 
 async function sendForgotPasswordCodeEmail({ toEmail, code }) {
-  const transporter = getMailTransporter();
-  if (!transporter) {
-    return {
-      sent: false,
-      reason: "SMTP_USER/SMTP_PASS not configured.",
-    };
-  }
+  const sendResult = await sendMailWithLimitGuard(
+    {
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: toEmail,
+      subject: "SVMS Password Reset Verification Code",
+      html: buildForgotPasswordEmailTemplate({ code }),
+    },
+    "forgot-password-code-email",
+  );
 
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: toEmail,
-    subject: "SVMS Password Reset Verification Code",
-    html: buildForgotPasswordEmailTemplate({ code }),
-  });
-
-  return { sent: true };
+  return sendResult;
 }
 
 async function sendSuperAdminLoginCodeEmail({ toEmail, code }) {
-  const transporter = getMailTransporter();
-  if (!transporter) {
-    return {
-      sent: false,
-      reason: "SMTP_USER/SMTP_PASS not configured.",
-    };
-  }
+  const sendResult = await sendMailWithLimitGuard(
+    {
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: toEmail,
+      subject: "SVMS Super Admin Verification Code",
+      html: buildSuperAdminLoginCodeEmailTemplate({ code }),
+    },
+    "super-admin-login-code-email",
+  );
 
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: toEmail,
-    subject: "SVMS Super Admin Verification Code",
-    html: buildSuperAdminLoginCodeEmailTemplate({ code }),
-  });
-
-  return { sent: true };
+  return sendResult;
 }
 
 async function sendStudentAdminAlertEmail({
@@ -3448,40 +3498,37 @@ async function sendStudentAdminAlertEmail({
   program,
   yearSection,
 }) {
-  const transporter = getMailTransporter();
-  if (!transporter) {
-    return {
-      sent: false,
-      reason: "SMTP_USER/SMTP_PASS not configured.",
-    };
-  }
-
   try {
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to: toEmail,
-      subject: `SVMS Alert: ${String(alertType || "Admin Alert")}`,
-      html: buildAdminAlertEmailTemplate({
-        studentName,
-        alertType,
-        message,
-        activeViolationCount,
-        program,
-        yearSection,
-      }),
-    });
-
-    return { sent: true };
+    const sendResult = await sendMailWithLimitGuard(
+      {
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: toEmail,
+        subject: `SVMS Alert: ${String(alertType || "Admin Alert")}`,
+        html: buildAdminAlertEmailTemplate({
+          studentName,
+          alertType,
+          message,
+          activeViolationCount,
+          program,
+          yearSection,
+        }),
+      },
+      "student-admin-alert-email",
+    );
+    return sendResult;
   } catch (error) {
+    console.error(`Failed to send admin alert email: ${error.message}`);
     return {
       sent: false,
-      reason: error?.message || "Unable to send alert email.",
+      reason: error.message,
     };
   }
 }
 
 async function findUserByEmail(pool, email) {
-  const normalizedEmail = String(email || "")
+  if (!pool || !email) return null;
+
+  const normalizedEmail = String(email)
     .trim()
     .toLowerCase();
 
@@ -6628,26 +6675,34 @@ app.put("/api/students/:id", async (req, res) => {
       // Send deactivation email
       try {
         const userEmail = updatedStudent.email;
-        const transporter = getMailTransporter();
-        if (userEmail && transporter) {
-          await transporter.sendMail({
-            from: process.env.SMTP_FROM || process.env.SMTP_USER,
-            to: userEmail,
-            subject: "Account Deactivated - Graduation",
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #333;">Account Deactivated</h2>
-                <p>Dear ${updatedStudent.full_name || "Student"},</p>
-                <p>Your account has been deactivated because your status has been updated to "Graduated".</p>
-                <p>You will no longer be able to log in to the system.</p>
-                <p>If you believe this is an error, please contact your administrator.</p>
-                <br>
-                <p>Best regards,<br>Student Violation Management System</p>
-              </div>
-            `,
-          });
-        } else if (userEmail) {
-          console.warn("SMTP not configured. Graduation deactivation email was skipped for:", userEmail);
+        if (userEmail) {
+          const sendResult = await sendMailWithLimitGuard(
+            {
+              from: process.env.SMTP_FROM || process.env.SMTP_USER,
+              to: userEmail,
+              subject: "Account Deactivated - Graduation",
+              html: buildSystemEmailShell({
+                eyebrow: "SVMS Security",
+                heading: "Account Deactivated",
+                lead: "Your account is now deactivated.",
+                contentHtml: `
+                  <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
+                    <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#991b1b;">Account Status Changed</p>
+                    <p style="margin:0;color:#7f1d1d;font-size:14px;line-height:1.6;">Your account has been deactivated because your status has been updated to "Graduated". You will no longer be able to log in to the system.</p>
+                  </div>
+                  <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
+                    <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">If you believe this is an error, please contact your administrator immediately.</p>
+                  </div>
+                `,
+                footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+              }),
+            },
+            "account-deactivated-graduation",
+          );
+
+          if (sendResult.reason === "smtp-not-configured") {
+            console.warn("SMTP not configured. Graduation deactivation email was skipped for:", userEmail);
+          }
         }
       } catch (emailError) {
         console.error("Failed to send graduation deactivation email:", emailError);
@@ -6660,31 +6715,35 @@ app.put("/api/students/:id", async (req, res) => {
       // Send deactivation email
       try {
         const userEmail = updatedStudent.email;
-        const transporter = getMailTransporter();
-        if (userEmail && transporter) {
-          await transporter.sendMail({
-            from: process.env.SMTP_FROM || process.env.SMTP_USER,
-            to: userEmail,
-            subject: "Account Deactivated - Archived",
-            html: buildSystemEmailShell({
-              eyebrow: "SVMS Security",
-              heading: "Account Deactivated",
-              lead: "Your student record has been archived.",
-              contentHtml: `
-                <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
-                  <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#991b1b;">Record Archived</p>
-                  <p style="margin:0 0 8px 0;color:#7f1d1d;font-size:14px;line-height:1.6;">Your account has been deactivated because your record has been archived.</p>
-                  <p style="margin:0;color:#7f1d1d;font-size:14px;line-height:1.6;"><strong>Reason:</strong> ${escapeHtml(normalizedArchivedReason || "Not specified")}</p>
-                </div>
-                <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
-                  <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">You will no longer be able to log in to the Student Violation Management System. If you believe this is an error, please contact your administrator.</p>
-                </div>
-              `,
-              footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
-            }),
-          });
-        } else if (userEmail) {
-          console.warn("SMTP not configured. Archive deactivation email was skipped for:", userEmail);
+        if (userEmail) {
+          const sendResult = await sendMailWithLimitGuard(
+            {
+              from: process.env.SMTP_FROM || process.env.SMTP_USER,
+              to: userEmail,
+              subject: "Account Deactivated - Archived",
+              html: buildSystemEmailShell({
+                eyebrow: "SVMS Security",
+                heading: "Account Deactivated",
+                lead: "Your student record has been archived.",
+                contentHtml: `
+                  <div style="margin-bottom:18px;padding:14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
+                    <p style="margin:0 0 10px 0;font-size:13px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#991b1b;">Record Archived</p>
+                    <p style="margin:0 0 8px 0;color:#7f1d1d;font-size:14px;line-height:1.6;">Your account has been deactivated because your record has been archived.</p>
+                    <p style="margin:0;color:#7f1d1d;font-size:14px;line-height:1.6;"><strong>Reason:</strong> ${escapeHtml(normalizedArchivedReason || "Not specified")}</p>
+                  </div>
+                  <div style="margin:18px 0;padding:12px 14px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;">
+                    <p style="margin:0;color:#374151;font-size:13px;line-height:1.6;">You will no longer be able to log in to the Student Violation Management System. If you believe this is an error, please contact your administrator.</p>
+                  </div>
+                `,
+                footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+              }),
+            },
+            "account-deactivated-archive",
+          );
+
+          if (sendResult.reason === "smtp-not-configured") {
+            console.warn("SMTP not configured. Archive deactivation email was skipped for:", userEmail);
+          }
         }
       } catch (emailError) {
         console.error("Failed to send archive deactivation email:", emailError);
@@ -12322,6 +12381,8 @@ async function ensureAuthDatabaseReady() {
 }
 
 async function startServer() {
+  await loadEmailLogo();
+
   server = app.listen(port, () => {
     console.log(`SVMS API running on port ${port}`);
   });
