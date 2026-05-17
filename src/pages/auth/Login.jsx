@@ -12,6 +12,120 @@ import { isPasswordValid, getPasswordErrorMessage } from "../../lib/passwordVali
 
 const SUPER_ADMIN_TRUSTED_DEVICE_KEY = "svms_super_admin_trusted_device";
 
+const VerificationCodeInput = ({
+  value,
+  onChange,
+  length = 6,
+  disabled = false,
+  label = "VERIFICATION CODE",
+}) => {
+  const inputRefs = useRef([]);
+
+  const digits = Array.from({ length }, (_, index) => value[index] || "");
+
+  const focusInput = (index) => {
+    const nextInput = inputRefs.current[index];
+    if (nextInput) {
+      nextInput.focus();
+      nextInput.select();
+    }
+  };
+
+  const handleDigitChange = (index, nextValue) => {
+    const numericValue = String(nextValue || "").replace(/\D/g, "");
+
+    if (!numericValue) {
+      const updated = digits.slice();
+      updated[index] = "";
+      onChange(updated.join(""));
+      return;
+    }
+
+    const updated = digits.slice();
+    const incomingDigits = numericValue.slice(0, length - index).split("");
+
+    incomingDigits.forEach((digit, digitOffset) => {
+      updated[index + digitOffset] = digit;
+    });
+
+    onChange(updated.join(""));
+    focusInput(Math.min(index + incomingDigits.length, length - 1));
+  };
+
+  const handleKeyDown = (event, index) => {
+    if (event.key === "Backspace") {
+      if (digits[index]) {
+        const updated = digits.slice();
+        updated[index] = "";
+        onChange(updated.join(""));
+      } else if (index > 0) {
+        const updated = digits.slice();
+        updated[index - 1] = "";
+        onChange(updated.join(""));
+        focusInput(index - 1);
+      }
+      event.preventDefault();
+      return;
+    }
+
+    if (event.key === "ArrowLeft" && index > 0) {
+      focusInput(index - 1);
+      event.preventDefault();
+      return;
+    }
+
+    if (event.key === "ArrowRight" && index < length - 1) {
+      focusInput(index + 1);
+      event.preventDefault();
+    }
+  };
+
+  const handlePaste = (event) => {
+    const pastedDigits = event.clipboardData
+      .getData("text")
+      .replace(/\D/g, "")
+      .slice(0, length);
+
+    if (!pastedDigits) {
+      return;
+    }
+
+    onChange(pastedDigits);
+    focusInput(Math.min(pastedDigits.length, length - 1));
+    event.preventDefault();
+  };
+
+  return (
+    <div>
+      <label className="mb-3 block text-sm font-medium text-gray-300">
+        {label}
+      </label>
+      <div className="flex items-center justify-between w-full max-w-[500px]">
+        {digits.map((digit, index) => (
+          <input
+            key={`${label}-${index}`}
+            ref={(element) => {
+              inputRefs.current[index] = element;
+            }}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={1}
+            value={digit}
+            disabled={disabled}
+            onChange={(event) => handleDigitChange(index, event.target.value)}
+            onKeyDown={(event) => handleKeyDown(event, index)}
+            onPaste={handlePaste}
+            onFocus={(event) => event.target.select()}
+            className="verification-code-slot h-16 w-[52px] rounded-xl border border-white/12 bg-white/[0.04] text-center text-xl font-bold tracking-[0.22em] text-white outline-none transition-all focus:border-cyan-300/70 focus:bg-white/[0.08] focus:shadow-[0_0_0_3px_rgba(103,232,249,0.12)] disabled:cursor-not-allowed disabled:opacity-60 sm:h-[68px] sm:w-[58px]"
+            aria-label={`${label} digit ${index + 1}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const Login = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -56,6 +170,7 @@ const Login = () => {
   const [setupError, setSetupError] = useState("");
   const [setupPasswordValidationError, setSetupPasswordValidationError] = useState("");
   const [isSubmittingAccountSetup, setIsSubmittingAccountSetup] = useState(false);
+  const [pendingRoleChoiceUser, setPendingRoleChoiceUser] = useState(null);
   const processedGoogleExchangeRef = useRef("");
   const navigate = useNavigate();
   const location = useLocation();
@@ -63,6 +178,12 @@ const Login = () => {
   const isGoogleExchangeView = searchParams.get("googleAuth") === "exchange";
 
   const handleAuthenticatedLoginSuccess = (user) => {
+    if (user?.role === "both") {
+      setPendingRoleChoiceUser(user);
+      setIsLoading(false);
+      return;
+    }
+
     if (user?.requiresAccountSetup) {
       setPendingAccountSetupUser(user);
       setSetupUsername(user?.username || "");
@@ -101,6 +222,74 @@ const Login = () => {
 
     setIsLoading(false);
     setError("Account role is not recognized.");
+  };
+
+  const handleChooseLoginRole = async (selectedRole) => {
+    if (!pendingRoleChoiceUser) {
+      return;
+    }
+
+    if (selectedRole === "super_admin") {
+      setIsLoading(true);
+      setError("");
+      setSuperAdminMessage("");
+
+      try {
+        const trustedDeviceToken = localStorage.getItem(
+          SUPER_ADMIN_TRUSTED_DEVICE_KEY,
+        ) || "";
+        const response = await fetch("/api/auth/super-admin/access", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            userId: pendingRoleChoiceUser.id,
+            sessionToken: pendingRoleChoiceUser.sessionToken,
+            trustedDeviceToken,
+          }),
+        });
+
+        const result = await response.json().catch(() => ({}));
+
+        if (response.status === 202 && result?.requiresVerification) {
+          setPendingRoleChoiceUser(null);
+          setIsForgotPassword(false);
+          setIsSuperAdminVerification(true);
+          setSuperAdminChallengeId(result?.challengeId || "");
+          setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 60);
+          setSuperAdminCode("");
+          setSuperAdminMessage(
+            result?.message ||
+              "A 6-digit verification code was sent to your email. Enter it to finish signing in.",
+          );
+          setIsLoading(false);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(result?.message || "Unable to continue as super admin.");
+        }
+
+        setPendingRoleChoiceUser(null);
+        handleAuthenticatedLoginSuccess(result.user);
+        return;
+      } catch (roleChoiceError) {
+        setError(roleChoiceError.message || "Unable to continue as super admin.");
+        setIsLoading(false);
+        return;
+      }
+    }
+
+    const nextUser = {
+      ...pendingRoleChoiceUser,
+      role: selectedRole,
+      accountRole: pendingRoleChoiceUser.accountRole || pendingRoleChoiceUser.role || "both",
+    };
+
+    setPendingRoleChoiceUser(null);
+    localStorage.setItem("svms_user", JSON.stringify(nextUser));
+    routeAuthenticatedUser(nextUser);
   };
 
   useEffect(() => {
@@ -171,7 +360,7 @@ const Login = () => {
             setIsForgotPassword(false);
             setIsSuperAdminVerification(true);
             setSuperAdminChallengeId(result?.challengeId || "");
-            setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 15);
+            setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 60);
             setSuperAdminCode("");
             setSuperAdminMessage(
               result?.message ||
@@ -215,7 +404,7 @@ const Login = () => {
       setIsForgotPassword(false);
       setIsSuperAdminVerification(true);
       setSuperAdminChallengeId(params.get("challengeId") || "");
-      setSuperAdminResendTimer(Number(params.get("retryAfterSeconds")) || 15);
+      setSuperAdminResendTimer(Number(params.get("retryAfterSeconds")) || 60);
       setSuperAdminCode("");
       setSuperAdminMessage(
         nextMessage ||
@@ -264,7 +453,7 @@ const Login = () => {
       if (response.status === 202 && result?.requiresVerification) {
         setIsSuperAdminVerification(true);
         setSuperAdminChallengeId(result?.challengeId || "");
-        setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 15);
+        setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 60);
         setSuperAdminCode("");
         setSuperAdminMessage(
           result?.message ||
@@ -409,7 +598,7 @@ const Login = () => {
       }
 
       setSuperAdminMessage("A new verification code has been sent.");
-      setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 15);
+      setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 60);
     } catch (requestError) {
       setError(
         requestError.message || "Unable to resend verification code.",
@@ -491,7 +680,7 @@ const Login = () => {
       setResetToken("");
       setVerificationCode("");
       setForgotPasswordSuccess("Email sent! Check your inbox for the verification code.");
-      setResendTimer(Number(result?.retryAfterSeconds) || 15);
+      setResendTimer(Number(result?.retryAfterSeconds) || 60);
       setForgotPasswordStep(2);
     } catch (requestError) {
       setForgotPasswordError(requestError.message || "Unable to send verification code.");
@@ -512,7 +701,7 @@ const Login = () => {
     try {
       const result = await requestForgotPasswordCode();
       setForgotPasswordSuccess("A new verification code has been sent.");
-      setResendTimer(Number(result?.retryAfterSeconds) || 15);
+      setResendTimer(Number(result?.retryAfterSeconds) || 60);
     } catch (requestError) {
       setForgotPasswordError(requestError.message || "Unable to resend verification code.");
     } finally {
@@ -693,7 +882,7 @@ const Login = () => {
 
     const returnTo = `${window.location.origin}/login`;
     window.location.assign(
-      `/api/auth/google/start?returnTo=${encodeURIComponent(returnTo)}&roleHint=student`,
+      `/api/auth/google/start?returnTo=${encodeURIComponent(returnTo)}`,
     );
   };
 
@@ -948,27 +1137,26 @@ const Login = () => {
                   )
                 ) : (
                   <div>
-                    <p className="text-gray-400 text-sm mb-6">
-                      Enter the 6-digit verification code sent to your email to continue the super admin login.
-                    </p>
+                    {!superAdminMessage && (
+                      <p className="text-gray-400 text-sm mb-6">
+                        Enter the verification code to continue your super admin login.
+                      </p>
+                    )}
                     <form onSubmit={handleSuperAdminVerifyCode} className="space-y-6 sm:space-y-8">
-                      <GlassInput
+                      <VerificationCodeInput
                         label="VERIFICATION CODE"
-                        type="text"
                         value={superAdminCode}
-                        onChange={(e) =>
-                          setSuperAdminCode(
-                            e.target.value.replace(/\D/g, "").slice(0, 6),
-                          )
+                        onChange={(nextValue) =>
+                          setSuperAdminCode(nextValue.replace(/\D/g, "").slice(0, 6))
                         }
-                        placeholder="000000"
+                        disabled={isVerifyingCode}
                       />
-                      <div className="flex justify-end">
+                      <div className="flex justify-end pr-1">
                         <button
                           type="button"
                           onClick={handleResendSuperAdminCode}
                           disabled={superAdminResendTimer > 0 || isResendingSuperAdminCode}
-                          className="text-xs text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="text-sm sm:text-base font-medium text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {superAdminResendTimer > 0
                             ? `Resend code in ${superAdminResendTimer}s`
@@ -1077,23 +1265,20 @@ const Login = () => {
                       Enter the 6-digit verification code sent to your email
                     </p>
                     <form onSubmit={handleVerifyCode} className="space-y-6 sm:space-y-8">
-                      <GlassInput
+                      <VerificationCodeInput
                         label="VERIFICATION CODE"
-                        type="text"
                         value={verificationCode}
-                        onChange={(e) =>
-                          setVerificationCode(
-                            e.target.value.replace(/\D/g, "").slice(0, 6),
-                          )
+                        onChange={(nextValue) =>
+                          setVerificationCode(nextValue.replace(/\D/g, "").slice(0, 6))
                         }
-                        placeholder="000000"
+                        disabled={isVerifyingCode}
                       />
-                      <div className="flex justify-end">
+                      <div className="flex justify-end pr-1">
                         <button
                           type="button"
                           onClick={handleResendCode}
                           disabled={resendTimer > 0 || isSendingCode}
-                          className="text-xs text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="text-sm sm:text-base font-medium text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {resendTimer > 0
                             ? `Resend code in ${resendTimer}s`
@@ -1296,6 +1481,38 @@ const Login = () => {
           )}
         </div>
       </div>
+
+      <Modal
+        isOpen={Boolean(pendingRoleChoiceUser)}
+        onClose={() => {}}
+        title={<span className="font-black font-inter">Login as</span>}
+        size="md"
+        showCloseButton={false}
+      >
+        <div className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-4 mb-5">
+          <p className="text-sm text-gray-200">
+            This account has access to both admin areas. Choose which workspace you want to enter for this session.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => handleChooseLoginRole("admin")}
+            className="w-full py-3"
+          >
+            Admin
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => handleChooseLoginRole("super_admin")}
+            className="w-full py-3"
+          >
+            Super Admin
+          </Button>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={Boolean(pendingAccountSetupUser)}

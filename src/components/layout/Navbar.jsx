@@ -186,6 +186,8 @@ const Navbar = ({ onRequestLogout }) => {
 
           savedUser = {
             ...result.user,
+            role: currentUser?.role || result.user?.role || '',
+            accountRole: currentUser?.accountRole || result.user?.accountRole || result.user?.role || '',
             sessionToken: currentUser?.sessionToken || result.user?.sessionToken || '',
           }
           localStorage.setItem('svms_user', JSON.stringify(savedUser))

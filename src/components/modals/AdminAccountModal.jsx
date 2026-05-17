@@ -109,14 +109,14 @@ const AdminAccountModal = ({
           {isEditMode ? "Edit Admin Account" : "Add Admin Account"}
         </span>
       }
-      size="lg"
+      size="xl"
       showCloseButton={!isSaving}
     >
       <form onSubmit={handleSubmit}>
         <p className="mb-5 text-sm text-gray-400">
           {isEditMode
             ? "Update this administrator account."
-            : "Create a new admin or super admin account."}
+            : "Create a new admin, super admin, or shared admin/super admin account."}
         </p>
 
         <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -145,6 +145,7 @@ const AdminAccountModal = ({
           >
             <option value="admin">Admin</option>
             <option value="super_admin">Super Admin</option>
+            <option value="both">Both</option>
           </SelectField>
           <div className="space-y-2">
             <GlassInput

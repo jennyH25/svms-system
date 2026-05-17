@@ -314,6 +314,7 @@ function buildAuthenticatedUser(user) {
     email: user.email,
     username: user.username,
     role: user.role,
+    accountRole: user.accountRole || user.account_role || user.role,
     firstName: user.first_name || "",
     middleInitial: user.middle_initial || "",
     lastName: user.last_name || "",
@@ -626,9 +627,9 @@ app.get("/api/email-logo", (req, res) => {
 });
 
 const FORGOT_CODE_EXPIRY_MS = 10 * 60 * 1000;
-const FORGOT_RESEND_COOLDOWN_MS = 15 * 1000;
+const FORGOT_RESEND_COOLDOWN_MS = 60 * 1000;
 const SUPER_ADMIN_LOGIN_CODE_EXPIRY_MS = 10 * 60 * 1000;
-const SUPER_ADMIN_LOGIN_RESEND_COOLDOWN_MS = 15 * 1000;
+const SUPER_ADMIN_LOGIN_RESEND_COOLDOWN_MS = 60 * 1000;
 const SUPER_ADMIN_TRUSTED_DEVICE_TTL_MS =
   90 * 24 * 60 * 60 * 1000;
 const AUDIT_LOG_RETENTION_DAYS = 15;
@@ -4343,7 +4344,7 @@ async function findAuthUserByEmail(pool, email) {
       FROM users u
       INNER JOIN "Admins" a ON a.user_id = u.id
       WHERE LOWER(a.email) = $1
-        AND u.role IN ('admin', 'super_admin')
+        AND u.role IN ('admin', 'super_admin', 'both')
       LIMIT 1
       `,
       [normalizedEmail],
@@ -4405,7 +4406,7 @@ async function findAuthUserByEmailWithPreference(
       FROM users u
       INNER JOIN "Admins" a ON a.user_id = u.id
       WHERE LOWER(a.email) = $1
-        AND u.role IN ('admin', 'super_admin')
+        AND u.role IN ('admin', 'super_admin', 'both')
       LIMIT 1
       `,
       [normalizedEmail],
@@ -4487,7 +4488,7 @@ async function findAuthUserByUsername(pool, username) {
       s.program,
       s.year_section
     FROM users u
-    LEFT JOIN "Admins" a ON a.user_id = u.id AND u.role IN ('admin', 'super_admin')
+    LEFT JOIN "Admins" a ON a.user_id = u.id AND u.role IN ('admin', 'super_admin', 'both')
     LEFT JOIN "Students" s ON s.user_id = u.id AND u.role = 'student'
     WHERE u.username = $1
     LIMIT 1
@@ -4607,13 +4608,24 @@ function generateTemporaryPassword() {
 }
 
 function normalizeAdminRole(value) {
-  return String(value || "").trim().toLowerCase() === "super_admin"
-    ? "super_admin"
-    : "admin";
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "super_admin") {
+    return "super_admin";
+  }
+  if (normalized === "both") {
+    return "both";
+  }
+  return "admin";
 }
 
 function formatRoleLabel(role) {
-  return role === "super_admin" ? "Super Admin" : "Admin";
+  if (role === "super_admin") {
+    return "Super Admin";
+  }
+  if (role === "both") {
+    return "Admin and Super Admin";
+  }
+  return "Admin";
 }
 
 function parseImportedStudentName(rawName) {
@@ -5292,7 +5304,7 @@ app.post("/api/auth/account-setup", async (req, res) => {
         s.program,
         s.year_section
       FROM users u
-      LEFT JOIN "Admins" a ON a.user_id = u.id AND u.role IN ('admin', 'super_admin')
+      LEFT JOIN "Admins" a ON a.user_id = u.id AND u.role IN ('admin', 'super_admin', 'both')
       LEFT JOIN "Students" s ON s.user_id = u.id AND u.role = 'student'
       WHERE u.id = $1
       LIMIT 1
@@ -5391,6 +5403,139 @@ app.post("/api/auth/account-setup", async (req, res) => {
   }
 });
 
+app.post("/api/auth/super-admin/access", async (req, res) => {
+  const { userId, sessionToken, trustedDeviceToken } = req.body ?? {};
+  const normalizedUserId = Number(userId);
+  const normalizedSessionToken = String(sessionToken || "").trim();
+  const normalizedTrustedDeviceToken = String(trustedDeviceToken || "").trim();
+
+  if (!Number.isFinite(normalizedUserId) || normalizedUserId <= 0) {
+    return res.status(400).json({
+      status: "error",
+      message: "A valid user id is required.",
+    });
+  }
+
+  if (!normalizedSessionToken) {
+    return res.status(400).json({
+      status: "error",
+      message: "Session token is required.",
+    });
+  }
+
+  if (!verifySessionToken(normalizedSessionToken, normalizedUserId)) {
+    return res.status(401).json({
+      status: "error",
+      message: "Invalid session token.",
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const userResult = await pool.query(
+      `
+      SELECT
+        u.id,
+        u.username,
+        u.password_hash,
+        u.role AS account_role,
+        u.is_active,
+        a.email,
+        a.first_name,
+        a.middle_initial,
+        a.last_name
+      FROM users u
+      INNER JOIN "Admins" a ON a.user_id = u.id
+      WHERE u.id = $1
+        AND u.role IN ('super_admin', 'both')
+      LIMIT 1
+      `,
+      [normalizedUserId],
+    );
+
+    const user = userResult.rows?.[0] || null;
+    if (!user || !user.is_active) {
+      return res.status(404).json({
+        status: "error",
+        message: "Super admin account not found.",
+      });
+    }
+
+    const trusted = normalizedTrustedDeviceToken
+      ? await verifyTrustedSuperAdminDevice(
+          pool,
+          user.id,
+          normalizedTrustedDeviceToken,
+        )
+      : false;
+
+    if (trusted) {
+      return res.status(200).json({
+        status: "ok",
+        user: buildAuthenticatedUser({
+          ...user,
+          role: "super_admin",
+        }),
+      });
+    }
+
+    const existingChallenge = await getSuperAdminLoginChallengeByUserId(
+      pool,
+      user.id,
+    );
+    const now = Date.now();
+    const existingResendAt = existingChallenge?.resend_available_at
+      ? new Date(existingChallenge.resend_available_at).getTime()
+      : 0;
+
+    if (
+      existingChallenge &&
+      Number.isFinite(existingResendAt) &&
+      existingResendAt > now
+    ) {
+      return res.status(202).json({
+        status: "pending_verification",
+        requiresVerification: true,
+        challengeId: existingChallenge.challenge_id,
+        retryAfterSeconds: Math.ceil((existingResendAt - now) / 1000),
+        message:
+          "A verification code was already sent to your email. Please enter it to continue.",
+      });
+    }
+
+    const challenge = await issueSuperAdminLoginChallenge(pool, user);
+    if (!challenge.sent) {
+      return res.status(503).json({
+        status: "error",
+        message: `Unable to send super admin verification code (${challenge.reason || "unknown reason"}).`,
+      });
+    }
+
+    return res.status(202).json({
+      status: "pending_verification",
+      requiresVerification: true,
+      challengeId: challenge.challengeId,
+      retryAfterSeconds: challenge.retryAfterSeconds,
+      message:
+        "A 6-digit verification code was sent to your email. Enter it to finish signing in.",
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to start super admin access (${error.message}).`,
+    });
+  }
+});
+
 app.post("/api/auth/super-admin/verify", async (req, res) => {
   const { challengeId, code, trustDevice } = req.body ?? {};
   const normalizedChallengeId = String(challengeId || "").trim();
@@ -5449,7 +5594,7 @@ app.post("/api/auth/super-admin/verify", async (req, res) => {
         u.id,
         u.username,
         u.password_hash,
-        u.role,
+        u.role AS account_role,
         u.is_active,
         a.email,
         a.first_name,
@@ -5458,7 +5603,7 @@ app.post("/api/auth/super-admin/verify", async (req, res) => {
       FROM users u
       INNER JOIN "Admins" a ON a.user_id = u.id
       WHERE u.id = $1
-        AND u.role = 'super_admin'
+        AND u.role IN ('super_admin', 'both')
       LIMIT 1
       `,
       [challenge.user_id],
@@ -5487,7 +5632,10 @@ app.post("/api/auth/super-admin/verify", async (req, res) => {
     }
 
     await removeSuperAdminLoginChallenge(pool, normalizedChallengeId);
-    const authenticatedUser = buildAuthenticatedUser(user);
+    const authenticatedUser = buildAuthenticatedUser({
+      ...user,
+      role: "super_admin",
+    });
 
     return res.status(200).json({
       status: "ok",
@@ -6118,7 +6266,7 @@ app.put("/api/profile/admin", async (req, res) => {
       SELECT id, username, password_hash, role
       FROM users
       WHERE id = $1
-        AND role IN ('admin', 'super_admin')
+        AND role IN ('admin', 'super_admin', 'both')
       LIMIT 1
       `,
       [id],
@@ -6215,7 +6363,7 @@ app.put("/api/profile/admin", async (req, res) => {
         last_name = COALESCE(NULLIF($3, ''), last_name),
         password_hash = COALESCE($4, password_hash)
       WHERE id = $5
-        AND role IN ('admin', 'super_admin')
+        AND role IN ('admin', 'super_admin', 'both')
       RETURNING id, username, role, first_name, last_name
       `,
       [
@@ -6538,7 +6686,7 @@ app.get("/api/admin-accounts", async (req, res) => {
         a.full_name
       FROM users u
       INNER JOIN "Admins" a ON a.user_id = u.id
-      WHERE u.role IN ('admin', 'super_admin')
+      WHERE u.role IN ('admin', 'super_admin', 'both')
       ORDER BY
         CASE WHEN u.role = 'super_admin' THEN 0 ELSE 1 END,
         LOWER(a.last_name) ASC,
@@ -6772,7 +6920,7 @@ app.put("/api/admin-accounts/:id", async (req, res) => {
         last_name = $3,
         is_active = COALESCE($4, is_active)
       WHERE id = $5
-        AND role IN ('admin', 'super_admin')
+        AND role IN ('admin', 'super_admin', 'both')
       RETURNING id, username, role, is_active
       `,
       [
@@ -6872,7 +7020,7 @@ app.delete("/api/admin-accounts/:id", async (req, res) => {
       FROM users u
       INNER JOIN "Admins" a ON a.user_id = u.id
       WHERE u.id = $1
-        AND u.role IN ('admin', 'super_admin')
+        AND u.role IN ('admin', 'super_admin', 'both')
       LIMIT 1
       `,
       [id],
@@ -6889,7 +7037,7 @@ app.delete("/api/admin-accounts/:id", async (req, res) => {
 
     await pool.query(`DELETE FROM "Admins" WHERE user_id = $1`, [id]);
     await pool.query(
-      `DELETE FROM users WHERE id = $1 AND role IN ('admin', 'super_admin')`,
+      `DELETE FROM users WHERE id = $1 AND role IN ('admin', 'super_admin', 'both')`,
       [id],
     );
 

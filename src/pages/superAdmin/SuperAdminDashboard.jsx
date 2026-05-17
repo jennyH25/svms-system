@@ -21,13 +21,18 @@ import {
 const roleBadgeVariant = {
   admin: "info",
   super_admin: "warning",
+  both: "warning",
 };
 
 const statCardStyles =
   "rounded-2xl border border-white/10 bg-[#15181d] p-5 shadow-[0_20px_45px_rgba(0,0,0,0.22)]";
 
 const formatRoleLabel = (role) =>
-  role === "super_admin" ? "Super Admin" : "Admin";
+  role === "super_admin"
+    ? "Super Admin"
+    : role === "both"
+      ? "Admin and Super Admin"
+      : "Admin";
 
 const formatCreatedDate = (value) => {
   const parsed = new Date(value);
@@ -140,14 +145,17 @@ const SuperAdminDashboard = () => {
 
   const stats = useMemo(() => {
     const superAdminCount = accounts.filter(
-      (account) => account.role === "super_admin",
+      (account) => account.role === "super_admin" || account.role === "both",
     ).length;
     const adminCount = accounts.filter(
-      (account) => account.role === "admin",
+      (account) => account.role === "admin" || account.role === "both",
+    ).length;
+    const bothCount = accounts.filter(
+      (account) => account.role === "both",
     ).length;
     const activeCount = accounts.filter((account) => account.isActive).length;
 
-    return { superAdminCount, adminCount, activeCount };
+    return { superAdminCount, adminCount, bothCount, activeCount };
   }, [accounts]);
 
   const handleCreateAccount = async (formData) => {
@@ -453,15 +461,18 @@ const SuperAdminDashboard = () => {
                       ? "All"
                       : roleFilter === "admin"
                       ? "Admins"
-                      : "Super Admins"}
+                      : roleFilter === "super_admin"
+                        ? "Super Admins"
+                        : "Admin + Super Admin"}
                     <ChevronDown className="ml-2 w-4 h-4" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent className="min-w-[180px]">
-                  <DropdownMenuItem onClick={() => setRoleFilter("all")}>All</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setRoleFilter("admin")}>Admins</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setRoleFilter("super_admin")}>Super Admins</DropdownMenuItem>
-                </DropdownMenuContent>
+                  <DropdownMenuContent className="min-w-[180px]">
+                    <DropdownMenuItem onClick={() => setRoleFilter("all")}>All</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setRoleFilter("admin")}>Admins</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setRoleFilter("super_admin")}>Super Admins</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setRoleFilter("both")}>Both</DropdownMenuItem>
+                  </DropdownMenuContent>
               </DropdownMenu>
             </div>
             <div className="w-full max-w-md">
