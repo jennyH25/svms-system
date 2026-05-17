@@ -11,6 +11,8 @@ import Button from "../../components/ui/Button";
 import { isPasswordValid, getPasswordErrorMessage } from "../../lib/passwordValidator";
 
 const SUPER_ADMIN_TRUSTED_DEVICE_KEY = "svms_super_admin_trusted_device";
+const GOOGLE_AUTH_RESULT_STORAGE_KEY = "svms_google_auth_result";
+const GOOGLE_AUTH_RESULT_FALLBACK_STORAGE_KEY = "svms_google_auth_result_fallback";
 
 const VerificationCodeInput = ({
   value,
@@ -320,6 +322,37 @@ const Login = () => {
     window.history.replaceState(null, "", cleanLoginUrl);
 
     const nextMessage = params.get("message") || "";
+    if (googleAuthStatus === "resolved") {
+      let storedGoogleResult = null;
+
+      try {
+        const rawValue =
+          sessionStorage.getItem(GOOGLE_AUTH_RESULT_STORAGE_KEY) ||
+          localStorage.getItem(GOOGLE_AUTH_RESULT_FALLBACK_STORAGE_KEY);
+        storedGoogleResult = rawValue ? JSON.parse(rawValue) : null;
+        sessionStorage.removeItem(GOOGLE_AUTH_RESULT_STORAGE_KEY);
+        localStorage.removeItem(GOOGLE_AUTH_RESULT_FALLBACK_STORAGE_KEY);
+      } catch {
+        storedGoogleResult = null;
+      }
+
+      if (storedGoogleResult?.user) {
+        setError("");
+        setSuperAdminMessage("");
+        setIsStartingGoogleLogin(false);
+        setIsLoading(false);
+        navigate(location.pathname, { replace: true });
+        handleAuthenticatedLoginSuccess(storedGoogleResult.user);
+        return;
+      }
+
+      setError("Unable to continue with Google login.");
+      setIsStartingGoogleLogin(false);
+      setIsLoading(false);
+      navigate(location.pathname, { replace: true });
+      return;
+    }
+
     if (googleAuthStatus === "exchange") {
       const exchangeCode = params.get("code") || "";
       const exchangeState = params.get("state") || "";

@@ -403,6 +403,46 @@ function sendGoogleAuthExchangeHtml(res, { code, state, loginUrl }) {
 </html>`);
 }
 
+function sendGoogleAuthResolvedHtml(res, { payload, redirectTo }) {
+  const htmlPayload = JSON.stringify({
+    payload: payload || {},
+    redirectTo: String(redirectTo || "/login?googleAuth=resolved"),
+    sessionStorageKey: "svms_google_auth_result",
+    localStorageKey: "svms_google_auth_result_fallback",
+  }).replace(/</g, "\\u003c");
+
+  return res
+    .status(200)
+    .type("html")
+    .send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Signing you in...</title>
+  </head>
+  <body style="background:#0d0d0d;color:#e5e7eb;font-family:Inter,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;">
+    <p style="font-size:14px;letter-spacing:0.04em;">Finishing your Google sign-in...</p>
+    <script>
+      const payload = ${htmlPayload};
+      try {
+        sessionStorage.setItem(
+          payload.sessionStorageKey,
+          JSON.stringify(payload.payload),
+        );
+      } catch {}
+      try {
+        localStorage.setItem(
+          payload.localStorageKey,
+          JSON.stringify(payload.payload),
+        );
+      } catch {}
+      window.location.replace(payload.redirectTo);
+    </script>
+  </body>
+</html>`);
+}
+
 async function exchangeGoogleAuthCode({ code, state }) {
   const callbackState = verifyGoogleOAuthState(state);
   if (!callbackState) {
@@ -5094,11 +5134,38 @@ app.get("/api/auth/google/callback", async (req, res) => {
     );
   }
 
-  return sendGoogleAuthExchangeHtml(res, {
-    code: authCode,
-    state,
-    loginUrl,
-  });
+  const exchangeResult = await exchangeGoogleAuthCode({ code: authCode, state });
+
+  if (exchangeResult.statusCode === 200) {
+    return sendGoogleAuthResolvedHtml(res, {
+      payload: exchangeResult.body,
+      redirectTo: appendParamsToRedirectUrl(loginUrl, {
+        googleAuth: "resolved",
+      }),
+    });
+  }
+
+  if (
+    exchangeResult.statusCode === 202 &&
+    exchangeResult.body?.requiresVerification
+  ) {
+    return res.redirect(
+      appendParamsToRedirectUrl(loginUrl, {
+        googleAuth: "pending_verification",
+        challengeId: exchangeResult.body?.challengeId || "",
+        retryAfterSeconds: exchangeResult.body?.retryAfterSeconds || "",
+        message: exchangeResult.body?.message || "",
+      }),
+    );
+  }
+
+  return res.redirect(
+    appendParamsToRedirectUrl(loginUrl, {
+      googleAuth: "error",
+      message:
+        exchangeResult.body?.message || "Unable to continue with Google login.",
+    }),
+  );
 });
 
 app.post("/api/auth/google/exchange", async (req, res) => {
