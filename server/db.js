@@ -109,15 +109,7 @@ function getSqlOptions() {
   };
 }
 
-const { connectionString, isSupabasePooler, port: connectionPort } =
-  getConnectionMetadata();
-
-if (isServerlessRuntime && isSupabasePooler && connectionPort === "5432") {
-  console.warn(
-    "Serverless runtime is using the Supabase session pooler on port 5432. " +
-      "Switch the live DATABASE_URL/SUPABASE_DB_URL to the transaction pooler on port 6543 to avoid session exhaustion.",
-  );
-}
+const { connectionString } = getConnectionMetadata();
 
 const sql = connectionString
   ? postgres(connectionString, getSqlOptions())

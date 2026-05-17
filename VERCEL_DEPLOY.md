@@ -45,8 +45,8 @@ Frontend build-time variables:
 Notes:
 
 - The app reads both `DATABASE_URL`/`SUPABASE_DB_URL` and the `PG*` variables. Keeping both in Vercel is fine.
-- For Vercel or any serverless deployment, point `DATABASE_URL`/`SUPABASE_DB_URL` to the Supabase transaction pooler on port `6543`, not the session pooler on port `5432`. Session mode can hit `EMAXCONNSESSION` under normal multi-user traffic.
-- Keep `DB_POOL_MAX` very small in serverless. Start with `1` and only raise it if you have measured need.
+- If your working Supabase pooled connection is on port `5432`, keep using that exact URL in Vercel and in local `.env` so production and local behavior stay aligned.
+- Keep `DB_POOL_MAX` very small in serverless. Start with `1` to reduce the chance of hitting pooled connection limits on `5432`.
 - Vercel will not read your local `.env` automatically because it is not committed and should stay secret.
 - Any variable starting with `VITE_` must also be added in Vercel because Vite injects it at build time.
 - The deployment includes a lightweight keepalive cron at `/api/cron/keepalive` every 3 days. It only performs a `SELECT 1` plus a tiny heartbeat upsert in `app_state`, which is enough to register gentle database activity without generating meaningful load.

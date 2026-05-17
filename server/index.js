@@ -333,6 +333,26 @@ function buildAuthenticatedUser(user) {
   };
 }
 
+function getPostLoginAppPath(user) {
+  if (user?.role === "admin") {
+    return "/admin";
+  }
+
+  if (user?.role === "super_admin") {
+    return "/super-admin";
+  }
+
+  if (user?.role === "student") {
+    return "/student/dashboard";
+  }
+
+  return "/login?googleAuth=resolved";
+}
+
+function encodeGoogleAuthPayload(payload) {
+  return Buffer.from(JSON.stringify(payload || {}), "utf8").toString("base64url");
+}
+
 function sendGoogleAuthSuccessHtml(res, { user, redirectTo, trustedDeviceToken = "" }) {
   const htmlPayload = JSON.stringify({
     user,
@@ -5141,6 +5161,7 @@ app.get("/api/auth/google/callback", async (req, res) => {
       payload: exchangeResult.body,
       redirectTo: appendParamsToRedirectUrl(loginUrl, {
         googleAuth: "resolved",
+        payload: encodeGoogleAuthPayload(exchangeResult.body),
       }),
     });
   }

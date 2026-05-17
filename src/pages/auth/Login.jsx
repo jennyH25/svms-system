@@ -14,6 +14,21 @@ const SUPER_ADMIN_TRUSTED_DEVICE_KEY = "svms_super_admin_trusted_device";
 const GOOGLE_AUTH_RESULT_STORAGE_KEY = "svms_google_auth_result";
 const GOOGLE_AUTH_RESULT_FALLBACK_STORAGE_KEY = "svms_google_auth_result_fallback";
 
+function decodeGoogleAuthPayload(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const base64 = normalized.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = `${base64}${"=".repeat((4 - (base64.length % 4)) % 4)}`;
+    return JSON.parse(window.atob(padded));
+  } catch {
+    return null;
+  }
+}
+
 const VerificationCodeInput = ({
   value,
   onChange,
@@ -323,17 +338,19 @@ const Login = () => {
 
     const nextMessage = params.get("message") || "";
     if (googleAuthStatus === "resolved") {
-      let storedGoogleResult = null;
+      let storedGoogleResult = decodeGoogleAuthPayload(params.get("payload"));
 
-      try {
-        const rawValue =
-          sessionStorage.getItem(GOOGLE_AUTH_RESULT_STORAGE_KEY) ||
-          localStorage.getItem(GOOGLE_AUTH_RESULT_FALLBACK_STORAGE_KEY);
-        storedGoogleResult = rawValue ? JSON.parse(rawValue) : null;
-        sessionStorage.removeItem(GOOGLE_AUTH_RESULT_STORAGE_KEY);
-        localStorage.removeItem(GOOGLE_AUTH_RESULT_FALLBACK_STORAGE_KEY);
-      } catch {
-        storedGoogleResult = null;
+      if (!storedGoogleResult) {
+        try {
+          const rawValue =
+            sessionStorage.getItem(GOOGLE_AUTH_RESULT_STORAGE_KEY) ||
+            localStorage.getItem(GOOGLE_AUTH_RESULT_FALLBACK_STORAGE_KEY);
+          storedGoogleResult = rawValue ? JSON.parse(rawValue) : null;
+          sessionStorage.removeItem(GOOGLE_AUTH_RESULT_STORAGE_KEY);
+          localStorage.removeItem(GOOGLE_AUTH_RESULT_FALLBACK_STORAGE_KEY);
+        } catch {
+          storedGoogleResult = null;
+        }
       }
 
       if (storedGoogleResult?.user) {
