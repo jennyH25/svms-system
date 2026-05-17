@@ -24,6 +24,8 @@ const StudentNotification = lazy(() =>
 );
 
 const Login = lazy(() => import("../pages/auth/Login"));
+const PrivacyPolicy = lazy(() => import("../pages/legal/PrivacyPolicy"));
+const TermsOfService = lazy(() => import("../pages/legal/TermsOfService"));
 
 function RouteFallback() {
   return (
@@ -50,6 +52,8 @@ const AppRoutes = () => {
         <Route path="/" element={<Navigate to="/login" replace />} />
 
         <Route path="/login" element={<Login />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<TermsOfService />} />
         <Route path="/student/login" element={<Login />} />
 
         <Route path="/super-admin" element={<AdminLayout />}>
