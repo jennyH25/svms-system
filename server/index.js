@@ -224,7 +224,26 @@ function verifyGoogleOAuthState(token) {
   }
 }
 
-function sanitizeGoogleReturnTo(value) {
+function getRequestBaseUrl(req) {
+  const forwardedProto = String(req?.headers?.["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim();
+  const forwardedHost = String(req?.headers?.["x-forwarded-host"] || "")
+    .split(",")[0]
+    .trim();
+  const host = forwardedHost || String(req?.headers?.host || "").trim();
+
+  if (!host) {
+    return "";
+  }
+
+  const protocol =
+    forwardedProto || (host.includes("localhost") ? "http" : "https");
+
+  return `${protocol}://${host}`.replace(/\/+$/, "");
+}
+
+function sanitizeGoogleReturnTo(value, req = null) {
   const normalized = String(value || "").trim();
   if (!normalized) {
     return "/login";
@@ -244,6 +263,11 @@ function sanitizeGoogleReturnTo(value) {
     const appBaseUrl = getEmailAppBaseUrl();
     if (appBaseUrl) {
       allowedHosts.add(new URL(appBaseUrl).hostname);
+    }
+
+    const requestBaseUrl = getRequestBaseUrl(req);
+    if (requestBaseUrl) {
+      allowedHosts.add(new URL(requestBaseUrl).hostname);
     }
 
     const vercelUrl = String(process.env.VERCEL_URL || "")
@@ -5117,7 +5141,7 @@ app.get("/api/auth/google/start", async (req, res) => {
     return res.status(500).send("Google sign-in is not configured.");
   }
 
-  const returnTo = sanitizeGoogleReturnTo(req.query?.returnTo);
+  const returnTo = sanitizeGoogleReturnTo(req.query?.returnTo, req);
   const roleHint = String(req.query?.roleHint || "").trim().toLowerCase();
   const state = signGoogleOAuthState({ returnTo, roleHint });
   const googleAuthUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -5139,7 +5163,7 @@ app.get("/api/auth/google/start", async (req, res) => {
 
 app.get("/api/auth/google/callback", async (req, res) => {
   const callbackState = verifyGoogleOAuthState(req.query?.state);
-  const returnTo = sanitizeGoogleReturnTo(callbackState?.returnTo);
+  const returnTo = sanitizeGoogleReturnTo(callbackState?.returnTo, req);
   const authError = String(req.query?.error || "").trim();
   const authCode = String(req.query?.code || "").trim();
   const state = String(req.query?.state || "").trim();
