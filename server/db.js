@@ -2,7 +2,6 @@ import postgres from "postgres";
 import bcrypt from "bcryptjs";
 
 const requiredVars = ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE"];
-const DEFAULT_DB_POOL_MAX = Number(process.env.DB_POOL_MAX || 12);
 const isServerlessRuntime =
   process.env.VERCEL === "1" ||
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
@@ -39,23 +38,87 @@ function getConnectionString() {
   return getConnectionUrl() || buildConnectionUrlFromParts();
 }
 
+function getConnectionMetadata() {
+  const connectionString = getConnectionString();
+
+  if (!connectionString) {
+    return {
+      connectionString: "",
+      hostname: "",
+      port: "",
+      isSupabasePooler: false,
+      isTransactionPooler: false,
+    };
+  }
+
+  try {
+    const parsed = new URL(connectionString);
+    const hostname = String(parsed.hostname || "").trim().toLowerCase();
+    const port = String(parsed.port || "").trim();
+    const isSupabasePooler = hostname.endsWith(".pooler.supabase.com");
+
+    return {
+      connectionString,
+      hostname,
+      port,
+      isSupabasePooler,
+      isTransactionPooler: isSupabasePooler && port === "6543",
+    };
+  } catch {
+    return {
+      connectionString,
+      hostname: "",
+      port: "",
+      isSupabasePooler: false,
+      isTransactionPooler: false,
+    };
+  }
+}
+
+function getDefaultDbPoolMax() {
+  if (process.env.DB_POOL_MAX) {
+    return Number(process.env.DB_POOL_MAX);
+  }
+
+  if (isServerlessRuntime) {
+    // Serverless runtimes can scale out horizontally, so each instance should
+    // keep its own session footprint tiny.
+    return 1;
+  }
+
+  return 12;
+}
+
 function getSqlOptions() {
   const useSsl = process.env.PGSSL !== "false";
   const rejectUnauthorized = isEnvEnabled(
     process.env.PGSSL_REJECT_UNAUTHORIZED,
   );
+  const { isSupabasePooler, isTransactionPooler } = getConnectionMetadata();
+  const maxConnections = Math.max(1, getDefaultDbPoolMax());
 
   return {
-    max: DEFAULT_DB_POOL_MAX,
+    max: maxConnections,
     connect_timeout: 30, // Increased from 10 to 30 seconds for more reliable connections
-    idle_timeout: 30, // Reduced from 60 to 30 seconds to release connections faster
-    max_lifetime: 60 * 60, // Reduced from 24 hours to 1 hour
+    idle_timeout: isServerlessRuntime ? 10 : 30, // Release pooled connections faster on serverless instances
+    max_lifetime: isServerlessRuntime ? 60 : 60 * 60, // Rotate serverless connections aggressively to avoid stale sessions
     query_timeout: 60 * 1000, // Increased from 30s to 60s for sync operations
+    // Transaction poolers do not support prepared statements safely across requests.
+    prepare: !(isServerlessRuntime && (isSupabasePooler || isTransactionPooler)),
     ssl: useSsl ? { rejectUnauthorized } : undefined,
   };
 }
 
-const connectionString = getConnectionString();
+const { connectionString, isSupabasePooler, port: connectionPort } =
+  getConnectionMetadata();
+
+if (isServerlessRuntime && isSupabasePooler && connectionPort === "5432") {
+  console.warn(
+    "Serverless runtime is using the Supabase session pooler on port 5432. " +
+      "Switch the live DATABASE_URL/SUPABASE_DB_URL to the transaction pooler on port 6543 to avoid session exhaustion.",
+  );
+}
+
 const sql = connectionString
   ? postgres(connectionString, getSqlOptions())
   : null;

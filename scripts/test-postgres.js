@@ -8,6 +8,32 @@ const missingVars = requiredVars.filter((key) => !process.env[key]);
 const connectionString =
   process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || "";
 
+function getConnectionMetadata(url) {
+  if (!url) {
+    return {
+      isSupabasePooler: false,
+      isTransactionPooler: false,
+    };
+  }
+
+  try {
+    const parsed = new URL(url);
+    const hostname = String(parsed.hostname || "").trim().toLowerCase();
+    const port = String(parsed.port || "").trim();
+    const isSupabasePooler = hostname.endsWith(".pooler.supabase.com");
+
+    return {
+      isSupabasePooler,
+      isTransactionPooler: isSupabasePooler && port === "6543",
+    };
+  } catch {
+    return {
+      isSupabasePooler: false,
+      isTransactionPooler: false,
+    };
+  }
+}
+
 if (!connectionString && missingVars.length > 0) {
   console.error(
     `Missing required environment variables: ${missingVars.join(", ")}`,
@@ -16,21 +42,21 @@ if (!connectionString && missingVars.length > 0) {
 }
 
 async function testConnection() {
+  const { isSupabasePooler, isTransactionPooler } =
+    getConnectionMetadata(connectionString);
+  const clientOptions = {
+    max: 1,
+    connect_timeout: 10,
+    prepare: !(isSupabasePooler || isTransactionPooler),
+    ssl:
+      process.env.PGSSL === "false" ? false : { rejectUnauthorized: false },
+  };
+
   const client = connectionString
-    ? postgres(connectionString, {
-        connect_timeout: 10,
-        ssl:
-          process.env.PGSSL === "false" ? false : { rejectUnauthorized: false },
-      })
+    ? postgres(connectionString, clientOptions)
     : postgres(
         `postgresql://${encodeURIComponent(process.env.PGUSER)}:${encodeURIComponent(process.env.PGPASSWORD)}@${process.env.PGHOST}:${process.env.PGPORT}/${process.env.PGDATABASE}`,
-        {
-          connect_timeout: 10,
-          ssl:
-            process.env.PGSSL === "false"
-              ? false
-              : { rejectUnauthorized: false },
-        },
+        clientOptions,
       );
 
   try {
