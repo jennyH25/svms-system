@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { CheckCircle2, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import logo from "../../assets/css_logo.png";
 import GradientText from "../../components/ui/GradientText";
@@ -638,6 +638,27 @@ const Login = () => {
               Track, manage, and resolve student violations efficiently.
               Maintain accurate records and promote a safe learning
               environment.
+            </div>
+          </AnimatedContent>
+          <AnimatedContent
+            distance={20}
+            direction="vertical"
+            duration={0.6}
+            delay={0.4}
+          >
+            <div className="flex flex-wrap items-center gap-6 text-xs text-gray-400 mt-6 lg:mt-8">
+              <Link
+                to="/privacy"
+                className="transition-colors hover:text-white"
+              >
+                Privacy Policy
+              </Link>
+              <Link
+                to="/terms"
+                className="transition-colors hover:text-white"
+              >
+                Terms of Service
+              </Link>
             </div>
           </AnimatedContent>
         </div>
