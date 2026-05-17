@@ -583,11 +583,28 @@ const Login = () => {
     );
   };
 
+  const legalLinksBlock = (
+    <>
+      <div className="max-w-md text-gray-500 text-xs sm:text-sm leading-relaxed">
+        Track, manage, and resolve student violations efficiently. Maintain
+        accurate records and promote a safe learning environment.
+      </div>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-white/8 pt-4 text-xs text-gray-400">
+        <Link to="/privacy" className="transition-colors hover:text-white">
+          Privacy Policy
+        </Link>
+        <Link to="/terms" className="transition-colors hover:text-white">
+          Terms of Service
+        </Link>
+      </div>
+    </>
+  );
+
   return (
     <div className="min-h-screen bg-[#1a1a1a] flex items-center justify-center p-3 sm:p-4 lg:p-6 font-inter">
       <div className="w-full max-w-[1100px] bg-[#0d0d0d] rounded-[28px] lg:rounded-3xl overflow-hidden flex flex-col lg:min-h-[650px] lg:flex-row shadow-2xl border border-white/[0.30]">
         {/* Left Panel */}
-        <div className="w-full lg:w-[45%] bg-gradient-to-b from-[#1a1a1a] to-[#0d0d0d] px-6 py-8 sm:px-8 sm:py-10 lg:p-12 flex flex-col justify-between relative gap-8 lg:gap-0">
+        <div className="w-full lg:w-[45%] bg-gradient-to-b from-[#1a1a1a] to-[#0d0d0d] px-6 py-8 sm:px-8 sm:py-10 lg:p-12 flex flex-col justify-start lg:justify-between relative gap-6 sm:gap-7 lg:gap-0">
           {/* Logo */}
           <AnimatedContent
             distance={30}
@@ -600,7 +617,7 @@ const Login = () => {
             </div>
           </AnimatedContent>
           {/* Welcome Text */}
-          <div className="flex-1 flex flex-col justify-center lg:-mt-16">
+          <div className="flex flex-col lg:flex-1 lg:justify-center lg:-mt-16">
             <AnimatedContent
               distance={30}
               direction="vertical"
@@ -634,11 +651,7 @@ const Login = () => {
             duration={0.6}
             delay={0.3}
           >
-            <div className="max-w-md text-gray-500 text-xs sm:text-sm leading-relaxed">
-              Track, manage, and resolve student violations efficiently.
-              Maintain accurate records and promote a safe learning
-              environment.
-            </div>
+            <div className="hidden lg:block">{legalLinksBlock.props.children[0]}</div>
           </AnimatedContent>
           <AnimatedContent
             distance={20}
@@ -646,27 +659,16 @@ const Login = () => {
             duration={0.6}
             delay={0.4}
           >
-            <div className="flex flex-wrap items-center gap-6 text-xs text-gray-400 mt-6 lg:mt-8">
-              <Link
-                to="/privacy"
-                className="transition-colors hover:text-white"
-              >
-                Privacy Policy
-              </Link>
-              <Link
-                to="/terms"
-                className="transition-colors hover:text-white"
-              >
-                Terms of Service
-              </Link>
+            <div className="hidden lg:block lg:mt-8 lg:border-t-0 lg:pt-0">
+              {legalLinksBlock.props.children[1]}
             </div>
           </AnimatedContent>
         </div>
 
         {/* Right Panel */}
-        <div className="w-full lg:w-[55%] bg-[#0F1113]/30 px-6 py-8 sm:px-8 sm:py-10 lg:p-12 relative overflow-y-auto">
+        <div className="w-full lg:w-[55%] bg-[#0F1113]/30 px-6 pt-4 pb-8 sm:px-8 sm:py-10 lg:p-12 relative overflow-y-auto">
           {!isForgotPassword ? (
-            <div className="mt-0 sm:mt-2 lg:mt-10">
+            <div className="sm:mt-2 lg:mt-10">
               <div className="mb-8 sm:mb-10 lg:mb-12 flex items-center gap-3">
                 {isSuperAdminVerification && (
                   <button
@@ -825,6 +827,9 @@ const Login = () => {
                         </span>
                       </span>
                     </button>
+                    <div className="space-y-4 pt-4 lg:hidden">
+                      {legalLinksBlock}
+                    </div>
                   </form>
                   )
                 ) : (
@@ -872,7 +877,7 @@ const Login = () => {
             </div>
           ) : (
             // Forgot Password Flow
-            <div className="mt-0 sm:mt-2 lg:mt-10">
+            <div className="sm:mt-2 lg:mt-10">
               <div className="flex items-center gap-3 mb-8 sm:mb-10 lg:mb-12">
                 <button
                   onClick={handleBackToLogin}
