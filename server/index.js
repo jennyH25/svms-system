@@ -327,6 +327,7 @@ function buildAuthenticatedUser(user) {
     schoolId: user.school_id || "",
     program: user.program || "",
     yearSection: user.year_section || "",
+    requiresAccountSetup: Boolean(user.requires_account_setup),
     sessionToken,
   };
 }
@@ -538,7 +539,8 @@ async function exchangeGoogleAuthCode({ code, state }) {
         statusCode: 404,
         body: {
           status: "error",
-          message: "This Google account is not registered in the SVMS database.",
+          message:
+            "No SVMS account was found for this PLP Google account. Ask an administrator to add or import your account first.",
         },
       };
     }
@@ -4333,6 +4335,7 @@ async function findAuthUserByEmail(pool, email) {
         u.username,
         u.password_hash,
         u.role,
+        u.requires_account_setup,
         a.first_name,
         a.middle_initial,
         a.last_name,
@@ -4353,6 +4356,7 @@ async function findAuthUserByEmail(pool, email) {
         u.username,
         u.password_hash,
         u.role,
+        u.requires_account_setup,
         s.first_name,
         s.middle_initial,
         s.last_name,
@@ -4393,6 +4397,7 @@ async function findAuthUserByEmailWithPreference(
         u.username,
         u.password_hash,
         u.role,
+        u.requires_account_setup,
         a.first_name,
         a.middle_initial,
         a.last_name,
@@ -4413,6 +4418,7 @@ async function findAuthUserByEmailWithPreference(
         u.username,
         u.password_hash,
         u.role,
+        u.requires_account_setup,
         s.first_name,
         s.middle_initial,
         s.last_name,
@@ -4472,6 +4478,7 @@ async function findAuthUserByUsername(pool, username) {
       u.password_hash,
       u.role,
       u.is_active,
+      u.requires_account_setup,
       COALESCE(a.email, s.email) as email,
       COALESCE(a.first_name, s.first_name, u.first_name) as first_name,
       COALESCE(a.middle_initial, s.middle_initial) as middle_initial,
@@ -5192,6 +5199,194 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Login unavailable: database not ready (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/auth/account-setup", async (req, res) => {
+  const { userId, sessionToken, username, newPassword, confirmPassword } = req.body ?? {};
+  const normalizedUserId = Number(userId);
+  const normalizedSessionToken = String(sessionToken || "").trim();
+  const normalizedUsername = String(username || "").trim();
+
+  if (!Number.isFinite(normalizedUserId) || normalizedUserId <= 0) {
+    return res.status(400).json({
+      status: "error",
+      message: "A valid user id is required.",
+    });
+  }
+
+  if (!normalizedSessionToken) {
+    return res.status(400).json({
+      status: "error",
+      message: "Session token is required.",
+    });
+  }
+
+  if (!verifySessionToken(normalizedSessionToken, normalizedUserId)) {
+    return res.status(401).json({
+      status: "error",
+      message: "Invalid session token.",
+    });
+  }
+
+  if (!normalizedUsername) {
+    return res.status(400).json({
+      status: "error",
+      message: "Username is required.",
+    });
+  }
+
+  if (!newPassword) {
+    return res.status(400).json({
+      status: "error",
+      message: "New password is required.",
+    });
+  }
+
+  if (!confirmPassword) {
+    return res.status(400).json({
+      status: "error",
+      message: "Confirm password is required.",
+    });
+  }
+
+  if (String(newPassword) !== String(confirmPassword)) {
+    return res.status(400).json({
+      status: "error",
+      message: "New password and confirm password do not match.",
+    });
+  }
+
+  if (!isPasswordStrong(newPassword)) {
+    return res.status(400).json({
+      status: "error",
+      message: getPasswordValidationError(newPassword),
+    });
+  }
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database environment variables are missing.",
+      missing: getMissingDbVars(),
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    const existingUserResult = await pool.query(
+      `
+      SELECT
+        u.id,
+        u.username,
+        u.role,
+        u.requires_account_setup,
+        COALESCE(a.email, s.email) AS email,
+        COALESCE(a.first_name, s.first_name, u.first_name) AS first_name,
+        COALESCE(a.middle_initial, s.middle_initial) AS middle_initial,
+        COALESCE(a.last_name, s.last_name, u.last_name) AS last_name,
+        s.school_id,
+        s.program,
+        s.year_section
+      FROM users u
+      LEFT JOIN "Admins" a ON a.user_id = u.id AND u.role IN ('admin', 'super_admin')
+      LEFT JOIN "Students" s ON s.user_id = u.id AND u.role = 'student'
+      WHERE u.id = $1
+      LIMIT 1
+      `,
+      [normalizedUserId],
+    );
+
+    const existingUser = existingUserResult.rows?.[0] || null;
+
+    if (!existingUser) {
+      return res.status(404).json({
+        status: "error",
+        message: "User account not found.",
+      });
+    }
+
+    if (!existingUser.requires_account_setup) {
+      return res.status(400).json({
+        status: "error",
+        message: "Account setup is already complete.",
+      });
+    }
+
+    const duplicateUsernameResult = await pool.query(
+      `
+      SELECT id
+      FROM users
+      WHERE username = $1
+        AND id <> $2
+      LIMIT 1
+      `,
+      [normalizedUsername, normalizedUserId],
+    );
+
+    if (duplicateUsernameResult.rows?.[0]) {
+      return res.status(409).json({
+        status: "error",
+        message: "Username already exists. Please choose a different username.",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(String(newPassword), 12);
+
+    const updateResult = await pool.query(
+      `
+      UPDATE users
+      SET
+        username = $1,
+        password_hash = $2,
+        requires_account_setup = FALSE
+      WHERE id = $3
+      RETURNING id, username, role, requires_account_setup
+      `,
+      [normalizedUsername, passwordHash, normalizedUserId],
+    );
+
+    const updatedUser = updateResult.rows?.[0] || null;
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        status: "error",
+        message: "Unable to complete account setup.",
+      });
+    }
+
+    await logAuditEvent(req, {
+      action: "COMPLETE_ACCOUNT_SETUP",
+      targetType: "user",
+      targetId: updatedUser.id,
+      details: `Completed first-time account setup for ${updatedUser.username}.`,
+      metadata: {
+        role: updatedUser.role,
+        username: updatedUser.username,
+      },
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      user: buildAuthenticatedUser({
+        ...existingUser,
+        ...updatedUser,
+      }),
+    });
+  } catch (error) {
+    if (String(error?.code || "") === "23505") {
+      return res.status(409).json({
+        status: "error",
+        message: "Username already exists. Please choose a different username.",
+      });
+    }
+
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to complete account setup (${error.message}).`,
     });
   }
 });
@@ -6843,7 +7038,6 @@ app.post("/api/students/import", (req, res) => {
         });
       }
 
-      const createdCredentials = [];
       let createdCount = 0;
       let overwrittenCount = 0;
       let skippedDuplicateCount = 0;
@@ -6870,10 +7064,9 @@ app.post("/api/students/import", (req, res) => {
           continue;
         }
 
-        const generatedPassword = generateTemporaryPassword();
         const generatedUsername = buildBulkImportStudentUsername(student.schoolId);
         const passwordHash = await bcrypt.hash(
-          generatedPassword,
+          generateTemporaryPassword(),
           BULK_IMPORT_PASSWORD_HASH_ROUNDS,
         );
 
@@ -6881,7 +7074,6 @@ app.post("/api/students/import", (req, res) => {
           mode: "create",
           student,
           generatedUsername,
-          generatedPassword,
           passwordHash,
         });
       }
@@ -6965,7 +7157,7 @@ app.post("/api/students/import", (req, res) => {
           batchRows.forEach((row, index) => {
             const offset = index * 4;
             userPlaceholders.push(
-              `($${offset + 1}, $${offset + 2}, 'student', $${offset + 3}, $${offset + 4}, TRUE)`,
+              `($${offset + 1}, $${offset + 2}, 'student', $${offset + 3}, $${offset + 4}, TRUE, TRUE)`,
             );
             userParams.push(
               row.generatedUsername,
@@ -6977,7 +7169,7 @@ app.post("/api/students/import", (req, res) => {
 
           const insertedUsers = await tx.unsafe(
             `
-            INSERT INTO users (username, password_hash, role, first_name, last_name, is_active)
+            INSERT INTO users (username, password_hash, role, first_name, last_name, is_active, requires_account_setup)
             VALUES ${userPlaceholders.join(", ")}
             RETURNING id, username
             `,
@@ -7031,13 +7223,6 @@ app.post("/api/students/import", (req, res) => {
           );
 
           batchRows.forEach((row) => {
-            createdCredentials.push({
-              email: row.student.email,
-              firstName: row.student.firstName,
-              username: row.generatedUsername,
-              password: row.generatedPassword,
-              schoolId: row.student.schoolId,
-            });
             createdCount += 1;
           });
         }
@@ -7067,27 +7252,6 @@ app.post("/api/students/import", (req, res) => {
         overwrittenCount,
         skippedDuplicateCount,
         duplicateCount: preview.duplicateCount,
-        emailQueuedCount: createdCredentials.length,
-      });
-
-      Promise.allSettled(
-        createdCredentials.map((credential) =>
-          sendStudentCredentialEmail({
-            toEmail: credential.email,
-            firstName: credential.firstName,
-            username: credential.username,
-            password: credential.password,
-          }),
-        ),
-      ).then((results) => {
-        results.forEach((result, index) => {
-          if (result.status === "rejected") {
-            const failedEmail = createdCredentials[index]?.email || "unknown";
-            console.error(
-              `[Student Import] Failed to send credential email to ${failedEmail}: ${result.reason?.message || result.reason}`,
-            );
-          }
-        });
       });
     } catch (error) {
       return res.status(503).json({
@@ -7189,8 +7353,8 @@ app.post("/api/students", async (req, res) => {
 
     const userInsert = await pool.query(
       `
-      INSERT INTO users (username, password_hash, role, first_name, last_name, is_active)
-      VALUES ($1, $2, 'student', $3, $4, TRUE)
+      INSERT INTO users (username, password_hash, role, first_name, last_name, is_active, requires_account_setup)
+      VALUES ($1, $2, 'student', $3, $4, TRUE, TRUE)
       RETURNING id, username
       `,
       [generatedUsername, passwordHash, cleanedFirst, cleanedLast],
@@ -7254,18 +7418,6 @@ app.post("/api/students", async (req, res) => {
         username: generatedUsername,
         password: generatedPassword,
       },
-    });
-
-    // Fire credential email after responding.
-    sendStudentCredentialEmail({
-      toEmail: normalizedEmail,
-      firstName: cleanedFirst,
-      username: generatedUsername,
-      password: generatedPassword,
-    }).catch((emailErr) => {
-      console.error(
-        `[Student Create] Failed to send credential email to ${email}: ${emailErr?.message || emailErr}`,
-      );
     });
   } catch (error) {
     let conflictMessage = "";

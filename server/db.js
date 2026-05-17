@@ -62,7 +62,7 @@ const sql = connectionString
 
 export default sql;
 
-const AUTH_SCHEMA_VERSION = 4;
+const AUTH_SCHEMA_VERSION = 5;
 const AUTH_SCHEMA_STATE_KEY = "auth_schema_version";
 
 async function ensureSchemaStateTable(dbPool) {
@@ -577,6 +577,11 @@ export async function syncAuthDatabase(options = {}) {
   await dbPool.query(`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS last_name VARCHAR(100)
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS requires_account_setup BOOLEAN NOT NULL DEFAULT FALSE
   `);
 
   await dbPool.query(`

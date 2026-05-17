@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { CheckCircle2, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import logo from "../../assets/css_logo.png";
@@ -46,12 +46,37 @@ const Login = () => {
   const [trustThisDevice, setTrustThisDevice] = useState(false);
   const [isFinalizingSuperAdminLogin, setIsFinalizingSuperAdminLogin] = useState(false);
   const [isStartingGoogleLogin, setIsStartingGoogleLogin] = useState(false);
+  const [pendingAccountSetupUser, setPendingAccountSetupUser] = useState(null);
+  const [setupUsername, setSetupUsername] = useState("");
+  const [setupPassword, setSetupPassword] = useState("");
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState("");
+  const [showSetupPassword, setShowSetupPassword] = useState(false);
+  const [showSetupConfirmPassword, setShowSetupConfirmPassword] = useState(false);
+  const [showSetupPasswordRequirements, setShowSetupPasswordRequirements] = useState(false);
+  const [setupError, setSetupError] = useState("");
+  const [setupPasswordValidationError, setSetupPasswordValidationError] = useState("");
+  const [isSubmittingAccountSetup, setIsSubmittingAccountSetup] = useState(false);
+  const processedGoogleExchangeRef = useRef("");
   const navigate = useNavigate();
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const isGoogleExchangeView = searchParams.get("googleAuth") === "exchange";
 
   const handleAuthenticatedLoginSuccess = (user) => {
+    if (user?.requiresAccountSetup) {
+      setPendingAccountSetupUser(user);
+      setSetupUsername(user?.username || "");
+      setSetupPassword("");
+      setSetupConfirmPassword("");
+      setSetupError("");
+      setSetupPasswordValidationError("");
+      setShowSetupPassword(false);
+      setShowSetupConfirmPassword(false);
+      setShowSetupPasswordRequirements(false);
+      setIsLoading(false);
+      return;
+    }
+
     localStorage.setItem("svms_user", JSON.stringify(user));
     routeAuthenticatedUser(user);
   };
@@ -107,6 +132,20 @@ const Login = () => {
 
     const nextMessage = params.get("message") || "";
     if (googleAuthStatus === "exchange") {
+      const exchangeCode = params.get("code") || "";
+      const exchangeState = params.get("state") || "";
+      const exchangeKey = `${exchangeCode}:${exchangeState}`;
+
+      if (
+        !exchangeCode ||
+        !exchangeState ||
+        processedGoogleExchangeRef.current === exchangeKey
+      ) {
+        return;
+      }
+
+      processedGoogleExchangeRef.current = exchangeKey;
+
       const completeGoogleLogin = async () => {
         let completedNavigation = false;
         setError("");
@@ -121,8 +160,8 @@ const Login = () => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              code: params.get("code") || "",
-              state: params.get("state") || "",
+              code: exchangeCode,
+              state: exchangeState,
             }),
           });
 
@@ -143,6 +182,12 @@ const Login = () => {
           }
 
           if (!response.ok) {
+            if (response.status === 404) {
+              throw new Error(
+                result?.message ||
+                  "No SVMS account was found for this PLP Google account. Ask an administrator to add or import your account first.",
+              );
+            }
             throw new Error(result?.message || "Unable to continue with Google login.");
           }
 
@@ -571,6 +616,75 @@ const Login = () => {
     handleForgotPasswordReset();
   };
 
+  const handleAccountSetup = async (event) => {
+    event.preventDefault();
+    setSetupError("");
+    setSetupPasswordValidationError("");
+
+    if (!pendingAccountSetupUser?.id || !pendingAccountSetupUser?.sessionToken) {
+      setSetupError("Your account setup session expired. Please sign in again.");
+      return;
+    }
+
+    if (!setupUsername.trim()) {
+      setSetupError("Please enter a username.");
+      return;
+    }
+
+    if (!setupPassword.trim() || !setupConfirmPassword.trim()) {
+      setSetupError("Please fill in all fields.");
+      return;
+    }
+
+    if (!isPasswordValid(setupPassword)) {
+      setSetupPasswordValidationError(getPasswordErrorMessage(setupPassword));
+      return;
+    }
+
+    if (setupPassword !== setupConfirmPassword) {
+      setSetupError("Passwords do not match.");
+      return;
+    }
+
+    setIsSubmittingAccountSetup(true);
+
+    try {
+      const response = await fetch("/api/auth/account-setup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId: pendingAccountSetupUser.id,
+          sessionToken: pendingAccountSetupUser.sessionToken,
+          username: setupUsername.trim(),
+          newPassword: setupPassword,
+          confirmPassword: setupConfirmPassword,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.message || "Unable to complete account setup.");
+      }
+
+      setPendingAccountSetupUser(null);
+      setSetupUsername("");
+      setSetupPassword("");
+      setSetupConfirmPassword("");
+      setSetupError("");
+      setSetupPasswordValidationError("");
+      localStorage.setItem("svms_user", JSON.stringify(result.user));
+      routeAuthenticatedUser(result.user);
+    } catch (setupRequestError) {
+      setSetupError(
+        setupRequestError.message || "Unable to complete account setup.",
+      );
+    } finally {
+      setIsSubmittingAccountSetup(false);
+    }
+  };
+
   const handleGoogleLogin = () => {
     setError("");
     setSuperAdminMessage("");
@@ -823,7 +937,7 @@ const Login = () => {
                         <span>
                           {isStartingGoogleLogin
                             ? "Redirecting to Google..."
-                            : "Conitnue with Google (PLP Account)"}
+                            : "Continue with Google (PLP Account)"}
                         </span>
                       </span>
                     </button>
@@ -1182,6 +1296,121 @@ const Login = () => {
           )}
         </div>
       </div>
+
+      <Modal
+        isOpen={Boolean(pendingAccountSetupUser)}
+        onClose={() => {}}
+        title={<span className="font-black font-inter">Set-up your Account</span>}
+        size="lg"
+        showCloseButton={false}
+      >
+        <div className="rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-cyan-100">
+            Choose your preferred username and password before continuing.
+          </p>
+          <p className="text-xs text-cyan-200/80 mt-2">
+            Note: Set these for quicker login when you sign in manually next time.
+          </p>
+        </div>
+
+        {setupError && (
+          <div className="bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg mb-4 text-sm">
+            {setupError}
+          </div>
+        )}
+
+        {setupPasswordValidationError && (
+          <div className="bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg mb-4 text-sm">
+            {setupPasswordValidationError}
+          </div>
+        )}
+
+        <form onSubmit={handleAccountSetup} className="space-y-5">
+          <GlassInput
+            label="CHOSEN USERNAME"
+            type="text"
+            value={setupUsername}
+            onChange={(e) => {
+              setSetupUsername(e.target.value);
+              setSetupError("");
+            }}
+            placeholder="Enter your preferred username"
+          />
+
+          <div>
+            <GlassInput
+              label="CHOSEN PASSWORD"
+              type={showSetupPassword ? "text" : "password"}
+              value={setupPassword}
+              onChange={(e) => {
+                setSetupPassword(e.target.value);
+                setSetupError("");
+                setSetupPasswordValidationError("");
+              }}
+              onFocus={() => setShowSetupPasswordRequirements(true)}
+              onBlur={() =>
+                setupPassword === "" && setShowSetupPasswordRequirements(false)
+              }
+              placeholder="Create your password"
+              endIcon={
+                <button
+                  type="button"
+                  onClick={() => setShowSetupPassword(!showSetupPassword)}
+                  className="flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+                >
+                  {showSetupPassword ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              }
+            />
+            <PasswordRequirements
+              password={setupPassword}
+              showRequirements={showSetupPasswordRequirements}
+            />
+          </div>
+
+          <GlassInput
+            label="CONFIRM PASSWORD"
+            type={showSetupConfirmPassword ? "text" : "password"}
+            value={setupConfirmPassword}
+            onChange={(e) => {
+              setSetupConfirmPassword(e.target.value);
+              setSetupError("");
+              setSetupPasswordValidationError("");
+            }}
+            placeholder="Confirm your password"
+            endIcon={
+              <button
+                type="button"
+                onClick={() =>
+                  setShowSetupConfirmPassword(!showSetupConfirmPassword)
+                }
+                className="flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+              >
+                {showSetupConfirmPassword ? (
+                  <EyeOff className="w-5 h-5" />
+                ) : (
+                  <Eye className="w-5 h-5" />
+                )}
+              </button>
+            }
+          />
+
+          <ModalFooter>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={isSubmittingAccountSetup}
+              className="w-full py-3"
+            >
+              {isSubmittingAccountSetup ? "Saving..." : "Save and Continue"}
+            </Button>
+          </ModalFooter>
+        </form>
+      </Modal>
 
       <Modal
         isOpen={showSuperAdminSuccessModal}

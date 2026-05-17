@@ -211,7 +211,7 @@ const AddUserModal = ({ isOpen, onClose, onSave, isSaving = false }) => {
             disabled={isSaving}
             className="px-8 py-2 bg-[#556987] text-white hover:bg-[#3d4654]"
           >
-            {isSaving ? "Sending Credentials..." : "Add User"}
+            {isSaving ? "Adding User..." : "Add User"}
           </Button>
         </ModalFooter>
       </form>

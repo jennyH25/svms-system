@@ -763,7 +763,6 @@ const UserManagement = () => {
       details: [
         `${result?.overwrittenCount || 0} existing record${Number(result?.overwrittenCount || 0) === 1 ? "" : "s"} overwritten`,
         `${result?.skippedDuplicateCount || 0} duplicate${Number(result?.skippedDuplicateCount || 0) === 1 ? "" : "s"} skipped`,
-        `${result?.emailQueuedCount || 0} account email${Number(result?.emailQueuedCount || 0) === 1 ? "" : "s"} queued`,
       ],
     });
   };
@@ -2770,7 +2769,7 @@ const UserManagement = () => {
       >
         <div className="rounded-lg border border-green-400/25 bg-green-500/10 px-4 py-3 mb-4">
           <p className="text-sm font-medium text-green-300">
-            Student account was created and credentials were sent.
+            Student account was created successfully.
           </p>
         </div>
         <ModalFooter>
