@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { CheckCircle2, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import logo from "../../assets/css_logo.png";
 import GradientText from "../../components/ui/GradientText";
@@ -45,7 +45,38 @@ const Login = () => {
   const [showSuperAdminSuccessModal, setShowSuperAdminSuccessModal] = useState(false);
   const [trustThisDevice, setTrustThisDevice] = useState(false);
   const [isFinalizingSuperAdminLogin, setIsFinalizingSuperAdminLogin] = useState(false);
+  const [isStartingGoogleLogin, setIsStartingGoogleLogin] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const isGoogleExchangeView = searchParams.get("googleAuth") === "exchange";
+
+  const handleAuthenticatedLoginSuccess = (user) => {
+    localStorage.setItem("svms_user", JSON.stringify(user));
+    routeAuthenticatedUser(user);
+  };
+
+  const routeAuthenticatedUser = (user) => {
+    const userRole = user?.role;
+
+    if (userRole === "admin") {
+      navigate("/admin");
+      return;
+    }
+
+    if (userRole === "super_admin") {
+      navigate("/super-admin");
+      return;
+    }
+
+    if (userRole === "student") {
+      navigate("/student/dashboard");
+      return;
+    }
+
+    setIsLoading(false);
+    setError("Account role is not recognized.");
+  };
 
   useEffect(() => {
     if (resendTimer > 0 || superAdminResendTimer > 0) {
@@ -63,6 +94,102 @@ const Login = () => {
 
     return undefined;
   }, [resendTimer, superAdminResendTimer]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const googleAuthStatus = params.get("googleAuth");
+    if (!googleAuthStatus) {
+      return;
+    }
+
+    const cleanLoginUrl = `${location.pathname}${window.location.hash || ""}`;
+    window.history.replaceState(null, "", cleanLoginUrl);
+
+    const nextMessage = params.get("message") || "";
+    if (googleAuthStatus === "exchange") {
+      const completeGoogleLogin = async () => {
+        let completedNavigation = false;
+        setError("");
+        setSuperAdminMessage("");
+        setIsLoading(true);
+        setIsStartingGoogleLogin(true);
+
+        try {
+          const response = await fetch("/api/auth/google/exchange", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              code: params.get("code") || "",
+              state: params.get("state") || "",
+            }),
+          });
+
+          const result = await response.json().catch(() => ({}));
+
+          if (response.status === 202 && result?.requiresVerification) {
+            setIsForgotPassword(false);
+            setIsSuperAdminVerification(true);
+            setSuperAdminChallengeId(result?.challengeId || "");
+            setSuperAdminResendTimer(Number(result?.retryAfterSeconds) || 15);
+            setSuperAdminCode("");
+            setSuperAdminMessage(
+              result?.message ||
+                "A 6-digit verification code was sent to your email. Enter it to finish signing in.",
+            );
+            setError("");
+            return;
+          }
+
+          if (!response.ok) {
+            throw new Error(result?.message || "Unable to continue with Google login.");
+          }
+
+          handleAuthenticatedLoginSuccess(result.user);
+          completedNavigation = true;
+        } catch (exchangeError) {
+          setIsForgotPassword(false);
+          setIsSuperAdminVerification(false);
+          setSuperAdminChallengeId("");
+          setSuperAdminCode("");
+          setSuperAdminMessage("");
+          setError(exchangeError.message || "Unable to continue with Google login.");
+        } finally {
+          setIsLoading(false);
+          setIsStartingGoogleLogin(false);
+          if (!completedNavigation) {
+            navigate(location.pathname, { replace: true });
+          }
+        }
+      };
+
+      completeGoogleLogin();
+      return;
+    } else if (googleAuthStatus === "pending_verification") {
+      setIsForgotPassword(false);
+      setIsSuperAdminVerification(true);
+      setSuperAdminChallengeId(params.get("challengeId") || "");
+      setSuperAdminResendTimer(Number(params.get("retryAfterSeconds")) || 15);
+      setSuperAdminCode("");
+      setSuperAdminMessage(
+        nextMessage ||
+          "A 6-digit verification code was sent to your email. Enter it to finish signing in.",
+      );
+      setError("");
+    } else if (googleAuthStatus === "error") {
+      setIsForgotPassword(false);
+      setIsSuperAdminVerification(false);
+      setSuperAdminChallengeId("");
+      setSuperAdminCode("");
+      setSuperAdminMessage("");
+      setError(nextMessage || "Unable to continue with Google login.");
+    }
+
+    setIsStartingGoogleLogin(false);
+    setIsLoading(false);
+    navigate(location.pathname, { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -108,27 +235,7 @@ const Login = () => {
         return;
       }
 
-      const userRole = result?.user?.role;
-
-      localStorage.setItem("svms_user", JSON.stringify(result.user));
-
-      if (userRole === "admin") {
-        navigate("/admin");
-        return;
-      }
-
-      if (userRole === "super_admin") {
-        navigate("/super-admin");
-        return;
-      }
-
-      if (userRole === "student") {
-        navigate("/student/dashboard");
-        return;
-      }
-
-      setError("Account role is not recognized.");
-      setIsLoading(false);
+      handleAuthenticatedLoginSuccess(result.user);
     } catch (_error) {
       setError("Unable to connect to the login server.");
       setIsLoading(false);
@@ -163,6 +270,7 @@ const Login = () => {
     setShowSuperAdminSuccessModal(false);
     setTrustThisDevice(false);
     setIsFinalizingSuperAdminLogin(false);
+    setIsStartingGoogleLogin(false);
     setIsLoading(false);
   };
 
@@ -308,9 +416,8 @@ const Login = () => {
         localStorage.removeItem(SUPER_ADMIN_TRUSTED_DEVICE_KEY);
       }
 
-      localStorage.setItem("svms_user", JSON.stringify(verifiedSuperAdminUser));
+      handleAuthenticatedLoginSuccess(verifiedSuperAdminUser);
       setShowSuperAdminSuccessModal(false);
-      navigate("/super-admin");
     } catch (finalizeError) {
       setError(finalizeError.message || "Unable to complete login.");
       setShowSuperAdminSuccessModal(false);
@@ -464,6 +571,18 @@ const Login = () => {
     handleForgotPasswordReset();
   };
 
+  const handleGoogleLogin = () => {
+    setError("");
+    setSuperAdminMessage("");
+    setIsStartingGoogleLogin(true);
+    localStorage.removeItem("svms_user");
+
+    const returnTo = `${window.location.origin}/login`;
+    window.location.assign(
+      `/api/auth/google/start?returnTo=${encodeURIComponent(returnTo)}&roleHint=student`,
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#1a1a1a] flex items-center justify-center p-3 sm:p-4 lg:p-6 font-inter">
       <div className="w-full max-w-[1100px] bg-[#0d0d0d] rounded-[28px] lg:rounded-3xl overflow-hidden flex flex-col lg:min-h-[650px] lg:flex-row shadow-2xl border border-white/[0.30]">
@@ -557,7 +676,11 @@ const Login = () => {
                   delay={0.2}
                 >
                   <h2 className="text-white text-3xl sm:text-4xl font-bold">
-                    {isSuperAdminVerification ? "Verify Super Admin" : "Login"}
+                    {isSuperAdminVerification
+                      ? "Verify Super Admin"
+                      : isGoogleExchangeView
+                        ? "Signing In"
+                        : "Login"}
                   </h2>
                 </AnimatedContent>
               </div>
@@ -579,6 +702,14 @@ const Login = () => {
                 delay={0.3}
               >
                 {!isSuperAdminVerification ? (
+                  isGoogleExchangeView ? (
+                    <div className="space-y-6">
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-6 text-center text-gray-300">
+                        <div className="mx-auto mb-4 h-8 w-8 rounded-full border-2 border-white/60 border-t-transparent animate-spin" />
+                        <p className="text-sm">Completing your Google sign-in...</p>
+                      </div>
+                    </div>
+                  ) : (
                   <form onSubmit={handleLogin} className="space-y-6 sm:space-y-8">
                     <GlassInput
                       label="USERNAME OR EMAIL"
@@ -626,7 +757,55 @@ const Login = () => {
                       )}
                       {isLoading ? "LOGGING IN..." : "LOGIN"}
                     </button>
+                    <div className="flex items-center gap-3">
+                      <div className="h-px flex-1 bg-white/10" />
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-500">
+                        or
+                      </span>
+                      <div className="h-px flex-1 bg-white/10" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleGoogleLogin}
+                      disabled={isLoading || isStartingGoogleLogin}
+                      className="w-full rounded-lg border border-white/15 bg-white/[0.04] px-4 py-4 text-left text-sm sm:text-base font-semibold text-white transition-all duration-300 hover:border-white/30 hover:bg-white/[0.08] hover:shadow-lg hover:shadow-white/5 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <span className="flex items-center justify-center gap-3">
+                        {(isStartingGoogleLogin || isLoading) ? (
+                          <div className="w-5 h-5 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="h-5 w-5"
+                          >
+                            <path
+                              fill="#EA4335"
+                              d="M12 10.2v3.9h5.4c-.2 1.3-1.6 3.9-5.4 3.9-3.2 0-5.9-2.7-5.9-6s2.7-6 5.9-6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.7 3.5 14.6 2.7 12 2.7 6.9 2.7 2.8 6.8 2.8 12s4.1 9.3 9.2 9.3c5.3 0 8.9-3.7 8.9-8.9 0-.6-.1-1.1-.1-1.5H12Z"
+                            />
+                            <path
+                              fill="#34A853"
+                              d="M2.8 7.1 6 9.5c.9-1.8 2.7-3 5-3 1.9 0 3.1.8 3.8 1.5l2.6-2.5C16.7 3.5 14.6 2.7 12 2.7c-3.5 0-6.6 2-8.1 4.4Z"
+                            />
+                            <path
+                              fill="#FBBC05"
+                              d="M12 21.3c2.5 0 4.7-.8 6.3-2.3l-3-2.4c-.8.6-1.9 1.1-3.3 1.1-3.7 0-5.1-2.5-5.4-3.7L3.4 16c1.5 3 4.6 5.3 8.6 5.3Z"
+                            />
+                            <path
+                              fill="#4285F4"
+                              d="M20.9 12.4c0-.6-.1-1.1-.1-1.5H12v3.9h5.4c-.3 1.1-1.1 2.1-2.1 2.8l3 2.4c1.8-1.7 2.6-4.1 2.6-7.6Z"
+                            />
+                          </svg>
+                        )}
+                        <span>
+                          {isStartingGoogleLogin
+                            ? "Redirecting to Google..."
+                            : "Conitnue with Google (PLP Account)"}
+                        </span>
+                      </span>
+                    </button>
                   </form>
+                  )
                 ) : (
                   <div>
                     <p className="text-gray-400 text-sm mb-6">

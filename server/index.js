@@ -38,12 +38,15 @@ const port = Number(process.env.API_PORT || process.env.PORT || 3001);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const distPath = path.resolve(__dirname, "../dist");
+const distIndexPath = path.join(distPath, "index.html");
 const publicDir = path.resolve(__dirname, "../public");
 const EMAIL_LOGO_FILE_PATH = path.resolve(publicDir, "ccs_logo.png");
 const EMAIL_LOGO_PUBLIC_PATH = "/ccs_logo.png";
 const EMAIL_LOGO_DISPLAY_WIDTH = 72;
 const EMAIL_LOGO_DISPLAY_HEIGHT = 41;
 const STUDENT_NOTIFICATIONS_PATH = "/student/notifications";
+const GOOGLE_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const GOOGLE_OAUTH_SCOPE = "openid email profile";
 
 function getEmailLogoUrl() {
   const explicitLogoUrl = String(process.env.EMAIL_LOGO_URL || "").trim();
@@ -109,9 +112,505 @@ function getEmailAppBaseUrl() {
   return "";
 }
 
+function getLocalFrontendDevUrl() {
+  return String(
+    process.env.LOCAL_APP_URL ||
+      process.env.FRONTEND_URL ||
+      process.env.VITE_DEV_SERVER_URL ||
+      "http://localhost:5173",
+  )
+    .trim()
+    .replace(/\/+$/, "");
+}
+
 function getStudentNotificationsUrl() {
   const appBaseUrl = getEmailAppBaseUrl();
   return appBaseUrl ? `${appBaseUrl}${STUDENT_NOTIFICATIONS_PATH}` : "";
+}
+
+function getGoogleAllowedEmailDomain() {
+  return String(
+    process.env.GOOGLE_ALLOWED_EMAIL_DOMAIN ||
+      process.env.GOOGLE_WORKSPACE_DOMAIN ||
+      STUDENT_EMAIL_DOMAIN.replace(/^@/, "") ||
+      "plpasig.edu.ph",
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function getGoogleHostedDomain() {
+  return String(
+    process.env.GOOGLE_HOSTED_DOMAIN || getGoogleAllowedEmailDomain(),
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function getGoogleOAuthConfig() {
+  const clientId = String(process.env.GOOGLE_CLIENT_ID || "").trim();
+  const clientSecret = String(process.env.GOOGLE_CLIENT_SECRET || "").trim();
+  const explicitRedirectUri = String(process.env.GOOGLE_REDIRECT_URI || "").trim();
+  const appBaseUrl = getEmailAppBaseUrl();
+  const redirectUri =
+    explicitRedirectUri ||
+    (appBaseUrl ? `${appBaseUrl}/api/auth/google/callback` : "");
+
+  return {
+    clientId,
+    clientSecret,
+    redirectUri,
+    configured: Boolean(clientId && clientSecret && redirectUri),
+  };
+}
+
+function signGoogleOAuthState(payload) {
+  const payloadWithIssuedAt = {
+    ...payload,
+    issuedAt: Date.now(),
+  };
+  const payloadBase64 = Buffer.from(
+    JSON.stringify(payloadWithIssuedAt),
+    "utf8",
+  ).toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", getSessionTokenSecret())
+    .update(payloadBase64)
+    .digest("base64url");
+  return `${payloadBase64}.${signature}`;
+}
+
+function verifyGoogleOAuthState(token) {
+  const normalized = String(token || "").trim();
+  if (!normalized.includes(".")) {
+    return null;
+  }
+
+  const [payloadBase64, providedSignature] = normalized.split(".", 2);
+  if (!payloadBase64 || !providedSignature) {
+    return null;
+  }
+
+  const expectedSignature = crypto
+    .createHmac("sha256", getSessionTokenSecret())
+    .update(payloadBase64)
+    .digest("base64url");
+
+  const providedBuffer = Buffer.from(providedSignature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (
+    providedBuffer.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(providedBuffer, expectedBuffer)
+  ) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(payloadBase64, "base64url").toString("utf8"),
+    );
+    const issuedAt = Number(payload?.issuedAt);
+    if (!Number.isFinite(issuedAt)) {
+      return null;
+    }
+
+    if (Date.now() - issuedAt > GOOGLE_OAUTH_STATE_TTL_MS) {
+      return null;
+    }
+
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeGoogleReturnTo(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "/login";
+  }
+
+  if (normalized.startsWith("/")) {
+    return normalized;
+  }
+
+  try {
+    const candidate = new URL(normalized);
+    if (!["http:", "https:"].includes(candidate.protocol)) {
+      return "/login";
+    }
+
+    const allowedHosts = new Set(["localhost", "127.0.0.1"]);
+    const appBaseUrl = getEmailAppBaseUrl();
+    if (appBaseUrl) {
+      allowedHosts.add(new URL(appBaseUrl).hostname);
+    }
+
+    const vercelUrl = String(process.env.VERCEL_URL || "")
+      .trim()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/+$/, "");
+    if (vercelUrl) {
+      allowedHosts.add(vercelUrl);
+    }
+
+    return allowedHosts.has(candidate.hostname) ? candidate.toString() : "/login";
+  } catch {
+    return "/login";
+  }
+}
+
+function appendParamsToRedirectUrl(target, params) {
+  const normalizedTarget = String(target || "").trim() || "/login";
+  const isAbsolute = /^https?:\/\//i.test(normalizedTarget);
+  const base = isAbsolute
+    ? normalizedTarget
+    : new URL(
+        normalizedTarget,
+        getEmailAppBaseUrl() || `http://localhost:${port}`,
+      ).toString();
+  const redirectUrl = new URL(base);
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") {
+      return;
+    }
+    redirectUrl.searchParams.set(key, String(value));
+  });
+
+  return isAbsolute
+    ? redirectUrl.toString()
+    : `${redirectUrl.pathname}${redirectUrl.search}${redirectUrl.hash}`;
+}
+
+function buildAppRedirectTarget(returnTo, nextPath) {
+  const normalizedPath = String(nextPath || "/login").trim() || "/login";
+  const safePath = normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`;
+
+  try {
+    const baseUrl = new URL(String(returnTo || "").trim());
+    return new URL(safePath, `${baseUrl.protocol}//${baseUrl.host}`).toString();
+  } catch {
+    const appBaseUrl = getEmailAppBaseUrl();
+    return appBaseUrl ? new URL(safePath, appBaseUrl).toString() : safePath;
+  }
+}
+
+function parseJwtPayload(token) {
+  const normalized = String(token || "").trim();
+  const segments = normalized.split(".");
+  if (segments.length < 2) {
+    throw new Error("Invalid token payload.");
+  }
+
+  return JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8"));
+}
+
+function buildAuthenticatedUser(user) {
+  const sessionToken = signSessionToken(user);
+
+  return {
+    id: user.id,
+    email: user.email,
+    username: user.username,
+    role: user.role,
+    firstName: user.first_name || "",
+    middleInitial: user.middle_initial || "",
+    lastName: user.last_name || "",
+    fullName: [
+      user.first_name,
+      user.middle_initial ? `${user.middle_initial}.` : "",
+      user.last_name,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    schoolId: user.school_id || "",
+    program: user.program || "",
+    yearSection: user.year_section || "",
+    sessionToken,
+  };
+}
+
+function sendGoogleAuthSuccessHtml(res, { user, redirectTo, trustedDeviceToken = "" }) {
+  const htmlPayload = JSON.stringify({
+    user,
+    redirectTo,
+    trustedDeviceToken,
+    trustedDeviceStorageKey: "svms_super_admin_trusted_device",
+  }).replace(/</g, "\\u003c");
+
+  return res
+    .status(200)
+    .type("html")
+    .send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Signing you in...</title>
+  </head>
+  <body style="background:#0d0d0d;color:#e5e7eb;font-family:Inter,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;">
+    <p style="font-size:14px;letter-spacing:0.04em;">Signing you in with Google...</p>
+    <script>
+      const payload = ${htmlPayload};
+      try {
+        localStorage.setItem("svms_user", JSON.stringify(payload.user));
+        if (payload.trustedDeviceToken) {
+          localStorage.setItem(
+            payload.trustedDeviceStorageKey,
+            payload.trustedDeviceToken,
+          );
+        }
+      } catch {}
+      window.location.replace(payload.redirectTo);
+    </script>
+  </body>
+</html>`);
+}
+
+function sendGoogleAuthExchangeHtml(res, { code, state, loginUrl }) {
+  const htmlPayload = JSON.stringify({
+    code: String(code || ""),
+    state: String(state || ""),
+    loginUrl: String(loginUrl || "/login"),
+    trustedDeviceStorageKey: "svms_super_admin_trusted_device",
+  }).replace(/</g, "\\u003c");
+
+  return res
+    .status(200)
+    .type("html")
+    .send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Signing you in...</title>
+  </head>
+  <body style="background:#0d0d0d;color:#e5e7eb;font-family:Inter,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;">
+    <p style="font-size:14px;letter-spacing:0.04em;">Completing your Google sign-in...</p>
+    <script>
+      const payload = ${htmlPayload};
+
+      const nextUrl = new URL(payload.loginUrl, window.location.origin);
+      nextUrl.searchParams.set("googleAuth", "exchange");
+      nextUrl.searchParams.set("code", payload.code);
+      nextUrl.searchParams.set("state", payload.state);
+      window.location.replace(nextUrl.toString());
+    </script>
+  </body>
+</html>`);
+}
+
+async function exchangeGoogleAuthCode({ code, state }) {
+  const callbackState = verifyGoogleOAuthState(state);
+  if (!callbackState) {
+    return {
+      statusCode: 400,
+      body: {
+        status: "error",
+        message: "Your Google sign-in session expired. Please try again.",
+      },
+    };
+  }
+
+  const authCode = String(code || "").trim();
+  if (!authCode) {
+    return {
+      statusCode: 400,
+      body: {
+        status: "error",
+        message: "Google did not return an authorization code.",
+      },
+    };
+  }
+
+  const googleConfig = getGoogleOAuthConfig();
+  if (!googleConfig.configured) {
+    return {
+      statusCode: 500,
+      body: {
+        status: "error",
+        message: "Google sign-in is not configured.",
+      },
+    };
+  }
+
+  if (!hasDbConfig()) {
+    return {
+      statusCode: 500,
+      body: {
+        status: "error",
+        message: "Database environment variables are missing.",
+        missing: getMissingDbVars(),
+      },
+    };
+  }
+
+  try {
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        client_id: googleConfig.clientId,
+        client_secret: googleConfig.clientSecret,
+        code: authCode,
+        grant_type: "authorization_code",
+        redirect_uri: googleConfig.redirectUri,
+      }),
+    });
+
+    const tokenPayload = await tokenResponse.json().catch(() => ({}));
+    if (!tokenResponse.ok || !tokenPayload?.id_token) {
+      return {
+        statusCode: 401,
+        body: {
+          status: "error",
+          message: "Unable to verify your Google account.",
+        },
+      };
+    }
+
+    const idTokenClaims = parseJwtPayload(tokenPayload.id_token);
+    const email = String(idTokenClaims?.email || "").trim().toLowerCase();
+    const tokenAudience = String(idTokenClaims?.aud || "").trim();
+    const emailVerified =
+      idTokenClaims?.email_verified === true ||
+      idTokenClaims?.email_verified === "true";
+    const allowedEmailDomain = getGoogleAllowedEmailDomain();
+    const hostedDomain = getGoogleHostedDomain();
+    const emailDomain = email.includes("@") ? email.split("@").pop() : "";
+    const claimHostedDomain = String(idTokenClaims?.hd || "").trim().toLowerCase();
+
+    if (tokenAudience !== googleConfig.clientId) {
+      return {
+        statusCode: 401,
+        body: {
+          status: "error",
+          message: "Google returned an invalid client audience.",
+        },
+      };
+    }
+
+    if (!emailVerified || !email || emailDomain !== allowedEmailDomain) {
+      return {
+        statusCode: 403,
+        body: {
+          status: "error",
+          message: `Use your ${allowedEmailDomain} Google account to continue.`,
+        },
+      };
+    }
+
+    if (hostedDomain && claimHostedDomain !== hostedDomain) {
+      return {
+        statusCode: 403,
+        body: {
+          status: "error",
+          message: `Only ${hostedDomain} Google Workspace accounts are allowed.`,
+        },
+      };
+    }
+
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const user = await findAuthUserByEmailWithPreference(
+      pool,
+      email,
+      callbackState?.roleHint || "",
+    );
+
+    if (!user || !user.is_active) {
+      const adminMatch = await findAuthUserByEmailWithPreference(pool, email, "admin");
+      if (callbackState?.roleHint === "student" && adminMatch) {
+        return {
+          statusCode: 403,
+          body: {
+            status: "error",
+            message:
+              "Google sign-in found an admin account with this email, but no matching student account was found. Use a student email that already exists in the Students database.",
+          },
+        };
+      }
+
+      return {
+        statusCode: 404,
+        body: {
+          status: "error",
+          message: "This Google account is not registered in the SVMS database.",
+        },
+      };
+    }
+
+    if (user.role === "super_admin") {
+      const existingChallenge = await getSuperAdminLoginChallengeByUserId(
+        pool,
+        user.id,
+      );
+      const now = Date.now();
+      const existingResendAt = existingChallenge?.resend_available_at
+        ? new Date(existingChallenge.resend_available_at).getTime()
+        : 0;
+
+      if (
+        existingChallenge &&
+        Number.isFinite(existingResendAt) &&
+        existingResendAt > now
+      ) {
+        return {
+          statusCode: 202,
+          body: {
+            status: "pending_verification",
+            requiresVerification: true,
+            challengeId: existingChallenge.challenge_id,
+            retryAfterSeconds: Math.ceil((existingResendAt - now) / 1000),
+            message:
+              "A verification code was already sent to your email. Please enter it to continue.",
+          },
+        };
+      }
+
+      const challenge = await issueSuperAdminLoginChallenge(pool, user);
+      if (!challenge.sent) {
+        return {
+          statusCode: 503,
+          body: {
+            status: "error",
+            message: `Unable to send super admin verification code (${challenge.reason || "unknown reason"}).`,
+          },
+        };
+      }
+
+      return {
+        statusCode: 202,
+        body: {
+          status: "pending_verification",
+          requiresVerification: true,
+          challengeId: challenge.challengeId,
+          retryAfterSeconds: challenge.retryAfterSeconds,
+          message:
+            "A 6-digit verification code was sent to your email. Enter it to finish signing in.",
+        },
+      };
+    }
+
+    return {
+      statusCode: 200,
+      body: {
+        status: "ok",
+        user: buildAuthenticatedUser(user),
+      },
+    };
+  } catch (error) {
+    return {
+      statusCode: 503,
+      body: {
+        status: "error",
+        message: error?.message || "Unable to complete Google sign-in.",
+      },
+    };
+  }
 }
 
 app.get("/api/email-logo", (req, res) => {
@@ -3468,21 +3967,6 @@ function buildAdminAlertEmailTemplate({
   const safeViolationCount = Number.isFinite(Number(activeViolationCount))
     ? Number(activeViolationCount)
     : 0;
-  const studentNotificationsUrl = getStudentNotificationsUrl();
-  const actionButtonHtml = studentNotificationsUrl
-    ? `
-      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-top:28px;border-collapse:collapse;">
-        <tr>
-          <td>
-            <a href="${escapeHtml(studentNotificationsUrl)}" style="display:block;background:#d9d9d9;color:#08090b;text-align:center;text-decoration:none;padding:15px 20px;border-radius:11px;font-size:13px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;">
-              Open Notification Panel
-            </a>
-          </td>
-        </tr>
-      </table>
-    `
-    : "";
-
   return buildSystemEmailShell({
     eyebrow: "Student Violation Notification",
     heading: "Administrative Alert",
@@ -3527,7 +4011,6 @@ function buildAdminAlertEmailTemplate({
           <td style="padding:12px 14px;color:#f8fafc;font-size:13px;">${safeViolationCount}</td>
         </tr>
       </table>
-      ${actionButtonHtml}
     `,
     footerNote:
       "You can also view this alert in your SVMS student notifications panel.",
@@ -3833,6 +4316,179 @@ async function findUserByEmail(pool, email) {
   );
 
   return studentLookup.rows?.[0] || null;
+}
+
+async function findAuthUserByEmail(pool, email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const [adminResult, studentResult] = await Promise.all([
+    pool.query(
+      `
+      SELECT
+        u.id,
+        a.email,
+        u.username,
+        u.password_hash,
+        u.role,
+        a.first_name,
+        a.middle_initial,
+        a.last_name,
+        u.is_active
+      FROM users u
+      INNER JOIN "Admins" a ON a.user_id = u.id
+      WHERE LOWER(a.email) = $1
+        AND u.role IN ('admin', 'super_admin')
+      LIMIT 1
+      `,
+      [normalizedEmail],
+    ),
+    pool.query(
+      `
+      SELECT
+        u.id,
+        s.email,
+        u.username,
+        u.password_hash,
+        u.role,
+        s.first_name,
+        s.middle_initial,
+        s.last_name,
+        s.school_id,
+        s.program,
+        s.year_section,
+        u.is_active
+      FROM users u
+      INNER JOIN "Students" s ON s.user_id = u.id
+      WHERE LOWER(s.email) = $1
+      LIMIT 1
+      `,
+      [normalizedEmail],
+    ),
+  ]);
+
+  return adminResult.rows?.[0] || studentResult.rows?.[0] || null;
+}
+
+async function findAuthUserByEmailWithPreference(
+  pool,
+  email,
+  preferredRole = "",
+) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const normalizedPreferredRole = String(preferredRole || "").trim().toLowerCase();
+
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const [adminUser, studentUser] = await Promise.all([
+    pool.query(
+      `
+      SELECT
+        u.id,
+        a.email,
+        u.username,
+        u.password_hash,
+        u.role,
+        a.first_name,
+        a.middle_initial,
+        a.last_name,
+        u.is_active
+      FROM users u
+      INNER JOIN "Admins" a ON a.user_id = u.id
+      WHERE LOWER(a.email) = $1
+        AND u.role IN ('admin', 'super_admin')
+      LIMIT 1
+      `,
+      [normalizedEmail],
+    ),
+    pool.query(
+      `
+      SELECT
+        u.id,
+        s.email,
+        u.username,
+        u.password_hash,
+        u.role,
+        s.first_name,
+        s.middle_initial,
+        s.last_name,
+        s.school_id,
+        s.program,
+        s.year_section,
+        u.is_active
+      FROM users u
+      INNER JOIN "Students" s ON s.user_id = u.id
+      WHERE LOWER(s.email) = $1
+      LIMIT 1
+      `,
+      [normalizedEmail],
+    ),
+  ]);
+
+  const adminMatch = adminUser.rows?.[0] || null;
+  const studentMatch = studentUser.rows?.[0] || null;
+
+  if (normalizedPreferredRole === "student" && studentMatch) {
+    return studentMatch;
+  }
+
+  if (normalizedPreferredRole === "student") {
+    return null;
+  }
+
+  if (
+    (normalizedPreferredRole === "admin" ||
+      normalizedPreferredRole === "super_admin") &&
+    adminMatch
+  ) {
+    return adminMatch;
+  }
+
+  if (
+    normalizedPreferredRole === "admin" ||
+    normalizedPreferredRole === "super_admin"
+  ) {
+    return null;
+  }
+
+  return adminMatch || studentMatch || null;
+}
+
+async function findAuthUserByUsername(pool, username) {
+  const normalizedUsername = String(username || "").trim();
+  if (!normalizedUsername) {
+    return null;
+  }
+
+  const userResult = await pool.query(
+    `
+    SELECT
+      u.id,
+      u.username,
+      u.password_hash,
+      u.role,
+      u.is_active,
+      COALESCE(a.email, s.email) as email,
+      COALESCE(a.first_name, s.first_name, u.first_name) as first_name,
+      COALESCE(a.middle_initial, s.middle_initial) as middle_initial,
+      COALESCE(a.last_name, s.last_name, u.last_name) as last_name,
+      s.school_id,
+      s.program,
+      s.year_section
+    FROM users u
+    LEFT JOIN "Admins" a ON a.user_id = u.id AND u.role IN ('admin', 'super_admin')
+    LEFT JOIN "Students" s ON s.user_id = u.id AND u.role = 'student'
+    WHERE u.username = $1
+    LIMIT 1
+    `,
+    [normalizedUsername],
+  );
+
+  return userResult.rows?.[0] || null;
 }
 
 function normalizeNamePart(value) {
@@ -4376,6 +5032,62 @@ app.get("/api/app-state/snapshot", async (req, res) => {
   }
 });
 
+app.get("/api/auth/google/start", async (req, res) => {
+  const { configured, clientId, redirectUri } = getGoogleOAuthConfig();
+  if (!configured) {
+    return res.status(500).send("Google sign-in is not configured.");
+  }
+
+  const returnTo = sanitizeGoogleReturnTo(req.query?.returnTo);
+  const roleHint = String(req.query?.roleHint || "").trim().toLowerCase();
+  const state = signGoogleOAuthState({ returnTo, roleHint });
+  const googleAuthUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  googleAuthUrl.searchParams.set("client_id", clientId);
+  googleAuthUrl.searchParams.set("redirect_uri", redirectUri);
+  googleAuthUrl.searchParams.set("response_type", "code");
+  googleAuthUrl.searchParams.set("scope", GOOGLE_OAUTH_SCOPE);
+  googleAuthUrl.searchParams.set("state", state);
+  googleAuthUrl.searchParams.set("prompt", "select_account");
+  googleAuthUrl.searchParams.set("include_granted_scopes", "true");
+
+  const hostedDomain = getGoogleHostedDomain();
+  if (hostedDomain) {
+    googleAuthUrl.searchParams.set("hd", hostedDomain);
+  }
+
+  return res.redirect(googleAuthUrl.toString());
+});
+
+app.get("/api/auth/google/callback", async (req, res) => {
+  const callbackState = verifyGoogleOAuthState(req.query?.state);
+  const returnTo = sanitizeGoogleReturnTo(callbackState?.returnTo);
+  const authError = String(req.query?.error || "").trim();
+  const authCode = String(req.query?.code || "").trim();
+  const state = String(req.query?.state || "").trim();
+  const loginUrl = buildAppRedirectTarget(returnTo, "/login");
+
+  if (authError) {
+    return res.redirect(
+      appendParamsToRedirectUrl(loginUrl, {
+        googleAuth: "error",
+        message: "Google sign-in was cancelled.",
+      }),
+    );
+  }
+
+  return sendGoogleAuthExchangeHtml(res, {
+    code: authCode,
+    state,
+    loginUrl,
+  });
+});
+
+app.post("/api/auth/google/exchange", async (req, res) => {
+  const { code, state } = req.body ?? {};
+  const result = await exchangeGoogleAuthCode({ code, state });
+  return res.status(result.statusCode).json(result.body);
+});
+
 app.post("/api/auth/login", async (req, res) => {
   const { username, password, trustedDeviceToken } = req.body ?? {};
 
@@ -4397,83 +5109,9 @@ app.post("/api/auth/login", async (req, res) => {
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
-    let user = null;
-
-    if (String(username).includes("@")) {
-      // Parallelize admin and student email lookups instead of sequential
-      const [adminResult, studentResult] = await Promise.all([
-        pool.query(
-          `
-          SELECT
-            u.id,
-            a.email,
-            u.username,
-            u.password_hash,
-            u.role,
-            a.first_name,
-            a.middle_initial,
-            a.last_name,
-            u.is_active
-          FROM users u
-          INNER JOIN "Admins" a ON a.user_id = u.id
-          WHERE LOWER(a.email) = LOWER($1)
-            AND u.role IN ('admin', 'super_admin')
-          LIMIT 1
-          `,
-          [username],
-        ),
-        pool.query(
-          `
-          SELECT
-            u.id,
-            s.email,
-            u.username,
-            u.password_hash,
-            u.role,
-            s.first_name,
-            s.last_name,
-            s.school_id,
-            s.program,
-            s.year_section,
-            u.is_active
-          FROM users u
-          INNER JOIN "Students" s ON s.user_id = u.id
-          WHERE s.email = $1
-          LIMIT 1
-          `,
-          [username],
-        ),
-      ]);
-
-      user = adminResult.rows?.[0] || studentResult.rows?.[0] || null;
-    } else {
-      // Single query to find user and their role-specific data in parallel
-      const userResult = await pool.query(
-        `
-        SELECT
-          u.id,
-          u.username,
-          u.password_hash,
-          u.role,
-          u.is_active,
-          COALESCE(a.email, s.email) as email,
-          COALESCE(a.first_name, s.first_name, u.first_name) as first_name,
-          COALESCE(a.middle_initial, s.middle_initial) as middle_initial,
-          COALESCE(a.last_name, s.last_name, u.last_name) as last_name,
-          s.school_id,
-          s.program,
-          s.year_section
-        FROM users u
-        LEFT JOIN "Admins" a ON a.user_id = u.id AND u.role IN ('admin', 'super_admin')
-        LEFT JOIN "Students" s ON s.user_id = u.id AND u.role = 'student'
-        WHERE u.username = $1
-        LIMIT 1
-        `,
-        [username],
-      );
-
-      user = userResult.rows?.[0] || null;
-    }
+    const user = String(username).includes("@")
+      ? await findAuthUserByEmail(pool, username)
+      : await findAuthUserByUsername(pool, username);
 
     if (!user || !user.is_active) {
       return res.status(401).json({
@@ -4544,28 +5182,11 @@ app.post("/api/auth/login", async (req, res) => {
       }
     }
 
-    const sessionToken = signSessionToken(user);
+    const authenticatedUser = buildAuthenticatedUser(user);
 
     return res.status(200).json({
       status: "ok",
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        role: user.role,
-        firstName: user.first_name || "",
-        middleInitial: user.middle_initial || "",
-        lastName: user.last_name || "",
-        fullName: [
-          user.first_name,
-          user.middle_initial ? `${user.middle_initial}.` : "",
-          user.last_name,
-        ].filter(Boolean).join(" "),
-        schoolId: user.school_id || "",
-        program: user.program || "",
-        yearSection: user.year_section || "",
-        sessionToken,
-      },
+      user: authenticatedUser,
     });
   } catch (error) {
     return res.status(503).json({
@@ -4671,26 +5292,12 @@ app.post("/api/auth/super-admin/verify", async (req, res) => {
     }
 
     await removeSuperAdminLoginChallenge(pool, normalizedChallengeId);
-    const sessionToken = signSessionToken(user);
+    const authenticatedUser = buildAuthenticatedUser(user);
 
     return res.status(200).json({
       status: "ok",
       trustedDeviceToken: nextTrustedDeviceToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        role: user.role,
-        firstName: user.first_name || "",
-        middleInitial: user.middle_initial || "",
-        lastName: user.last_name || "",
-        fullName: [
-          user.first_name,
-          user.middle_initial ? `${user.middle_initial}.` : "",
-          user.last_name,
-        ].filter(Boolean).join(" "),
-        sessionToken,
-      },
+      user: authenticatedUser,
     });
   } catch (error) {
     return res.status(503).json({
@@ -12599,12 +13206,26 @@ if (!isServerlessRuntime) {
   app.use(express.static(publicDir));
   app.use(express.static(distPath));
 
-  app.get("/{*path}", (req, res, next) => {
+  app.get("/.well-known/appspecific/com.chrome.devtools.json", (_req, res) => {
+    return res.status(204).end();
+  });
+
+  app.get("/{*path}", async (req, res, next) => {
     if (req.path.startsWith("/api/")) {
       return next();
     }
 
-    return res.sendFile(path.join(distPath, "index.html"));
+    try {
+      await access(distIndexPath);
+      return res.sendFile(distIndexPath);
+    } catch {
+      const devAppUrl = getLocalFrontendDevUrl();
+      if (devAppUrl) {
+        return res.redirect(`${devAppUrl}${req.originalUrl}`);
+      }
+
+      return res.status(503).send("Frontend app is not available.");
+    }
   });
 }
 
