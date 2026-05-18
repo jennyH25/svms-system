@@ -117,7 +117,7 @@ const VerificationCodeInput = ({
       <label className="mb-3 block text-sm font-medium text-gray-300">
         {label}
       </label>
-      <div className="flex items-center justify-between w-full max-w-[500px]">
+      <div className="flex w-full max-w-[500px] items-center gap-2 sm:gap-3">
         {digits.map((digit, index) => (
           <input
             key={`${label}-${index}`}
@@ -134,7 +134,7 @@ const VerificationCodeInput = ({
             onKeyDown={(event) => handleKeyDown(event, index)}
             onPaste={handlePaste}
             onFocus={(event) => event.target.select()}
-            className="verification-code-slot h-16 w-[52px] rounded-xl border border-white/12 bg-white/[0.04] text-center text-xl font-bold tracking-[0.22em] text-white outline-none transition-all focus:border-cyan-300/70 focus:bg-white/[0.08] focus:shadow-[0_0_0_3px_rgba(103,232,249,0.12)] disabled:cursor-not-allowed disabled:opacity-60 sm:h-[68px] sm:w-[58px]"
+            className="verification-code-slot h-14 min-w-0 flex-1 rounded-xl border border-white/12 bg-white/[0.04] px-0 text-center text-lg font-bold tracking-[0.12em] text-white outline-none transition-all focus:border-cyan-300/70 focus:bg-white/[0.08] focus:shadow-[0_0_0_3px_rgba(103,232,249,0.12)] disabled:cursor-not-allowed disabled:opacity-60 sm:h-[68px] sm:max-w-[58px] sm:text-xl sm:tracking-[0.22em]"
             aria-label={`${label} digit ${index + 1}`}
           />
         ))}
@@ -422,10 +422,10 @@ const Login = () => {
 
           if (!response.ok) {
             if (response.status === 404) {
-              throw new Error(
-                result?.message ||
-                  "No SVMS account was found for this PLP Google account. Ask an administrator to add or import your account first.",
-              );
+                throw new Error(
+                  result?.message ||
+                  "No SVMS account is linked to this PLP Google account. Please contact an administrator for assistance.",
+                );
             }
             throw new Error(result?.message || "Unable to continue with Google login.");
           }
@@ -957,7 +957,7 @@ const Login = () => {
     <div className="min-h-screen bg-[#1a1a1a] flex items-center justify-center p-3 sm:p-4 lg:p-6 font-inter">
       <div className="w-full max-w-[1100px] bg-[#0d0d0d] rounded-[28px] lg:rounded-3xl overflow-hidden flex flex-col lg:min-h-[650px] lg:flex-row shadow-2xl border border-white/[0.30]">
         {/* Left Panel */}
-        <div className="w-full lg:w-[45%] bg-gradient-to-b from-[#1a1a1a] to-[#0d0d0d] px-6 py-8 sm:px-8 sm:py-10 lg:p-12 flex flex-col justify-start lg:justify-between relative gap-6 sm:gap-7 lg:gap-0">
+        <div className="w-full lg:w-[45%] bg-gradient-to-b from-[#1a1a1a] to-[#0d0d0d] px-6 py-6 sm:px-8 sm:py-8 lg:p-12 flex flex-col justify-start lg:justify-between relative gap-4 sm:gap-6 lg:gap-0">
           {/* Logo */}
           <AnimatedContent
             distance={30}
@@ -970,7 +970,7 @@ const Login = () => {
             </div>
           </AnimatedContent>
           {/* Welcome Text */}
-          <div className="flex flex-col lg:flex-1 lg:justify-center lg:-mt-16">
+          <div className="flex flex-col lg:flex-1 lg:justify-center lg:-mt-12">
             <AnimatedContent
               distance={30}
               direction="vertical"
@@ -1019,10 +1019,10 @@ const Login = () => {
         </div>
 
         {/* Right Panel */}
-        <div className="w-full lg:w-[55%] bg-[#0F1113]/30 px-6 pt-4 pb-8 sm:px-8 sm:py-10 lg:p-12 relative overflow-y-auto">
+        <div className="w-full lg:w-[55%] bg-[#0F1113]/30 px-6 pt-2 pb-8 sm:px-8 sm:pt-6 sm:pb-10 lg:p-12 relative overflow-y-auto">
           {!isForgotPassword ? (
-            <div className="sm:mt-2 lg:mt-10">
-              <div className="mb-8 sm:mb-10 lg:mb-12 flex items-center gap-3">
+            <div className="lg:mt-6">
+              <div className="mb-6 sm:mb-8 lg:mb-10 flex items-center gap-3">
                 {isSuperAdminVerification && (
                   <button
                     type="button"
@@ -1229,8 +1229,8 @@ const Login = () => {
             </div>
           ) : (
             // Forgot Password Flow
-            <div className="sm:mt-2 lg:mt-10">
-              <div className="flex items-center gap-3 mb-8 sm:mb-10 lg:mb-12">
+            <div className="lg:mt-6">
+              <div className="flex items-center gap-3 mb-6 sm:mb-8 lg:mb-10">
                 <button
                   onClick={handleBackToLogin}
                   className="text-gray-400 hover:text-white transition-colors"

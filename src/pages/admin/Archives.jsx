@@ -449,6 +449,7 @@ const Archives = () => {
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
   const [userToRestore, setUserToRestore] = useState(null);
   const [isRestoreLoading, setIsRestoreLoading] = useState(false);
+  const [isDeletingArchivedViolation, setIsDeletingArchivedViolation] = useState(false);
   const [archiveSuccessMessage, setArchiveSuccessMessage] = useState("");
   const [successModal, setSuccessModal] = useState({
     isOpen: false,
@@ -639,10 +640,11 @@ const Archives = () => {
   useEffect(() => {
     const handleArchiveEvent = (event) => {
       console.log("Archive event received, refreshing school years and violations...", event.detail);
+      const eventSource = String(event?.detail?.source || "").trim();
 
       // For resolved archive actions from general archive button, navigate to that archive year/semester.
       // If the source is unresolved, keep the current unresolved view on screen.
-      if (event?.detail?.source !== "unresolved" && event?.detail?.schoolYear && event?.detail?.semester) {
+      if (eventSource !== "unresolved" && event?.detail?.schoolYear && event?.detail?.semester) {
         setActiveFolder(event.detail.schoolYear);
         setActiveSemester(event.detail.semester);
         setSelectedUnresolvedYear("");
@@ -662,7 +664,8 @@ const Archives = () => {
           data?.status === "ok" &&
           Array.isArray(data.schoolYears) &&
           data.schoolYears.length > 0 &&
-          activeFolder === "users"
+          activeFolder === "users" &&
+          eventSource === "archive"
         ) {
           console.log("Auto-selecting first folder:", data.schoolYears[0]);
           setActiveFolder(data.schoolYears[0]);
@@ -1044,11 +1047,19 @@ const Archives = () => {
 
       const data = await response.json();
       if (response.ok && data.status === "ok") {
+        const restoredUserName = userToRestore.full_name || userToRestore.name || "The user";
         setArchivedUsers((prev) => prev.filter((u) => u.id !== userToRestore.id));
         setIsRestoreModalOpen(false);
         setUserToRestore(null);
         setError("");
-        window.dispatchEvent(new CustomEvent("archiveCompleted"));
+        openSuccessModal(`${restoredUserName} was restored successfully.`, "User Restored");
+        window.dispatchEvent(
+          new CustomEvent("archiveCompleted", {
+            detail: {
+              source: "restore-user",
+            },
+          }),
+        );
       } else {
         setError(data.message || "Failed to restore user");
       }
@@ -2523,7 +2534,7 @@ const Archives = () => {
     if (!archivedViolationToDelete?.id) return;
 
     try {
-      setIsLoading(true);
+      setIsDeletingArchivedViolation(true);
       const response = await fetch(`/api/archive/violations/${archivedViolationToDelete.id}`, {
         method: "DELETE",
         headers: {
@@ -2552,7 +2563,7 @@ const Archives = () => {
       }
       setError(err.message || "Unable to delete record.");
     } finally {
-      setIsLoading(false);
+      setIsDeletingArchivedViolation(false);
     }
   };
 
@@ -3969,7 +3980,12 @@ const Archives = () => {
                 disabled={isImporting}
                 className="bg-blue-600 hover:bg-blue-700 border-0 text-white"
               >
-                {isImporting ? "Importing..." : "Import Record"}
+                {isImporting ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Importing</span>
+                  </span>
+                ) : "Import Record"}
               </Button>
             </ModalFooter>
           </div>
@@ -4027,7 +4043,12 @@ const Archives = () => {
                 disabled={isCleanupReimporting || cleanupSecretKey.trim() !== "2026"}
                 className="bg-blue-600 hover:bg-blue-700 border-0 text-white"
               >
-                {isCleanupReimporting ? "Processing..." : "Cleanup & Re-Import"}
+                {isCleanupReimporting ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Processing</span>
+                  </span>
+                ) : "Cleanup & Re-Import"}
               </Button>
             </ModalFooter>
           </div>
@@ -4065,7 +4086,12 @@ const Archives = () => {
                 disabled={isRestoreLoading}
                 className="bg-green-700 hover:bg-green-800 border-0 text-white"
               >
-                {isRestoreLoading ? "Restoring..." : "Restore User"}
+                {isRestoreLoading ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Restoring</span>
+                  </span>
+                ) : "Restore User"}
               </Button>
             </ModalFooter>
           </div>
@@ -4111,7 +4137,12 @@ const Archives = () => {
                 disabled={isSchoolYearActionLoading}
                 className="bg-red-700 hover:bg-red-800 border-0 text-white"
               >
-                {isSchoolYearActionLoading ? "Deleting..." : "Delete School Year"}
+                {isSchoolYearActionLoading ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Deleting</span>
+                  </span>
+                ) : "Delete School Year"}
               </Button>
             </ModalFooter>
           </div>
@@ -4161,7 +4192,12 @@ const Archives = () => {
                 disabled={isSemesterActionLoading}
                 className="bg-red-700 hover:bg-red-800 border-0 text-white"
               >
-                {isSemesterActionLoading ? "Deleting..." : "Delete Semester"}
+                {isSemesterActionLoading ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Deleting</span>
+                  </span>
+                ) : "Delete Semester"}
               </Button>
             </ModalFooter>
           </div>
@@ -4194,16 +4230,21 @@ const Archives = () => {
                   setArchivedViolationToDelete(null);
                 }}
                 className="bg-[#3D4654] hover:bg-[#4d5664] border-0"
-                disabled={isLoading}
+                disabled={isDeletingArchivedViolation}
               >
                 Cancel
               </Button>
               <Button
                 onClick={handleConfirmDeleteArchivedViolation}
-                disabled={isLoading}
+                disabled={isDeletingArchivedViolation}
                 className="bg-red-700 hover:bg-red-800 border-0 text-white"
               >
-                {isLoading ? "Deleting..." : "Delete"}
+                {isDeletingArchivedViolation ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Deleting</span>
+                  </span>
+                ) : "Delete"}
               </Button>
             </ModalFooter>
           </div>
@@ -4261,7 +4302,12 @@ const Archives = () => {
                 disabled={isSchoolYearActionLoading || !newSchoolYearName.trim() || newSchoolYearName.trim() === schoolYearToRename}
                 className="bg-blue-700 hover:bg-blue-800 border-0 text-white"
               >
-                {isSchoolYearActionLoading ? "Renaming..." : "Rename School Year"}
+                {isSchoolYearActionLoading ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Renaming</span>
+                  </span>
+                ) : "Rename School Year"}
               </Button>
             </ModalFooter>
           </div>

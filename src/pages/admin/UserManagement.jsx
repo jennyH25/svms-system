@@ -1858,8 +1858,17 @@ const UserManagement = () => {
               disabled={isImportingUsers}
               className="gap-2 bg-[#4A5568] hover:bg-[#3d4654] border-0"
             >
-              <Upload className="w-4 h-4" />
-              {isImportingUsers ? "Importing..." : "Import"}
+              {isImportingUsers ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Importing
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4" />
+                  Import
+                </>
+              )}
             </Button>
             <Button
               variant="secondary"
@@ -2259,7 +2268,12 @@ const UserManagement = () => {
             disabled={isDeleting}
             className="px-6 py-2.5"
           >
-            {isDeleting ? "Deleting..." : "Delete"}
+            {isDeleting ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Deleting</span>
+              </span>
+            ) : "Delete"}
           </Button>
         </ModalFooter>
       </Modal>
@@ -2305,7 +2319,12 @@ const UserManagement = () => {
             disabled={isDeletingSelected}
             className="px-6 py-2.5"
           >
-            {isDeletingSelected ? "Deleting..." : "Delete Selected"}
+            {isDeletingSelected ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Deleting</span>
+              </span>
+            ) : "Delete Selected"}
           </Button>
         </ModalFooter>
       </Modal>
@@ -2387,7 +2406,7 @@ const UserManagement = () => {
             {isImportingUsers ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Importing...
+                Importing
               </>
             ) : (
               "Import Users"
@@ -2476,7 +2495,7 @@ const UserManagement = () => {
               className="w-full sm:ml-auto sm:w-auto min-w-[170px] py-2.5"
             >
               <Loader2 className="w-4 h-4 animate-spin" />
-              Importing...
+              Importing
             </Button>
           )}
         </ModalFooter>
@@ -2713,7 +2732,12 @@ const UserManagement = () => {
             disabled={isExporting}
             className="px-6 py-2.5"
           >
-            {isExporting ? "Exporting..." : "Export"}
+            {isExporting ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Exporting</span>
+              </span>
+            ) : "Export"}
           </Button>
         </ModalFooter>
       </Modal>
@@ -2855,7 +2879,12 @@ const UserManagement = () => {
             disabled={isArchivingSchoolYear || !newSchoolYear.trim()}
             className="px-6 py-2.5"
           >
-            {isArchivingSchoolYear ? "Archiving..." : "Archive School Year"}
+            {isArchivingSchoolYear ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Archiving</span>
+              </span>
+            ) : "Archive School Year"}
           </Button>
         </ModalFooter>
       </Modal>
@@ -3103,12 +3132,12 @@ const UserManagement = () => {
             ))}
           </SelectField>
           {archiveReasonType === "Custom" && (
-            <input
-              type="text"
+            <textarea
               value={customArchiveReason}
               onChange={(e) => setCustomArchiveReason(e.target.value)}
               placeholder="Enter custom reason"
-              className="w-full mt-2 px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-xs text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              rows={3}
+              className="mt-2 min-h-[96px] w-full resize-y rounded-lg border border-white/20 bg-white/10 px-3 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               disabled={isArchivingUsers}
             />
           )}
@@ -3134,7 +3163,12 @@ const UserManagement = () => {
             disabled={isArchivingUsers || selectedUserIds.size === 0}
             className="px-6 py-2.5 bg-white text-black"
           >
-            {isArchivingUsers ? "Archiving..." : "Archive Selected Users"}
+            {isArchivingUsers ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Archiving</span>
+              </span>
+            ) : "Archive Selected Users"}
           </Button>
         </ModalFooter>
       </Modal>
@@ -3208,7 +3242,12 @@ const UserManagement = () => {
             disabled={isArchivingUsers}
             className="px-6 py-2.5 bg-white text-black"
           >
-            {isArchivingUsers ? "Archiving..." : "Confirm Archive"}
+            {isArchivingUsers ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Archiving</span>
+              </span>
+            ) : "Confirm Archive"}
           </Button>
         </ModalFooter>
       </Modal>

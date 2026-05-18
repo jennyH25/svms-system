@@ -243,7 +243,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
             {isSaving ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Saving...
+                Saving
               </>
             ) : (
               "Save Changes"

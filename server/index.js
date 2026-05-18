@@ -625,7 +625,7 @@ async function exchangeGoogleAuthCode({ code, state }) {
         body: {
           status: "error",
           message:
-            "No SVMS account was found for this PLP Google account. Ask an administrator to add or import your account first.",
+            "No SVMS account is linked to this PLP Google account. Please contact an administrator for assistance.",
         },
       };
     }
@@ -3888,7 +3888,7 @@ function legacyLightBuildAdminAlertEmailTemplate({
   });
 }
 
-function buildSystemNoticeCard({ title, body, tone = "info" }) {
+function buildSystemNoticeCard({ title, body, tone = "info", compact = false }) {
   const tones = {
     info: {
       panel: "#1b2230",
@@ -3911,9 +3911,9 @@ function buildSystemNoticeCard({ title, body, tone = "info" }) {
   };
   const palette = tones[tone] || tones.info;
   return `
-    <div style="margin:0 0 18px 0;padding:18px;border-radius:20px;background:${palette.panel};border:1px solid ${palette.border};">
+    <div style="margin:0 0 ${compact ? 14 : 18}px 0;padding:${compact ? "14px 16px" : "18px"};border-radius:${compact ? "18px" : "20px"};background:${palette.panel};border:1px solid ${palette.border};">
       <p style="margin:0 0 10px 0;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:${palette.title};">${escapeHtml(title)}</p>
-      <p style="margin:0;color:${palette.body};font-size:14px;line-height:1.75;">${body}</p>
+      <p style="margin:0;color:${palette.body};font-size:${compact ? "13px" : "14px"};line-height:${compact ? "1.65" : "1.75"};">${body}</p>
     </div>
   `;
 }
@@ -8036,17 +8036,18 @@ app.put("/api/students/:id", async (req, res) => {
               html: buildSystemEmailShell({
                 eyebrow: "SVMS Security",
                 heading: "Account Deactivated",
-                lead: "Your student record has been archived.",
+                lead: "Your archived record details are below.",
                 contentHtml: `
                   ${buildSystemNoticeCard({
                     title: "Record Archived",
                     tone: "danger",
                     body:
-                      `Your account has been deactivated because your record has been archived.<br /><br /><strong>Reason:</strong> ${escapeHtml(normalizedArchivedReason || "Not specified")}`,
+                      `Your record has been archived, and access to the Student Violation Management System is no longer available.<span style="display:block;margin-top:18px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#fca5a5;">Reason</span><span style="display:block;margin-top:6px;font-size:18px;font-weight:800;line-height:1.35;color:#ffffff;">${escapeHtml(normalizedArchivedReason || "Not specified")}</span>`,
                   })}
                   ${buildSystemNoticeCard({
                     title: "Need Help?",
                     tone: "info",
+                    compact: true,
                     body:
                       "You will no longer be able to log in to the Student Violation Management System. If you believe this is an error, please contact your administrator.",
                   })}
@@ -12771,17 +12772,18 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
             html: buildSystemEmailShell({
             eyebrow: "SVMS Security",
             heading: "Account Restored",
-            lead: "Your account is now active and ready to use.",
+            lead: "Your restored account details are below.",
             contentHtml: `
                 ${buildSystemNoticeCard({
                   title: "Account Status Changed",
                   tone: "success",
                   body:
-                    "Your archive has been removed and your account has been reactivated. You can now log in to the Student Violation Management System with your credentials.",
+                    "Your archive has been removed. You can now sign in to the Student Violation Management System again.",
                 })}
                 ${buildSystemNoticeCard({
                   title: "Need Help?",
                   tone: "info",
+                  compact: true,
                   body:
                     "If you have any questions or need assistance, please contact your administrator.",
                 })}
@@ -12893,17 +12895,18 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
               html: buildSystemEmailShell({
                 eyebrow: "SVMS Security",
                 heading: "Account Restored",
-                lead: "Your account is now active and ready to use.",
+                lead: "Your restored account details are below.",
                 contentHtml: `
                   ${buildSystemNoticeCard({
                     title: "Account Status Changed",
                     tone: "success",
                     body:
-                      "Your archive has been removed and your account has been reactivated. You can now log in to the Student Violation Management System with your credentials.",
+                      "Your archive has been removed. You can now sign in to the Student Violation Management System again.",
                   })}
                   ${buildSystemNoticeCard({
                     title: "Need Help?",
                     tone: "info",
+                    compact: true,
                     body:
                       "If you have any questions or need assistance, please contact your administrator.",
                   })}
