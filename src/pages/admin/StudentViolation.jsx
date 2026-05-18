@@ -265,6 +265,21 @@ const StudentViolation = () => {
     { key: "cleared", label: "Clear" },
   ];
 
+  const formatClearDestinationLabel = (semester, schoolYear) => {
+    const normalizedSemester = String(semester || "").trim();
+    const normalizedSchoolYear = String(schoolYear || "").trim();
+    if (normalizedSemester && normalizedSchoolYear) {
+      return `${normalizedSemester} - S.Y. ${normalizedSchoolYear}`;
+    }
+    if (normalizedSemester) {
+      return normalizedSemester;
+    }
+    if (normalizedSchoolYear) {
+      return `S.Y. ${normalizedSchoolYear}`;
+    }
+    return "the Clear tab";
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const shouldOpenModal =
@@ -538,6 +553,10 @@ const StudentViolation = () => {
       }
       mergeRecord(result.record);
       window.localStorage.setItem("archiveRefresh", Date.now().toString());
+      const destinationLabel = formatClearDestinationLabel(
+        result?.record?.semester || currentSemester,
+        result?.record?.school_year || currentSchoolYear,
+      );
       window.dispatchEvent(
         new CustomEvent("archiveCompleted", {
           detail: {
@@ -547,7 +566,7 @@ const StudentViolation = () => {
       );
       setClearSuccessModal({
         isOpen: true,
-        message: `The violation for ${row.full_name || "this student"} has been marked as cleared.`,
+        message: `The violation for ${row.full_name || "this student"} has been marked as cleared and moved to the Clear tab for ${destinationLabel}.`,
       });
       invalidateFetchCache("/api/violation-analytics");
       invalidateFetchCache("/api/students");

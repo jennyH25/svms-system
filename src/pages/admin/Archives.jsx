@@ -230,6 +230,21 @@ const fetchArchiveSignatureImage = async (violationId) => {
   return String(data.signatureImage || '').trim();
 };
 
+const formatArchiveDestinationLabel = (schoolYear, semester) => {
+  const normalizedSchoolYear = String(schoolYear || "").trim();
+  const normalizedSemester = String(semester || "").trim();
+  if (normalizedSchoolYear && normalizedSemester) {
+    return `S.Y. ${normalizedSchoolYear} (${normalizedSemester})`;
+  }
+  if (normalizedSchoolYear) {
+    return `S.Y. ${normalizedSchoolYear}`;
+  }
+  if (normalizedSemester) {
+    return normalizedSemester;
+  }
+  return "the archive folder";
+};
+
 const formatDisplayName = (firstName, lastName, fullName, middleInitial = "") => {
   return (
     formatStudentDisplayName({
@@ -2474,16 +2489,37 @@ const Archives = () => {
       setArchivedViolations((items) => items.filter((item) => item.id !== row.id));
       setAllUnresolvedViolations((items) => items.filter((item) => item.id !== row.id));
 
+      const destinationYear =
+        data?.violation?.school_year || row.school_year || selectedUnresolvedYear || activeFolder;
+      const destinationSemester =
+        data?.violation?.semester || row.semester || activeSemester;
+      const destinationLabel = formatArchiveDestinationLabel(
+        destinationYear,
+        destinationSemester,
+      );
+
       if (data.promotion?.isEligible) {
         if (data.promotion.promoted) {
-          openSuccessModal("Student promotion triggered automatically after clearance.", "Record Cleared");
+          openSuccessModal(
+            `Student promotion triggered automatically after clearance. The record moved to ${destinationLabel}.`,
+            "Record Cleared",
+          );
         } else if (data.promotion.graduated) {
-          openSuccessModal("Student graduated automatically after all violations cleared.", "Record Cleared");
+          openSuccessModal(
+            `Student graduated automatically after all violations cleared. The record moved to ${destinationLabel}.`,
+            "Record Cleared",
+          );
         } else {
-          openSuccessModal("Student is eligible and checked for promotion after clearance.", "Record Cleared");
+          openSuccessModal(
+            `Student is eligible and checked for promotion after clearance. The record moved to ${destinationLabel}.`,
+            "Record Cleared",
+          );
         }
       } else {
-        openSuccessModal("Archived violation cleared from unresolved records.", "Record Cleared");
+        openSuccessModal(
+          `Archived violation cleared from unresolved records and moved to ${destinationLabel}.`,
+          "Record Cleared",
+        );
       }
 
       // preserve year section from archived record before promotion so UI does not show the promoted value in the source archive row
@@ -2495,9 +2531,40 @@ const Archives = () => {
         }));
       }
 
-      // Keep user in the unresolved folder view when clearing from unresolved items.
-      const destinationYear = selectedUnresolvedYear || row.school_year || activeFolder;
-      const destinationSemester = row.semester || activeSemester;
+      const resolvedArchiveRow = {
+        ...row,
+        ...(data?.violation || {}),
+        isUnresolved: false,
+        is_unresolved: false,
+        school_year: destinationYear,
+        semester: destinationSemester,
+        year_section:
+          preservedYS || data?.violation?.year_section || row.year_section || row.yearSection,
+      };
+
+      setAllArchivedViolations((items) =>
+        dedupeArchiveRows([
+          resolvedArchiveRow,
+          ...items.filter((item) => item.id !== row.id),
+        ]),
+      );
+
+      if (
+        String(activeFolder) === String(destinationYear) &&
+        String(activeSemester) === String(destinationSemester)
+      ) {
+        setArchivedViolations((items) =>
+          dedupeArchiveRows([
+            resolvedArchiveRow,
+            ...items.filter((item) => item.id !== row.id),
+          ]),
+        );
+      }
+
+      await Promise.all([
+        loadArchiveSchoolYears(),
+        loadUnresolvedSchoolYears(),
+      ]);
 
       // Notify other components but don't force folder navigation from unresolved clear.
       window.dispatchEvent(

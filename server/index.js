@@ -9590,44 +9590,11 @@ app.put("/api/student-violations/:id/clear", async (req, res) => {
 
     await refreshStudentViolationCount(pool, updated.student_id);
 
-    // If the student is archived in the unresolved folder and all active and archived unresolved violations are cleared,
-    // move them automatically to the main Archived Users folder.
-    if (updated.student_id) {
-      const studentArchiveStatus = await pool.query(
-        `SELECT is_archived, is_unresolved_archive FROM "Students" WHERE id = $1 LIMIT 1`,
-        [updated.student_id],
-      );
-      const studentArchiveRow = studentArchiveStatus.rows?.[0] || {};
-      if (studentArchiveRow.is_archived && studentArchiveRow.is_unresolved_archive) {
-        const activeUnresolvedCountResult = await pool.query(
-          `SELECT COUNT(*)::int AS count FROM student_violation_logs WHERE student_id = $1 AND cleared_at IS NULL`,
-          [updated.student_id],
-        );
-        const unresolvedArchiveCountResult = await pool.query(
-          `SELECT COUNT(*)::int AS count FROM student_violation_archives WHERE student_id = $1 AND is_unresolved = TRUE`,
-          [updated.student_id],
-        );
+    const promotionResult = updated.student_id
+      ? await checkAndAutoPromoteStudent(pool, updated.student_id)
+      : null;
 
-        const activeUnresolvedCount = Number(
-          activeUnresolvedCountResult.rows?.[0]?.count || 0,
-        );
-        const unresolvedArchiveCount = Number(
-          unresolvedArchiveCountResult.rows?.[0]?.count || 0,
-        );
-
-        if (activeUnresolvedCount === 0 && unresolvedArchiveCount === 0) {
-          await pool.query(
-            `UPDATE "Students" SET is_unresolved_archive = FALSE WHERE id = $1`,
-            [updated.student_id],
-          );
-        }
-      }
-    }
-
-    // Note: For Student Violation tab clear action, do NOT auto-promote immediately.
-    // Promotion is handled during archive flow to ensure student records first land in the
-    // correct school year/semester archive view and keep section/year before promotion.
-    const promotionResult = null;
+    await syncStudentUnresolvedArchivePlacement(pool, updated.student_id);
 
     await logAuditEvent(req, {
       action: "CLEAR_STUDENT_VIOLATION_LOG",
@@ -11617,6 +11584,58 @@ async function checkAndAutoPromoteStudent(
   };
 }
 
+async function syncStudentUnresolvedArchivePlacement(pool, studentId) {
+  if (!studentId) {
+    return {
+      studentId: null,
+      movedToMainArchive: false,
+      totalUnresolved: 0,
+    };
+  }
+
+  const studentArchiveStatus = await pool.query(
+    `SELECT is_archived, is_unresolved_archive FROM "Students" WHERE id = $1 LIMIT 1`,
+    [studentId],
+  );
+  const studentArchiveRow = studentArchiveStatus.rows?.[0] || {};
+
+  const activeUnresolvedCountResult = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM student_violation_logs WHERE student_id = $1 AND cleared_at IS NULL`,
+    [studentId],
+  );
+  const unresolvedArchiveCountResult = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM student_violation_archives WHERE student_id = $1 AND is_unresolved = TRUE`,
+    [studentId],
+  );
+
+  const activeUnresolvedCount = Number(
+    activeUnresolvedCountResult.rows?.[0]?.count || 0,
+  );
+  const unresolvedArchiveCount = Number(
+    unresolvedArchiveCountResult.rows?.[0]?.count || 0,
+  );
+  const totalUnresolved = activeUnresolvedCount + unresolvedArchiveCount;
+
+  let movedToMainArchive = false;
+  if (
+    studentArchiveRow.is_archived &&
+    studentArchiveRow.is_unresolved_archive &&
+    totalUnresolved === 0
+  ) {
+    await pool.query(
+      `UPDATE "Students" SET is_unresolved_archive = FALSE WHERE id = $1`,
+      [studentId],
+    );
+    movedToMainArchive = true;
+  }
+
+  return {
+    studentId,
+    movedToMainArchive,
+    totalUnresolved,
+  };
+}
+
 // PUT update current semester and school year
 app.put("/api/archive/current-settings", async (req, res) => {
   const { currentSemester, currentSchoolYear } = req.body ?? {};
@@ -13536,39 +13555,10 @@ app.put("/api/archive/violations/:id", async (req, res) => {
         updatedViolation.school_year,
       );
 
-      // Check if student is in unresolved archive and should be moved to main archive
-      if (updatedViolation.student_id) {
-        const studentCheck = await pool.query(
-          `SELECT is_archived, is_unresolved_archive FROM "Students" WHERE id = $1 LIMIT 1`,
-          [updatedViolation.student_id],
-        );
-        const student = studentCheck.rows?.[0];
-        if (student?.is_archived && student?.is_unresolved_archive) {
-          // Count total unresolved violations for this student
-          const unresolvedCountResult = await pool.query(
-            `SELECT COUNT(*)::int AS count FROM student_violation_archives WHERE student_id = $1 AND is_unresolved = TRUE`,
-            [updatedViolation.student_id],
-          );
-          const unresolvedArchiveCount = Number(unresolvedCountResult.rows?.[0]?.count || 0);
-
-          // Count unresolved active violations
-          const activeUnresolvedResult = await pool.query(
-            `SELECT COUNT(*)::int AS count FROM student_violation_logs WHERE student_id = $1 AND cleared_at IS NULL`,
-            [updatedViolation.student_id],
-          );
-          const activeUnresolvedCount = Number(activeUnresolvedResult.rows?.[0]?.count || 0);
-
-          const totalUnresolved = unresolvedArchiveCount + activeUnresolvedCount;
-
-          if (totalUnresolved === 0) {
-            // Move student from unresolved archive to main archive
-            await pool.query(
-              `UPDATE "Students" SET is_unresolved_archive = FALSE WHERE id = $1`,
-              [updatedViolation.student_id],
-            );
-          }
-        }
-      }
+      await syncStudentUnresolvedArchivePlacement(
+        pool,
+        updatedViolation.student_id,
+      );
     }
 
     let responseViolation = updatedViolation;
