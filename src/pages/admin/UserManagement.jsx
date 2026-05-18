@@ -31,7 +31,13 @@ import AlertModal from "../../components/ui/AlertModal";
 import EditUserModal from "@/components/modals/EditUserModal";
 import AddUserModal from "@/components/modals/AddUserModal";
 import EditSemesterYearModal from "@/components/modals/EditSemesterYearModal";
+import { useSettings } from "@/context/SettingsContext";
 import { getAuditHeaders } from "@/lib/auditHeaders";
+import {
+  addStandardPdfHeader,
+  getExportHeaderPath,
+  resolveExportHeaderImage,
+} from "@/lib/exportHeader";
 import { cachedFetchJSON, fetchMultiple, invalidateFetchCache } from "@/lib/fetchHelper";
 import { formatStudentDisplayName } from "@/lib/utils";
 import {
@@ -40,7 +46,6 @@ import {
   getExcelColumnLetter,
 } from "@/lib/excelExportLayout";
 
-const EXPORT_HEADER_IMAGE_PATH = "/plpasig_header.png";
 const ALERT_TYPE_OPTIONS = [
   "Warning",
   "Reminder",
@@ -111,6 +116,7 @@ const buildImportErrorModalState = (message) => {
 };
 
 const UserManagement = () => {
+  const { settings } = useSettings();
   const [activeTab, setActiveTab] = useState("regular");
   const [selectedProgram, setSelectedProgram] = useState("");
   const [selectedYear, setSelectedYear] = useState("");
@@ -1428,20 +1434,11 @@ const UserManagement = () => {
   }, []);
 
   const resolveHeaderImage = useCallback(async () => {
-    const response = await fetch(EXPORT_HEADER_IMAGE_PATH);
-    if (!response.ok) {
-      throw new Error(`Required header image not found: ${EXPORT_HEADER_IMAGE_PATH}`);
-    }
-
-    const blob = await response.blob();
-    const dataUrl = await blobToDataUrl(blob);
-    const dimensions = await getDataUrlDimensions(dataUrl);
-
-    return { dataUrl, dimensions };
-  }, []);
+    return resolveExportHeaderImage(getExportHeaderPath(settings));
+  }, [settings]);
 
   const exportAsExcel = useCallback(async () => {
-    const [{ Workbook }, { dataUrl, dimensions }] = await Promise.all([
+    const [{ Workbook }, { dataUrl, dimensions, extension }] = await Promise.all([
       import("exceljs"),
       resolveHeaderImage(),
     ]);
@@ -1483,7 +1480,7 @@ const UserManagement = () => {
       workbook,
       sheet,
       dataUrl,
-      extension: "png",
+      extension,
       dimensions,
       rowStart: 1,
       rowEnd: 8,
@@ -1587,7 +1584,7 @@ const UserManagement = () => {
     ]);
 
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-    const { dataUrl, dimensions } = await resolveHeaderImage();
+    const { dataUrl, dimensions, imageFormat } = await resolveHeaderImage();
     const tableMarginLeft = 10;
     const tableMarginRight = 10;
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -1597,15 +1594,11 @@ const UserManagement = () => {
     const widthScale = tableWidth / baseTotalWidth;
     const tableColumnWidths = baseColumnWidths.map((width) => width * widthScale);
     const tableCenterX = tableMarginLeft + tableWidth / 2;
-    let startY = 22;
-
-    if (dataUrl) {
-      const headerWidth = tableWidth;
-      const headerHeight = (dimensions.height * headerWidth) / dimensions.width;
-      const headerX = tableMarginLeft;
-      doc.addImage(dataUrl, "PNG", headerX, 8, headerWidth, headerHeight);
-      startY = 8 + headerHeight + 8;
-    }
+    let startY = (await addStandardPdfHeader(
+      doc,
+      { dataUrl, dimensions, imageFormat },
+      { left: tableMarginLeft, right: tableMarginRight },
+    )).nextY;
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);

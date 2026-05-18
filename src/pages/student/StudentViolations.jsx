@@ -9,29 +9,18 @@ import SearchBar from '../../components/ui/SearchBar';
 import Button from '../../components/ui/Button';
 import SignaturePreviewModal from '../../components/modals/SignaturePreviewModal';
 import { Bell, Download, Filter, ChevronDown, PenTool, CheckCircle } from 'lucide-react';
+import { useSettings } from '@/context/SettingsContext';
 import { getAuditHeaders } from '@/lib/auditHeaders';
+import {
+	addStandardPdfHeader,
+	drawStandardCanvasHeader,
+	getExportHeaderPath,
+	resolveExportHeaderImage,
+} from '@/lib/exportHeader';
 import { cachedFetchJSON, invalidateFetchCache } from '@/lib/fetchHelper';
+import { addCenteredExcelHeaderImage, applyExcelPrintLayout } from '@/lib/excelExportLayout';
+import { formatStudentDisplayName } from '@/lib/utils';
 import SignaturePadModal from '../../components/modals/SignaturePadModal';
-
-const EXPORT_HEADER_IMAGE_PATH = '/plpasig_header.png';
-
-const blobToDataUrl = (blob) =>
-	new Promise((resolve, reject) => {
-		const reader = new FileReader();
-		reader.onload = () => resolve(reader.result);
-		reader.onerror = () => reject(reader.error);
-		reader.readAsDataURL(blob);
-	});
-
-const getDataUrlDimensions = (dataUrl) =>
-	new Promise((resolve, reject) => {
-		const img = new Image();
-		img.onload = () => {
-			resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height });
-		};
-		img.onerror = () => reject(new Error('Unable to load image dimensions.'));
-		img.src = dataUrl;
-	});
 
 const loadImageFromDataUrl = (dataUrl) =>
 	new Promise((resolve, reject) => {
@@ -112,7 +101,16 @@ const formatYearSemesterCell = (record) => {
 	return `${yearLevel} | ${term}`;
 };
 
+const formatLocalStudentDisplayName = (student = {}) =>
+	formatStudentDisplayName({
+		firstName: student.firstName,
+		middleInitial: student.middleInitial,
+		lastName: student.lastName,
+		fullName: student.fullName,
+	}) || '-';
+
 const StudentViolations = () => {
+	const { settings } = useSettings();
 	const navigate = useNavigate();
 	const location = useLocation();
 	const highlightId = new URLSearchParams(location.search).get('highlight');
@@ -233,31 +231,24 @@ const StudentViolations = () => {
 			return {
 				lastName: user?.lastName || user?.last_name || '',
 				firstName: user?.firstName || user?.first_name || '',
+				middleInitial: user?.middleInitial || user?.middle_initial || '',
+				fullName: user?.fullName || user?.full_name || '',
 				yearSection: yearSection,
 				schoolId: user?.schoolId || user?.school_id || user?.schoolId || '',
 			};
 		} catch (_error) {
-			return { lastName: '', firstName: '', yearSection: '', schoolId: '' };
+			return { lastName: '', firstName: '', middleInitial: '', fullName: '', yearSection: '', schoolId: '' };
 		}
 	}, []);
 
 	// Resolve header image for exports
 	const resolveHeaderImage = useCallback(async () => {
 		try {
-			const response = await fetch(EXPORT_HEADER_IMAGE_PATH);
-			if (!response.ok) {
-				throw new Error(`Header image not found: ${EXPORT_HEADER_IMAGE_PATH}`);
-			}
-
-			const blob = await response.blob();
-			const dataUrl = await blobToDataUrl(blob);
-			const dimensions = await getDataUrlDimensions(dataUrl);
-
-			return { dataUrl, dimensions };
+			return await resolveExportHeaderImage(getExportHeaderPath(settings));
 		} catch (_error) {
-			return { dataUrl: null, dimensions: null };
+			return { dataUrl: null, dimensions: null, extension: 'png', imageFormat: 'PNG' };
 		}
-	}, []);
+	}, [settings]);
 
 	const hydrateStudentRecordsWithSignatures = useCallback(async (recordsList) => {
 		const normalizedRecords = Array.isArray(recordsList) ? recordsList : [];
@@ -506,13 +497,8 @@ const createDownload = useCallback(async (record, format) => {
 		const workbook = new Workbook();
 		const sheet = workbook.addWorksheet('Violation Slip');
 
-		sheet.pageSetup = {
-			orientation: 'landscape',
-			fitToPage: true,
-			fitToWidth: 1,
-			fitToHeight: 1,
-			horizontalCentered: true,
-		};
+		applyExcelPrintLayout(sheet, { orientation: 'landscape' });
+		sheet.pageSetup.fitToHeight = 1;
 
 		sheet.columns = [
 			{ width: 3 },
@@ -532,29 +518,16 @@ const createDownload = useCallback(async (record, format) => {
 
 		sheet.mergeCells('B1:H5');
 		if (headerImage.dataUrl && headerImage.dimensions) {
-			const headerRegionWidthPx = [2, 3, 4, 5, 6, 7, 8].reduce(
-				(total, colIndex) => total + (Number(sheet.getColumn(colIndex).width || 18) * 7.5),
-				0,
-			);
-			const headerRegionHeightPx = [1, 2, 3, 4, 5].reduce(
-				(total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 18) * 1.333),
-				0,
-			);
-			const imageScale = Math.min(
-				(headerRegionWidthPx - 12) / headerImage.dimensions.width,
-				(headerRegionHeightPx - 6) / headerImage.dimensions.height,
-				1.25,
-			);
-			const headerWidth = Math.max(8, Math.round(headerImage.dimensions.width * imageScale));
-			const headerHeight = Math.max(8, Math.round(headerImage.dimensions.height * imageScale));
-			const leftOffsetPx = Math.max((headerRegionWidthPx - headerWidth) / 2, 0);
-			const topOffsetPx = Math.max((headerRegionHeightPx - headerHeight) / 2, 0);
-			const colPx = (sheet.getColumn(2).width || 18) * 7.5;
-			const rowPx = Number(sheet.getRow(1).height || 18) * 1.333;
-			const headerId = workbook.addImage({ base64: headerImage.dataUrl, extension: 'png' });
-			sheet.addImage(headerId, {
-				tl: { col: 1 + leftOffsetPx / colPx, row: topOffsetPx / rowPx },
-				ext: { width: headerWidth, height: headerHeight },
+			addCenteredExcelHeaderImage({
+				workbook,
+				sheet,
+				dataUrl: headerImage.dataUrl,
+				extension: headerImage.extension || 'png',
+				dimensions: headerImage.dimensions,
+				colStart: 2,
+				colEnd: 8,
+				rowStart: 1,
+				rowEnd: 5,
 			});
 		}
 
@@ -568,9 +541,7 @@ const createDownload = useCallback(async (record, format) => {
 		const remarksText = String(rawRemarks).trim() === '-' ? '' : rawRemarks;
 		const reportedBy = record.reportedBy || record.reported_by || '-';
 		const programYearSection = studentInfo.yearSection || '';
-		const studentName = `${studentInfo.lastName || ''}, ${studentInfo.firstName || ''}`
-			.replace(/^,\s*|\s*,\s*$/g, '')
-			.trim() || '-';
+		const studentName = formatLocalStudentDisplayName(studentInfo);
 
 		const applyBorder = (range, style = 'thin') => {
 			const [start, end] = range.split(':');
@@ -741,16 +712,14 @@ if (format === 'pdf') {
 		const pageWidth = doc.internal.pageSize.getWidth();
 		const margin = 14;
 		const contentWidth = pageWidth - margin * 2;
-		let cursorY = 10;
-
-		if (headerImage.dataUrl && headerImage.dimensions) {
-			const imageScale = Math.min(1.25, contentWidth / headerImage.dimensions.width);
-			const headerWidth = Math.round(headerImage.dimensions.width * imageScale);
-			const headerHeight = Math.min(Math.round(headerImage.dimensions.height * imageScale), 50);
-			const headerX = margin + (contentWidth - headerWidth) / 2;
-			doc.addImage(headerImage.dataUrl, 'PNG', headerX, cursorY, headerWidth, headerHeight);
-			cursorY += headerHeight + 6;
-		}
+		let cursorY = (await addStandardPdfHeader(doc, {
+			dataUrl: headerImage.dataUrl,
+			dimensions: headerImage.dimensions,
+			imageFormat: headerImage.imageFormat,
+		}, {
+			left: margin,
+			right: margin,
+		})).nextY;
 
 		doc.setFont('helvetica', 'bold');
 		doc.setFontSize(16);
@@ -765,9 +734,7 @@ if (format === 'pdf') {
 		const yearLevelText = resolveYearLevelForExport(record, studentInfo);
 		const academicTermText = buildAcademicTermText(record);
 		const statusText = formatStatusForExport(record);
-		const studentName = `${studentInfo.lastName || ''}, ${studentInfo.firstName || ''}`
-			.replace(/^,\s*|\s*,\s*$/g, '')
-			.trim() || '-';
+		const studentName = formatLocalStudentDisplayName(studentInfo);
 
 		const drawLabelValue = (x, y, label, value, maxWidth = 62) => {
 			doc.setFont('helvetica', 'bold');
@@ -914,14 +881,14 @@ if (format === 'jpeg') {
 		ctx.fillStyle = '#ffffff';
 		ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-		let y = 40;
-		if (headerImage.dataUrl) {
-			const headerImg = await loadImageFromDataUrl(headerImage.dataUrl);
-			const headerWidth = 1800;
-			const headerHeight = Math.round((headerImg.height / headerImg.width) * headerWidth);
-			ctx.drawImage(headerImg, 100, y, headerWidth, headerHeight);
-			y += headerHeight + 30;
-		}
+		let y = (
+			await drawStandardCanvasHeader(
+				ctx,
+				canvas.width,
+				loadImageFromDataUrl,
+				headerImage,
+			)
+		).nextY;
 
 		ctx.fillStyle = '#0f172a';
 		ctx.font = 'bold 48px Arial';
@@ -934,9 +901,7 @@ if (format === 'jpeg') {
 		const yearLevelText = resolveYearLevelForExport(record, studentInfo);
 		const academicTermText = buildAcademicTermText(record);
 		const statusText = formatStatusForExport(record);
-		const studentName = `${studentInfo.lastName || ''}, ${studentInfo.firstName || ''}`
-			.replace(/^,\s*|\s*,\s*$/g, '')
-			.trim() || '-';
+		const studentName = formatLocalStudentDisplayName(studentInfo);
 
 		const drawWrappedText = (text, x, startY, maxWidth, lineHeight) => {
 			const words = String(text || '').split(/\s+/).filter(Boolean);
@@ -1175,7 +1140,7 @@ if (format === 'jpeg') {
 				);
 				const signatureImages = await Promise.all(signaturePromises);
 				
-				const [{ Workbook }, { dataUrl, dimensions }] = await Promise.all([
+				const [{ Workbook }, { dataUrl, dimensions, extension }] = await Promise.all([
 					import('exceljs'),
 					resolveHeaderImage(),
 				]);
@@ -1198,12 +1163,7 @@ if (format === 'jpeg') {
 		sheet.mergeCells('A1:H9');
 		sheet.mergeCells('A10:H10');
 		sheet.mergeCells('A11:H11');
-		sheet.pageSetup = {
-			orientation: 'landscape',
-			fitToPage: true,
-			fitToWidth: 1,
-			fitToHeight: 0,
-		};
+		applyExcelPrintLayout(sheet, { orientation: 'landscape' });
 		for (let i = 1; i <= 9; i += 1) {
 			sheet.getRow(i).height = 35;
 		}
@@ -1213,67 +1173,15 @@ if (format === 'jpeg') {
 
 		// Add header image if available
 		if (dataUrl && dimensions) {
-			const headerRegionWidthPx = [1, 2, 3, 4, 5, 6, 7, 8].reduce(
-				(total, colIndex) => total + (Number(sheet.getColumn(colIndex).width || 10) * 7.5),
-				0,
-			);
-			const headerRegionHeightPx = [1, 2, 3, 4, 5, 6, 7, 8, 9].reduce(
-				(total, rowNumber) => total + (Number(sheet.getRow(rowNumber).height || 15) * 1.333),
-				0,
-			);
-			const imageScale = Math.min(
-				(headerRegionWidthPx - 24) / dimensions.width,
-				(headerRegionHeightPx - 12) / dimensions.height,
-				1.25,
-			);
-			const imageWidthPx = Math.max(8, Math.round(dimensions.width * imageScale));
-			const imageHeightPx = Math.max(8, Math.round(dimensions.height * imageScale));
-			const leftOffsetPx = (headerRegionWidthPx - imageWidthPx) / 2;
-			const topOffsetPx = (headerRegionHeightPx - imageHeightPx) / 2;
-
-			// Calculate exact column and row positions with better precision
-			const toColCoordinate = (pixelOffset) => {
-				let colIndex = 0;
-				let accumulatedPx = 0;
-				for (let i = 1; i <= 8; i += 1) {
-					const colWidth = sheet.getColumn(i).width || 15;
-					const colPx = colWidth * 7.5;
-					if (accumulatedPx + colPx >= pixelOffset) {
-						const offsetInCol = pixelOffset - accumulatedPx;
-						return (i - 1) + (offsetInCol / colPx);
-					}
-					accumulatedPx += colPx;
-					colIndex = i;
-				}
-				return colIndex - 1;
-			};
-
-			const toRowCoordinate = (pixelOffset) => {
-				let rowIndex = 0;
-				let accumulatedPx = 0;
-				for (let i = 1; i <= 9; i += 1) {
-					const rowPx = Number(sheet.getRow(i).height || 15) * 1.333;
-					if (accumulatedPx + rowPx >= pixelOffset) {
-						const offsetInRow = pixelOffset - accumulatedPx;
-						return (i - 1) + (offsetInRow / rowPx);
-					}
-					accumulatedPx += rowPx;
-					rowIndex = i;
-				}
-				return rowIndex - 1;
-			};
-
-			const imageId = workbook.addImage({ base64: dataUrl, extension: 'png' });
-			sheet.addImage(imageId, {
-					tl: {
-						col: toColCoordinate(leftOffsetPx),
-						row: toRowCoordinate(topOffsetPx),
-					},
-					ext: {
-						width: imageWidthPx,
-						height: imageHeightPx,
-					},
-				});
+			addCenteredExcelHeaderImage({
+				workbook,
+				sheet,
+				dataUrl,
+				extension,
+				dimensions,
+				rowStart: 1,
+				rowEnd: 9,
+			});
 
 		const titleCell = sheet.getCell('A10');
 			titleCell.value = 'STUDENT VIOLATION REPORT';
@@ -1568,16 +1476,14 @@ sheet.mergeCells('A1:H3');
 				const tableMarginRight = 5;
 				const tableWidth = pageWidth - tableMarginLeft - tableMarginRight;
 				const tableCenterX = tableMarginLeft + tableWidth / 2;
-			let startY = 20;
-
-			// Add header image if available
-			if (headerImage.dataUrl && headerImage.dimensions) {
-				const headerWidth = tableWidth;
-				const headerHeight = (headerImage.dimensions.height * headerWidth) / headerImage.dimensions.width;
-				const headerX = tableMarginLeft;
-				doc.addImage(headerImage.dataUrl, 'PNG', headerX, 10, headerWidth, headerHeight);
-				startY = 10 + headerHeight + 8;
-			}
+			let startY = (await addStandardPdfHeader(doc, {
+				dataUrl: headerImage.dataUrl,
+				dimensions: headerImage.dimensions,
+				imageFormat: headerImage.imageFormat,
+			}, {
+				left: tableMarginLeft,
+				right: tableMarginRight,
+			})).nextY;
 
 			const generatedDateRaw = new Date();
 			const month = generatedDateRaw.toLocaleString(undefined, { month: 'long' });
@@ -1691,14 +1597,14 @@ sheet.mergeCells('A1:H3');
 				ctx.fillRect(0, 0, canvas.width, canvas.height);
 
 				const headerImage = await resolveHeaderImage();
-				let startY = 20;
-				if (headerImage.dataUrl) {
-					const headerImg = await loadImageFromDataUrl(headerImage.dataUrl);
-					const headerWidth = 2080;
-					const headerHeight = Math.round((headerImg.height / headerImg.width) * headerWidth);
-					ctx.drawImage(headerImg, 60, startY, headerWidth, headerHeight);
-					startY += headerHeight + 22;
-				}
+				let startY = (
+					await drawStandardCanvasHeader(
+						ctx,
+						canvas.width,
+						loadImageFromDataUrl,
+						headerImage,
+					)
+				).nextY;
 
 				const generatedDateRaw = new Date();
 				const month = generatedDateRaw.toLocaleString(undefined, { month: 'long' });
@@ -1805,7 +1711,7 @@ sheet.mergeCells('A1:H3');
 				ctx.textAlign = 'right';
 				ctx.fillStyle = '#111827';
 				ctx.font = 'bold 25px Arial';
-				const studentName = `${studentInfo.lastName.toUpperCase()}, ${studentInfo.firstName.toUpperCase()}`.trim();
+				const studentName = formatLocalStudentDisplayName(studentInfo).toUpperCase();
 				ctx.fillText(studentName, 2140, footerY);
 				ctx.fillStyle = '#4b5563';
 				ctx.font = '22px Arial';

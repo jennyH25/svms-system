@@ -32,14 +32,18 @@ import {
   Download,
   Search,
 } from "lucide-react";
+import { useSettings } from "@/context/SettingsContext";
+import {
+  addStandardPdfHeader,
+  getExportHeaderPath,
+  resolveExportHeaderImage,
+} from "@/lib/exportHeader";
 import { cachedFetchJSON } from "@/lib/fetchHelper";
 import {
   addCenteredExcelHeaderImage,
   applyExcelPrintLayout,
   getExcelColumnLetter,
 } from "@/lib/excelExportLayout";
-
-const RANKING_EXPORT_HEADER_IMAGE_PATH = "/plpasig_header.jpg";
 
 const blobToDataUrl = (blob) =>
   new Promise((resolve, reject) => {
@@ -128,6 +132,7 @@ const getGroupKeyFromYearSection = (program, yearSection) => {
 };
 
 const Dashboard = () => {
+  const { settings } = useSettings();
   const navigate = useNavigate();
   const [selectedSemester, setSelectedSemester] = useState("1st Sem");
   const [trendModalOpen, setTrendModalOpen] = useState(false);
@@ -859,19 +864,8 @@ const Dashboard = () => {
   }, []);
 
   const resolveRankingHeaderImage = useCallback(async () => {
-    const response = await fetch(RANKING_EXPORT_HEADER_IMAGE_PATH);
-    if (!response.ok) {
-      throw new Error(`Required header image not found: ${RANKING_EXPORT_HEADER_IMAGE_PATH}`);
-    }
-
-    const blob = await response.blob();
-    const dataUrl = await blobToDataUrl(blob);
-    const dimensions = await getDataUrlDimensions(dataUrl);
-    const extension = String(blob.type || "").toLowerCase().includes("png") ? "png" : "jpeg";
-    const imageFormat = extension === "png" ? "PNG" : "JPEG";
-
-    return { dataUrl, dimensions, extension, imageFormat };
-  }, []);
+    return resolveExportHeaderImage(getExportHeaderPath(settings));
+  }, [settings]);
 
   const exportRankingAsExcel = useCallback(async () => {
     const [{ Workbook }, { dataUrl, dimensions, extension }] = await Promise.all([
@@ -897,17 +891,17 @@ const Dashboard = () => {
     }));
 
     const headerCellEnd = getExcelColumnLetter(headers.length);
-    sheet.mergeCells(`A1:${headerCellEnd}4`);
-    sheet.mergeCells(`A5:${headerCellEnd}5`);
-    sheet.mergeCells(`A6:${headerCellEnd}6`);
+    sheet.mergeCells(`A1:${headerCellEnd}8`);
+    sheet.mergeCells(`A9:${headerCellEnd}9`);
+    sheet.mergeCells(`A10:${headerCellEnd}10`);
 
     // Reserve sufficient space for header image to avoid overlap with title
-    for (let i = 1; i <= 4; i += 1) {
+    for (let i = 1; i <= 8; i += 1) {
       sheet.getRow(i).height = 36;
     }
-    sheet.getRow(5).height = 24;
-    sheet.getRow(6).height = 20;
-    sheet.getRow(7).height = 20;
+    sheet.getRow(9).height = 24;
+    sheet.getRow(10).height = 20;
+    sheet.getRow(11).height = 20;
 
     // Add header image if available
     if (dataUrl && dimensions) {
@@ -918,17 +912,17 @@ const Dashboard = () => {
         extension,
         dimensions,
         rowStart: 1,
-        rowEnd: 4,
+        rowEnd: 8,
       });
     }
 
     // Title and subtitle
-    const titleCell = sheet.getCell("A5");
+    const titleCell = sheet.getCell("A9");
     titleCell.value = "Student Violation Ranking Report";
     titleCell.font = { name: "Calibri", size: 18, bold: true, color: { argb: "FF000000" } };
     titleCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
 
-    const generatedCell = sheet.getCell("A6");
+    const generatedCell = sheet.getCell("A10");
     const generatedDateRaw = new Date();
     const month = generatedDateRaw.toLocaleString(undefined, { month: "long" });
     const day = generatedDateRaw.getDate();
@@ -1037,7 +1031,7 @@ const Dashboard = () => {
       });
     };
 
-    let currentRow = 8;
+    let currentRow = 11;
 
     exportGroups.forEach((group) => {
       const groupHeaderRow = sheet.getRow(currentRow);
@@ -1089,15 +1083,11 @@ const Dashboard = () => {
     const widthScale = tableWidth / baseTotalWidth;
     const tableColumnWidths = baseColumnWidths.map((width) => width * widthScale);
     const tableCenterX = tableMarginLeft + tableWidth / 2;
-    let startY = 22;
-
-    if (dataUrl) {
-      const headerWidth = tableWidth;
-      const headerHeight = (dimensions.height * headerWidth) / dimensions.width;
-      const headerX = tableMarginLeft;
-      doc.addImage(dataUrl, imageFormat, headerX, 8, headerWidth, headerHeight);
-      startY = 8 + headerHeight + 8;
-    }
+    let startY = (await addStandardPdfHeader(
+      doc,
+      { dataUrl, dimensions, imageFormat },
+      { left: tableMarginLeft, right: tableMarginRight },
+    )).nextY;
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
@@ -1230,14 +1220,11 @@ const Dashboard = () => {
       const margin = 20;
       const contentWidth = pageWidth - margin * 2;
       const centerX = pageWidth / 2;
-      let cursorY = margin;
-
-      if (dataUrl) {
-        const headerWidth = contentWidth;
-        const headerHeight = (dimensions.height * headerWidth) / dimensions.width;
-        doc.addImage(dataUrl, imageFormat, margin, cursorY, headerWidth, headerHeight);
-        cursorY += headerHeight + 10;
-      }
+      let cursorY = (await addStandardPdfHeader(
+        doc,
+        { dataUrl, dimensions, imageFormat },
+        { left: margin, right: margin },
+      )).nextY;
 
       doc.setFont("helvetica", "bold");
       doc.setFontSize(16);

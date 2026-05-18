@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { getAuditHeaders } from '@/lib/auditHeaders'
+import { DEFAULT_EXPORT_HEADER_PATH } from '@/lib/exportHeader'
 
 const SettingsContext = createContext()
 
@@ -15,6 +16,7 @@ export const SettingsProvider = ({ children }) => {
   const [settings, setSettings] = useState({
     displayName: 'Student Violation Management System',
     logoPath: null,
+    exportHeaderPath: DEFAULT_EXPORT_HEADER_PATH,
     theme: 'dark',
     themeColor: '#000000',
   })
@@ -24,6 +26,7 @@ export const SettingsProvider = ({ children }) => {
   const buildDefaultSettings = () => ({
     displayName: 'Student Violation Management System',
     logoPath: null,
+    exportHeaderPath: DEFAULT_EXPORT_HEADER_PATH,
     theme: 'dark',
     themeColor: '#000000',
   })
@@ -49,6 +52,8 @@ export const SettingsProvider = ({ children }) => {
             logoData.status === 'ok'
               ? logoData.logoPath || null
               : null,
+          exportHeaderPath:
+            settingsData.settings.exportHeaderPath || DEFAULT_EXPORT_HEADER_PATH,
           theme: settingsData.settings.theme,
           themeColor: settingsData.settings.themeColor,
         })
@@ -88,6 +93,8 @@ export const SettingsProvider = ({ children }) => {
           nextSettings = {
             displayName: data.settings.displayName,
             logoPath: data.settings.logoPath ?? prev.logoPath ?? null,
+            exportHeaderPath:
+              data.settings.exportHeaderPath ?? prev.exportHeaderPath ?? DEFAULT_EXPORT_HEADER_PATH,
             theme: data.settings.theme,
             themeColor: data.settings.themeColor,
           }
@@ -125,6 +132,8 @@ export const SettingsProvider = ({ children }) => {
           nextSettings = {
             displayName: data.settings.displayName ?? prev.displayName,
             logoPath: data.settings.logoPath ?? null,
+            exportHeaderPath:
+              data.settings.exportHeaderPath ?? prev.exportHeaderPath ?? DEFAULT_EXPORT_HEADER_PATH,
             theme: data.settings.theme ?? prev.theme,
             themeColor: data.settings.themeColor ?? prev.themeColor,
           }
@@ -158,6 +167,8 @@ export const SettingsProvider = ({ children }) => {
           nextSettings = {
             displayName: data.settings.displayName ?? prev.displayName,
             logoPath: null,
+            exportHeaderPath:
+              data.settings.exportHeaderPath ?? prev.exportHeaderPath ?? DEFAULT_EXPORT_HEADER_PATH,
             theme: data.settings.theme ?? prev.theme,
             themeColor: data.settings.themeColor ?? prev.themeColor,
           }
@@ -169,6 +180,77 @@ export const SettingsProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('Error removing logo:', err)
+      return { success: false, error: err.message }
+    }
+  }
+
+  const uploadExportHeader = async (file) => {
+    try {
+      const formData = new FormData()
+      formData.append('exportHeader', file)
+
+      const response = await fetch('/api/settings/export-header', {
+        method: 'POST',
+        headers: {
+          ...getAuditHeaders(),
+        },
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (data.status === 'ok' && data.settings) {
+        let nextSettings = null
+        setSettings(prev => {
+          nextSettings = {
+            displayName: data.settings.displayName ?? prev.displayName,
+            logoPath: data.settings.logoPath ?? prev.logoPath ?? null,
+            exportHeaderPath:
+              data.settings.exportHeaderPath ?? prev.exportHeaderPath ?? DEFAULT_EXPORT_HEADER_PATH,
+            theme: data.settings.theme ?? prev.theme,
+            themeColor: data.settings.themeColor ?? prev.themeColor,
+          }
+          return nextSettings
+        })
+        return { success: true, settings: nextSettings ?? data.settings, message: data.message }
+      } else {
+        return { success: false, error: data.message }
+      }
+    } catch (err) {
+      console.error('Error uploading export header:', err)
+      return { success: false, error: err.message }
+    }
+  }
+
+  const removeExportHeader = async () => {
+    try {
+      const response = await fetch('/api/settings/export-header', {
+        method: 'DELETE',
+        headers: {
+          ...getAuditHeaders(),
+        },
+      })
+
+      const data = await response.json()
+
+      if (data.status === 'ok' && data.settings) {
+        let nextSettings = null
+        setSettings(prev => {
+          nextSettings = {
+            displayName: data.settings.displayName ?? prev.displayName,
+            logoPath: data.settings.logoPath ?? prev.logoPath ?? null,
+            exportHeaderPath: DEFAULT_EXPORT_HEADER_PATH,
+            theme: data.settings.theme ?? prev.theme,
+            themeColor: data.settings.themeColor ?? prev.themeColor,
+          }
+          return nextSettings
+        })
+        return { success: true, settings: nextSettings ?? data.settings, message: data.message }
+      } else {
+        return { success: false, error: data.message }
+      }
+    } catch (err) {
+      console.error('Error removing export header:', err)
       return { success: false, error: err.message }
     }
   }
@@ -205,6 +287,8 @@ export const SettingsProvider = ({ children }) => {
     updateSettings,
     uploadLogo,
     removeLogo,
+    uploadExportHeader,
+    removeExportHeader,
   }
 
   return (
@@ -213,5 +297,3 @@ export const SettingsProvider = ({ children }) => {
     </SettingsContext.Provider>
   )
 }
-
-export default SettingsContext

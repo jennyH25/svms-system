@@ -3307,7 +3307,7 @@ async function uploadBufferToSupabaseStorage(
   return `${config.projectUrl}/storage/v1/object/public/${encodeURIComponent(config.bucketName)}/${objectPath}`;
 }
 
-async function persistLogoBuffer(buffer, mimeType, options = {}) {
+async function persistImageBuffer(buffer, mimeType, options = {}) {
   const uploadedUrl = buildImageDataUrl(buffer, mimeType);
   return {
     logoPath: uploadedUrl,
@@ -3315,13 +3315,17 @@ async function persistLogoBuffer(buffer, mimeType, options = {}) {
   };
 }
 
-async function normalizePersistedLogoPath(storedLogoPath) {
-  if (!storedLogoPath) {
-    return { resolvedLogoPath: null, normalizedPersistedValue: null };
+async function persistLogoBuffer(buffer, mimeType, options = {}) {
+  return persistImageBuffer(buffer, mimeType, options);
+}
+
+async function normalizePersistedImagePath(storedImagePath) {
+  if (!storedImagePath) {
+    return { resolvedImagePath: null, normalizedPersistedValue: null };
   }
 
-  const decryptedValue = decryptImagePath(storedLogoPath);
-  const candidates = [decryptedValue, storedLogoPath];
+  const decryptedValue = decryptImagePath(storedImagePath);
+  const candidates = [decryptedValue, storedImagePath];
 
   for (const candidate of candidates) {
     if (!isPersistedLogoPath(candidate)) {
@@ -3331,14 +3335,14 @@ async function normalizePersistedLogoPath(storedLogoPath) {
     const normalizedCandidate = String(candidate || "").trim();
     if (/^https?:\/\//i.test(normalizedCandidate)) {
       return {
-        resolvedLogoPath: normalizedCandidate,
+        resolvedImagePath: normalizedCandidate,
         normalizedPersistedValue: encryptImagePath(normalizedCandidate),
       };
     }
 
     if (normalizedCandidate.startsWith("data:image/")) {
       return {
-        resolvedLogoPath: normalizedCandidate,
+        resolvedImagePath: normalizedCandidate,
         normalizedPersistedValue: encryptImagePath(normalizedCandidate),
       };
     }
@@ -3355,11 +3359,11 @@ async function normalizePersistedLogoPath(storedLogoPath) {
         const {
           logoPath: uploadedUrl,
           encryptedPath,
-        } = await persistLogoBuffer(fileBuffer, mimeType, {
+        } = await persistImageBuffer(fileBuffer, mimeType, {
           fileName: path.basename(localFilePath),
         });
         return {
-          resolvedLogoPath: uploadedUrl,
+          resolvedImagePath: uploadedUrl,
           normalizedPersistedValue: encryptedPath,
         };
       } catch (error) {
@@ -3371,14 +3375,23 @@ async function normalizePersistedLogoPath(storedLogoPath) {
         const mimeType = getMimeTypeFromFilePath(localFilePath);
         const dataUrl = `data:${mimeType};base64,${fileBuffer.toString("base64")}`;
         return {
-          resolvedLogoPath: dataUrl,
+          resolvedImagePath: dataUrl,
           normalizedPersistedValue: encryptImagePath(dataUrl),
         };
       }
     }
   }
 
-  return { resolvedLogoPath: null, normalizedPersistedValue: null };
+  return { resolvedImagePath: null, normalizedPersistedValue: null };
+}
+
+async function normalizePersistedLogoPath(storedLogoPath) {
+  const { resolvedImagePath, normalizedPersistedValue } =
+    await normalizePersistedImagePath(storedLogoPath);
+  return {
+    resolvedLogoPath: resolvedImagePath,
+    normalizedPersistedValue,
+  };
 }
 
 /**
@@ -9792,7 +9805,7 @@ app.get("/api/settings", async (req, res) => {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
     const result = await pool.query(
-      `SELECT id, setting_key, display_name, logo_path, theme, theme_color,
+      `SELECT id, setting_key, display_name, logo_path, export_header_path, theme, theme_color,
               offenses_handbook_title, offenses_handbook_url, updated_at
        FROM "SystemSettings"
        WHERE setting_key = 'system_config'
@@ -9811,6 +9824,10 @@ app.get("/api/settings", async (req, res) => {
       resolvedLogoPath: decryptedLogoPath,
       normalizedPersistedValue,
     } = await normalizePersistedLogoPath(settings.logo_path);
+    const {
+      resolvedImagePath: exportHeaderPath,
+      normalizedPersistedValue: normalizedExportHeaderPath,
+    } = await normalizePersistedImagePath(settings.export_header_path);
     if (
       normalizedPersistedValue &&
       normalizedPersistedValue !== settings.logo_path
@@ -9818,6 +9835,15 @@ app.get("/api/settings", async (req, res) => {
       await pool.query(
         `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
         [normalizedPersistedValue, settings.id],
+      );
+    }
+    if (
+      normalizedExportHeaderPath &&
+      normalizedExportHeaderPath !== settings.export_header_path
+    ) {
+      await pool.query(
+        `UPDATE "SystemSettings" SET export_header_path = $1 WHERE id = $2`,
+        [normalizedExportHeaderPath, settings.id],
       );
     }
 
@@ -9834,6 +9860,8 @@ app.get("/api/settings", async (req, res) => {
         settingKey: settings.setting_key,
         displayName:
           settings.display_name || "Student Violation Management System",
+        logoPath: decryptedLogoPath || null,
+        exportHeaderPath: exportHeaderPath || null,
         theme: settings.theme || "dark",
         themeColor: settings.theme_color || "#000000",
         offensesHandbookTitle:
@@ -9931,7 +9959,7 @@ app.post("/api/settings", async (req, res) => {
            offenses_handbook_title = COALESCE($4, offenses_handbook_title),
            offenses_handbook_url = COALESCE($5, offenses_handbook_url)
        WHERE setting_key = 'system_config'
-       RETURNING id, setting_key, display_name, logo_path, theme, theme_color,
+       RETURNING id, setting_key, display_name, logo_path, export_header_path, theme, theme_color,
                  offenses_handbook_title, offenses_handbook_url, updated_at`,
       [
         displayName || null,
@@ -9954,6 +9982,10 @@ app.post("/api/settings", async (req, res) => {
       resolvedLogoPath: decryptedLogoPath,
       normalizedPersistedValue,
     } = await normalizePersistedLogoPath(settings.logo_path);
+    const {
+      resolvedImagePath: exportHeaderPath,
+      normalizedPersistedValue: normalizedExportHeaderPath,
+    } = await normalizePersistedImagePath(settings.export_header_path);
     if (
       normalizedPersistedValue &&
       normalizedPersistedValue !== settings.logo_path
@@ -9961,6 +9993,15 @@ app.post("/api/settings", async (req, res) => {
       await pool.query(
         `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
         [normalizedPersistedValue, settings.id],
+      );
+    }
+    if (
+      normalizedExportHeaderPath &&
+      normalizedExportHeaderPath !== settings.export_header_path
+    ) {
+      await pool.query(
+        `UPDATE "SystemSettings" SET export_header_path = $1 WHERE id = $2`,
+        [normalizedExportHeaderPath, settings.id],
       );
     }
 
@@ -9990,6 +10031,7 @@ app.post("/api/settings", async (req, res) => {
         settingKey: settings.setting_key,
         displayName: settings.display_name,
         logoPath: decryptedLogoPath,
+        exportHeaderPath: exportHeaderPath || null,
         theme: settings.theme,
         themeColor: settings.theme_color,
         offensesHandbookTitle:
@@ -10054,7 +10096,7 @@ app.post(
         `UPDATE "SystemSettings"
        SET logo_path = $1
        WHERE setting_key = 'system_config'
-       RETURNING id, setting_key, display_name, logo_path, theme, theme_color, updated_at`,
+       RETURNING id, setting_key, display_name, logo_path, export_header_path, theme, theme_color, updated_at`,
         [encryptedPath],
       );
 
@@ -10090,6 +10132,7 @@ app.post(
           settingKey: settings.setting_key,
           displayName: settings.display_name,
           logoPath: logoPath, // Return the actual (decrypted) path for display
+          exportHeaderPath: settings.export_header_path || null,
           theme: settings.theme,
           themeColor: settings.theme_color,
           updatedAt: settings.updated_at,
@@ -10121,7 +10164,7 @@ app.delete("/api/settings/logo", async (req, res) => {
       `UPDATE "SystemSettings"
        SET logo_path = NULL
        WHERE setting_key = 'system_config'
-       RETURNING id, setting_key, display_name, logo_path, theme, theme_color, updated_at`,
+       RETURNING id, setting_key, display_name, logo_path, export_header_path, theme, theme_color, updated_at`,
       [],
     );
 
@@ -10154,6 +10197,7 @@ app.delete("/api/settings/logo", async (req, res) => {
         settingKey: settings.setting_key,
         displayName: settings.display_name,
         logoPath: null,
+        exportHeaderPath: settings.export_header_path || null,
         theme: settings.theme,
         themeColor: settings.theme_color,
         updatedAt: settings.updated_at,
@@ -10163,6 +10207,150 @@ app.delete("/api/settings/logo", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Unable to remove logo (${error.message}).`,
+    });
+  }
+});
+
+app.post(
+  "/api/settings/export-header",
+  (req, res, next) => {
+    upload.single("exportHeader")(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({
+          status: "error",
+          message: err.message || "Invalid file upload.",
+        });
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({
+        status: "error",
+        message: "No file provided.",
+      });
+    }
+
+    if (!hasDbConfig()) {
+      return res.status(500).json({
+        status: "error",
+        message: "Database is not configured.",
+      });
+    }
+
+    try {
+      await ensureAuthDatabaseReady();
+      const pool = getDbPool();
+      const {
+        logoPath: exportHeaderPath,
+        encryptedPath,
+      } = await persistImageBuffer(req.file.buffer, req.file.mimetype, {
+        fileName: req.file.originalname,
+      });
+
+      const result = await pool.query(
+        `UPDATE "SystemSettings"
+         SET export_header_path = $1
+         WHERE setting_key = 'system_config'
+         RETURNING id, setting_key, display_name, logo_path, export_header_path, theme, theme_color, updated_at`,
+        [encryptedPath],
+      );
+
+      if (!result.rows?.[0]) {
+        return res.status(404).json({
+          status: "error",
+          message: "System settings not found.",
+        });
+      }
+
+      const settings = result.rows[0];
+      await logAuditEvent(req, {
+        action: "UPLOAD_EXPORT_HEADER",
+        targetType: "system_settings",
+        targetId: settings.id,
+        details: "Uploaded a new export header image.",
+        metadata: {
+          exportHeaderPath,
+        },
+      });
+
+      return res.status(200).json({
+        status: "ok",
+        message: "Export header uploaded successfully.",
+        settings: {
+          id: settings.id,
+          settingKey: settings.setting_key,
+          displayName: settings.display_name,
+          logoPath: settings.logo_path || null,
+          exportHeaderPath,
+          theme: settings.theme,
+          themeColor: settings.theme_color,
+          updatedAt: settings.updated_at,
+        },
+      });
+    } catch (error) {
+      return res.status(503).json({
+        status: "error",
+        message: `Unable to upload export header (${error.message}).`,
+      });
+    }
+  },
+);
+
+app.delete("/api/settings/export-header", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    const result = await pool.query(
+      `UPDATE "SystemSettings"
+       SET export_header_path = NULL
+       WHERE setting_key = 'system_config'
+       RETURNING id, setting_key, display_name, logo_path, export_header_path, theme, theme_color, updated_at`,
+      [],
+    );
+
+    if (!result.rows?.[0]) {
+      return res.status(404).json({
+        status: "error",
+        message: "System settings not found.",
+      });
+    }
+
+    const settings = result.rows[0];
+    await logAuditEvent(req, {
+      action: "REMOVE_EXPORT_HEADER",
+      targetType: "system_settings",
+      targetId: settings.id,
+      details: "Removed export header image.",
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Export header removed successfully.",
+      settings: {
+        id: settings.id,
+        settingKey: settings.setting_key,
+        displayName: settings.display_name,
+        logoPath: settings.logo_path || null,
+        exportHeaderPath: null,
+        theme: settings.theme,
+        themeColor: settings.theme_color,
+        updatedAt: settings.updated_at,
+      },
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to remove export header (${error.message}).`,
     });
   }
 });

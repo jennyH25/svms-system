@@ -36,7 +36,13 @@ import EditSemesterYearModal from "@/components/modals/EditSemesterYearModal";
 import ArchiveViolationModal from "@/components/modals/ArchiveViolationModal";
 import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
+import { useSettings } from "@/context/SettingsContext";
 import { getAuditHeaders } from "@/lib/auditHeaders";
+import {
+  addStandardPdfHeader,
+  getExportHeaderPath,
+  resolveExportHeaderImage,
+} from "@/lib/exportHeader";
 import { cachedFetchJSON, invalidateFetchCache } from "@/lib/fetchHelper";
 import { formatStudentDisplayName, pluralize } from '@/lib/utils';
 import {
@@ -44,8 +50,6 @@ import {
   applyExcelPrintLayout,
   getExcelColumnLetter,
 } from "@/lib/excelExportLayout";
-
-const EXPORT_HEADER_IMAGE_PATH = "/plpasig_header.png";
 
 const blobToDataUrl = (blob) =>
   new Promise((resolve, reject) => {
@@ -128,6 +132,7 @@ const getDisplaySemester = (semester, schoolYear) => {
 };
 
 const StudentViolation = () => {
+  const { settings } = useSettings();
   const location = useLocation();
   const [showLogModal, setShowLogModal] = useState(false);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
@@ -1393,19 +1398,8 @@ const StudentViolation = () => {
   }, []);
 
   const resolveHeaderImage = useCallback(async () => {
-    const response = await fetch(EXPORT_HEADER_IMAGE_PATH);
-    if (!response.ok) {
-      throw new Error(`Required header image not found: ${EXPORT_HEADER_IMAGE_PATH}`);
-    }
-
-    const blob = await response.blob();
-    const dataUrl = await blobToDataUrl(blob);
-    const imageFormat = String(blob.type || "").toLowerCase().includes("jpeg")
-      ? "JPEG"
-      : "PNG";
-
-    return { dataUrl, imageFormat };
-  }, []);
+    return resolveExportHeaderImage(getExportHeaderPath(settings));
+  }, [settings]);
 
   const getExportRowsWithSignatures = useCallback(async () => (
     Promise.all(
@@ -1420,7 +1414,7 @@ const StudentViolation = () => {
 
   const exportAsExcel = useCallback(async () => {
     const resolvedExportRows = await getExportRowsWithSignatures();
-    const [{ Workbook }, { dataUrl }] = await Promise.all([
+    const [{ Workbook }, { dataUrl, dimensions, extension }] = await Promise.all([
       import("exceljs"),
       resolveHeaderImage(),
     ]);
@@ -1465,13 +1459,12 @@ const StudentViolation = () => {
     sheet.getRow(13).height = 26;
 
     // Add header image if available
-    if (dataUrl) {
-      const dimensions = await getDataUrlDimensions(dataUrl);
+    if (dataUrl && dimensions) {
       addCenteredExcelHeaderImage({
         workbook,
         sheet,
         dataUrl,
-        extension: "png",
+        extension,
         dimensions,
         rowStart: 1,
         rowEnd: 8,
@@ -1705,17 +1698,12 @@ const StudentViolation = () => {
     const tableMarginRight = 10;
     const tableWidth = pageWidth - tableMarginLeft - tableMarginRight;
     const tableCenterX = tableMarginLeft + tableWidth / 2;
-    const { dataUrl, imageFormat } = await resolveHeaderImage();
-    let startY = 20;
-
-    if (dataUrl) {
-      const imgProps = doc.getImageProperties(dataUrl);
-      const headerWidth = tableWidth;
-      const headerHeight = (imgProps.height * headerWidth) / imgProps.width;
-      const headerX = tableMarginLeft;
-      doc.addImage(dataUrl, imageFormat, headerX, 10, headerWidth, headerHeight);
-      startY = 10 + headerHeight + 8;
-    }
+    const { dataUrl, dimensions, imageFormat } = await resolveHeaderImage();
+    let startY = (await addStandardPdfHeader(
+      doc,
+      { dataUrl, dimensions, imageFormat },
+      { left: tableMarginLeft, right: tableMarginRight },
+    )).nextY;
 
     const generatedDateRaw = new Date();
     const month = generatedDateRaw.toLocaleString(undefined, { month: "long" });

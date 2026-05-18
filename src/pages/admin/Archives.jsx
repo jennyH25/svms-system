@@ -15,15 +15,19 @@ import Modal, { ModalFooter } from "@/components/ui/Modal";
 import AlertModal from "@/components/ui/AlertModal";
 import EditArchiveModal from "@/components/modals/EditArchiveModal";
 import SignaturePreviewModal from "@/components/modals/SignaturePreviewModal";
+import { useSettings } from "@/context/SettingsContext";
 import { getAuditHeaders } from "@/lib/auditHeaders";
+import {
+  addStandardPdfHeader,
+  getExportHeaderPath,
+  resolveExportHeaderImage,
+} from "@/lib/exportHeader";
 import { formatStudentDisplayName } from "@/lib/utils";
 import {
   addCenteredExcelHeaderImage,
   applyExcelPrintLayout,
   getExcelColumnLetter,
 } from "@/lib/excelExportLayout";
-
-const EXPORT_HEADER_IMAGE_PATH = '/plpasig_header.png';
 
 const semesterTabs = [
   { key: "1ST SEM", label: "1st Semester" },
@@ -112,23 +116,6 @@ const getImageTypeFromDataUrl = (dataUrl) => {
   if (!match) return 'PNG';
   const type = match[1].toLowerCase();
   return type === 'jpg' ? 'JPEG' : type.toUpperCase();
-};
-
-// Resolve header image for exports
-const resolveHeaderImage = async () => {
-  try {
-    const response = await fetch(EXPORT_HEADER_IMAGE_PATH);
-    if (!response.ok) {
-      throw new Error(`Header image not found: ${EXPORT_HEADER_IMAGE_PATH}`);
-    }
-    const blob = await response.blob();
-    const dataUrl = await blobToDataUrl(blob);
-    const dimensions = await getDataUrlDimensions(dataUrl);
-    return { dataUrl, dimensions };
-  } catch (error) {
-    console.warn('Failed to load header image:', error);
-    return { dataUrl: null, dimensions: null };
-  }
 };
 
 const formatExportGeneratedDate = (date) => {
@@ -393,6 +380,7 @@ const getArchiveNavigationTarget = (item) => {
 };
 
 const Archives = () => {
+  const { settings } = useSettings();
   const [activeFolder, setActiveFolder] = useState("users");
   const [activeSemester, setActiveSemester] = useState("1ST SEM");
   const [searchQuery, setSearchQuery] = useState("");
@@ -415,6 +403,14 @@ const Archives = () => {
   const [selectedUnresolvedYear, setSelectedUnresolvedYear] = useState("");
   const globalSearchLoadIdRef = useRef(0);
   const violationsLoadIdRef = useRef(0);
+  const resolveHeaderImage = useCallback(async () => {
+    try {
+      return await resolveExportHeaderImage(getExportHeaderPath(settings));
+    } catch (error) {
+      console.warn('Failed to load header image:', error);
+      return { dataUrl: null, dimensions: null, extension: 'png', imageFormat: 'PNG' };
+    }
+  }, [settings]);
 
   // Restore preserved year-section mapping from localStorage to prevent lost history during navigation/refresh.
   useEffect(() => {
@@ -2898,7 +2894,7 @@ const Archives = () => {
             workbook,
             sheet,
             dataUrl: headerImage.dataUrl,
-            extension: 'png',
+            extension: headerImage.extension || 'png',
             dimensions: headerImage.dimensions,
             rowStart: 1,
             rowEnd: 8,
@@ -3186,16 +3182,10 @@ const Archives = () => {
         const tableMarginRight = 10;
         const tableWidth = pageWidth - tableMarginLeft - tableMarginRight;
         const tableCenterX = tableMarginLeft + tableWidth / 2;
-        let startY = 20;
-
-        // Add header image if available
-        if (headerImage.dataUrl && headerImage.dimensions) {
-          const headerWidth = tableWidth;
-          const headerHeight = (headerImage.dimensions.height * headerWidth) / headerImage.dimensions.width;
-          const headerX = tableMarginLeft;
-          doc.addImage(headerImage.dataUrl, 'PNG', headerX, 10, headerWidth, headerHeight);
-          startY = 10 + headerHeight + 8;
-        }
+        let startY = (await addStandardPdfHeader(doc, headerImage, {
+          left: tableMarginLeft,
+          right: tableMarginRight,
+        })).nextY;
 
         const generatedDateRaw = new Date();
         const month = generatedDateRaw.toLocaleString(undefined, { month: 'long' });

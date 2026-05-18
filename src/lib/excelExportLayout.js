@@ -14,8 +14,15 @@ export const getExcelColumnLetter = (columnNumber) => {
   return columnName || "A";
 };
 
-const getSheetWidthPx = (sheet) =>
-  sheet.columns.reduce((total, column) => total + Number(column.width || 10) * PX_PER_COL_WIDTH, 0);
+const getColumnsWidthPx = (sheet, colStart = 1, colEnd = sheet.columns.length) => {
+  let total = 0;
+  for (let columnIndex = colStart; columnIndex <= colEnd; columnIndex += 1) {
+    total += Number(sheet.getColumn(columnIndex).width || 10) * PX_PER_COL_WIDTH;
+  }
+  return total;
+};
+
+const getSheetWidthPx = (sheet) => getColumnsWidthPx(sheet);
 
 const getRowsHeightPx = (sheet, rowStart, rowEnd) => {
   let total = 0;
@@ -25,16 +32,16 @@ const getRowsHeightPx = (sheet, rowStart, rowEnd) => {
   return total;
 };
 
-const toColumnCoordinate = (sheet, pixelOffset) => {
+const toColumnCoordinate = (sheet, pixelOffset, colStart = 1, colEnd = sheet.columns.length) => {
   let remaining = pixelOffset;
-  for (let colIndex = 0; colIndex < sheet.columns.length; colIndex += 1) {
-    const colPx = Number(sheet.columns[colIndex]?.width || 10) * PX_PER_COL_WIDTH;
+  for (let colIndex = colStart; colIndex <= colEnd; colIndex += 1) {
+    const colPx = Number(sheet.getColumn(colIndex)?.width || 10) * PX_PER_COL_WIDTH;
     if (remaining <= colPx) {
-      return colIndex + remaining / colPx;
+      return (colIndex - 1) + remaining / colPx;
     }
     remaining -= colPx;
   }
-  return Math.max(sheet.columns.length - 1, 0);
+  return Math.max(colEnd - 1, 0);
 };
 
 const toRowCoordinate = (sheet, pixelOffset, rowStart, rowEnd) => {
@@ -80,6 +87,8 @@ export const addCenteredExcelHeaderImage = ({
   dataUrl,
   extension = "png",
   dimensions,
+  colStart = 1,
+  colEnd = sheet.columns.length,
   rowStart = 1,
   rowEnd = 8,
   widthScale = 1,
@@ -87,7 +96,7 @@ export const addCenteredExcelHeaderImage = ({
 }) => {
   if (!dataUrl || !dimensions?.width || !dimensions?.height) return;
 
-  const regionWidthPx = getSheetWidthPx(sheet);
+  const regionWidthPx = getColumnsWidthPx(sheet, colStart, colEnd);
   const regionHeightPx = getRowsHeightPx(sheet, rowStart, rowEnd);
   const targetImageWidthPx = Math.max(8, regionWidthPx * widthScale);
   const maxImageHeightPx = Math.max(8, regionHeightPx * heightScale);
@@ -107,7 +116,7 @@ export const addCenteredExcelHeaderImage = ({
   const imageId = workbook.addImage({ base64: dataUrl, extension });
   sheet.addImage(imageId, {
     tl: {
-      col: toColumnCoordinate(sheet, leftOffsetPx),
+      col: toColumnCoordinate(sheet, leftOffsetPx, colStart, colEnd),
       row: toRowCoordinate(sheet, topOffsetPx, rowStart, rowEnd),
     },
     ext: {

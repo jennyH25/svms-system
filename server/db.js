@@ -1090,6 +1090,7 @@ export async function syncSystemSettingsDatabase() {
       setting_key VARCHAR(100) NOT NULL UNIQUE,
       display_name VARCHAR(255),
       logo_path TEXT,
+      export_header_path TEXT,
       theme VARCHAR(50) DEFAULT 'dark',
       theme_color VARCHAR(7),
       current_semester VARCHAR(20) DEFAULT '1ST SEM',
@@ -1102,6 +1103,11 @@ export async function syncSystemSettingsDatabase() {
   `);
 
   // Add new columns if they don't exist
+  await dbPool.query(`
+    ALTER TABLE "SystemSettings"
+    ADD COLUMN IF NOT EXISTS export_header_path TEXT
+  `);
+
   await dbPool.query(`
     ALTER TABLE "SystemSettings"
     ADD COLUMN IF NOT EXISTS current_semester VARCHAR(20) DEFAULT '1ST SEM'

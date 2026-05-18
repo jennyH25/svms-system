@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { getAuditHeaders } from '@/lib/auditHeaders'
 import { invalidateFetchCache } from '@/lib/fetchHelper'
+import { formatStudentDisplayName } from '@/lib/utils'
 
 const SUPER_ADMIN_TRUSTED_DEVICE_KEY = "svms_super_admin_trusted_device"
 
@@ -151,7 +152,11 @@ const Navbar = ({ onRequestLogout }) => {
         firstName: formData.firstName,
         middleInitial: formData.middleInitial,
         lastName: formData.lastName,
-        fullName: [formData.firstName, formData.middleInitial ? `${formData.middleInitial}.` : '', formData.lastName].filter(Boolean).join(' '),
+        fullName: formatStudentDisplayName({
+          firstName: formData.firstName,
+          middleInitial: formData.middleInitial,
+          lastName: formData.lastName,
+        }),
       }
 
       let savedUser = null
