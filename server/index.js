@@ -4947,6 +4947,58 @@ function parseImportedProgramYearSection(rawValue) {
   };
 }
 
+const STUDENT_SCHOOL_ID_PATTERN = /^\d{2}-\d{5}$/;
+const STUDENT_YEAR_SECTION_PATTERN = /^[1-4][A-Z]$/;
+
+function normalizeStudentSchoolId(value) {
+  const digitsOnly = String(value || "").replace(/\D/g, "").slice(0, 7);
+  if (digitsOnly.length <= 2) {
+    return digitsOnly;
+  }
+  return `${digitsOnly.slice(0, 2)}-${digitsOnly.slice(2)}`;
+}
+
+function normalizeStudentYearSection(value) {
+  const sanitized = String(value || "")
+    .replace(/[^0-9a-z]/gi, "")
+    .toUpperCase()
+    .slice(0, 2);
+
+  if (!sanitized) {
+    return "";
+  }
+
+  const yearChar = sanitized.charAt(0).replace(/[^1-4]/g, "");
+  const sectionChar = sanitized.slice(1).replace(/[^A-Z]/g, "");
+
+  return `${yearChar}${sectionChar}`.slice(0, 2);
+}
+
+function getStudentSchoolIdValidationMessage(value, label = "School ID") {
+  const normalized = normalizeStudentSchoolId(value);
+  if (!normalized) {
+    return `${label} is required.`;
+  }
+  if (!STUDENT_SCHOOL_ID_PATTERN.test(normalized)) {
+    return `${label} must use the format 23-00164.`;
+  }
+  return "";
+}
+
+function getStudentYearSectionValidationMessage(
+  value,
+  label = "Year/Section",
+) {
+  const normalized = normalizeStudentYearSection(value);
+  if (!normalized) {
+    return `${label} is required.`;
+  }
+  if (!STUDENT_YEAR_SECTION_PATTERN.test(normalized)) {
+    return `${label} must use the format 1A, 2B, or 3C.`;
+  }
+  return "";
+}
+
 function normalizeImportedStudentStatus(value) {
   return String(value || "").trim().toLowerCase() === "irregular"
     ? "Irregular"
@@ -4999,6 +5051,14 @@ function parseStudentWorkbook(buffer) {
       throw new Error(`Row ${rowNumber}: ${getInvalidStudentEmailMessage(email)}`);
     }
 
+    const schoolIdValidationMessage = getStudentSchoolIdValidationMessage(
+      schoolId,
+      `Row ${rowNumber}: Student Id`,
+    );
+    if (schoolIdValidationMessage) {
+      throw new Error(schoolIdValidationMessage);
+    }
+
     if (seenSchoolIds.has(schoolId.toLowerCase())) {
       throw new Error(`Duplicate Student Id found in workbook at row ${rowNumber}.`);
     }
@@ -5018,6 +5078,14 @@ function parseStudentWorkbook(buffer) {
       throw new Error(
         `Unable to parse Program-Year/Section at row ${rowNumber}.`,
       );
+    }
+
+    const yearSectionValidationMessage = getStudentYearSectionValidationMessage(
+      parsedProgram.yearSection,
+      `Row ${rowNumber}: Year/Section`,
+    );
+    if (yearSectionValidationMessage) {
+      throw new Error(yearSectionValidationMessage);
     }
 
     students.push({
@@ -7703,7 +7771,7 @@ app.post("/api/students", async (req, res) => {
     req.body ?? {};
   let createdUserId = null;
   let createdStudentId = null;
-  const normalizedSchoolId = String(schoolId || "").trim();
+  const normalizedSchoolId = normalizeStudentSchoolId(schoolId);
   const normalizedEmail = String(email || "")
     .trim()
     .toLowerCase();
@@ -7711,7 +7779,7 @@ app.post("/api/students", async (req, res) => {
   const cleanedMiddleInitial = formatStudentMiddleInitial(middleInitial);
   const cleanedLast = formatStudentNameSegment(lastName);
   const normalizedProgram = String(program || "").trim();
-  const normalizedYearSection = String(yearSection || "").trim();
+  const normalizedYearSection = normalizeStudentYearSection(yearSection);
 
   if (
     !normalizedSchoolId ||
@@ -7732,6 +7800,24 @@ app.post("/api/students", async (req, res) => {
     return res.status(400).json({
       status: "error",
       message: getInvalidStudentEmailMessage(normalizedEmail),
+    });
+  }
+
+  const schoolIdValidationMessage =
+    getStudentSchoolIdValidationMessage(normalizedSchoolId);
+  if (schoolIdValidationMessage) {
+    return res.status(400).json({
+      status: "error",
+      message: schoolIdValidationMessage,
+    });
+  }
+
+  const yearSectionValidationMessage =
+    getStudentYearSectionValidationMessage(normalizedYearSection);
+  if (yearSectionValidationMessage) {
+    return res.status(400).json({
+      status: "error",
+      message: yearSectionValidationMessage,
     });
   }
 
@@ -7946,12 +8032,12 @@ app.put("/api/students/:id", async (req, res) => {
     const cleanedMiddleInitial = formatStudentMiddleInitial(middleInitial);
     const cleanedLast = formatStudentNameSegment(lastName);
     const normalizedUsername = String(username || "").trim();
-    const normalizedSchoolId = String(schoolId || "").trim();
+    const normalizedSchoolId = normalizeStudentSchoolId(schoolId);
     const normalizedEmail = String(email || "")
       .trim()
       .toLowerCase();
     const normalizedProgram = String(program || "").trim();
-    const normalizedYearSection = String(yearSection || "").trim();
+    const normalizedYearSection = normalizeStudentYearSection(yearSection);
     let normalizedStatus = String(status || "").trim();
     let normalizedYearLevel = null;
     const fullName = buildStudentFullName(
@@ -7965,6 +8051,28 @@ app.put("/api/students/:id", async (req, res) => {
         status: "error",
         message: getInvalidStudentEmailMessage(normalizedEmail),
       });
+    }
+
+    if (schoolId != null && normalizedSchoolId) {
+      const schoolIdValidationMessage =
+        getStudentSchoolIdValidationMessage(normalizedSchoolId);
+      if (schoolIdValidationMessage) {
+        return res.status(400).json({
+          status: "error",
+          message: schoolIdValidationMessage,
+        });
+      }
+    }
+
+    if (yearSection != null && normalizedYearSection) {
+      const yearSectionValidationMessage =
+        getStudentYearSectionValidationMessage(normalizedYearSection);
+      if (yearSectionValidationMessage) {
+        return res.status(400).json({
+          status: "error",
+          message: yearSectionValidationMessage,
+        });
+      }
     }
 
     const studentData = await pool.query(

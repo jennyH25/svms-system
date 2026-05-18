@@ -5,6 +5,9 @@ import GlassInput from "@/components/ui/GlassInput";
 import Button from "@/components/ui/Button";
 import SelectField from "@/components/ui/SelectField";
 
+const SCHOOL_ID_PATTERN = /^\d{2}-\d{5}$/;
+const YEAR_SECTION_PATTERN = /^[1-4][A-Z]$/;
+
 const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
   const allowedEmailDomain = "@plpasig.edu.ph";
   const [formData, setFormData] = useState({
@@ -20,6 +23,8 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
     violationCount: 0,
   });
   const [emailError, setEmailError] = useState("");
+  const [schoolIdError, setSchoolIdError] = useState("");
+  const [yearSectionError, setYearSectionError] = useState("");
 
   useEffect(() => {
     if (user) {
@@ -36,13 +41,49 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
         violationCount: Number(user.violationCount) || 0,
       });
       setEmailError("");
+      setSchoolIdError("");
+      setYearSectionError("");
     }
   }, [user]);
 
+  const normalizeSchoolIdInput = (value) => {
+    const digitsOnly = String(value || "").replace(/\D/g, "").slice(0, 7);
+    if (digitsOnly.length <= 2) {
+      return digitsOnly;
+    }
+    return `${digitsOnly.slice(0, 2)}-${digitsOnly.slice(2)}`;
+  };
+
+  const normalizeYearSectionInput = (value) => {
+    const sanitized = String(value || "")
+      .replace(/[^0-9a-z]/gi, "")
+      .toUpperCase()
+      .slice(0, 2);
+    if (!sanitized) {
+      return "";
+    }
+    const yearChar = sanitized.charAt(0).replace(/[^1-4]/g, "");
+    const sectionChar = sanitized.slice(1).replace(/[^A-Z]/g, "");
+    return `${yearChar}${sectionChar}`.slice(0, 2);
+  };
+
   const handleChange = (e) => {
-    const { name, value } = e.target;
+    const { name } = e.target;
+    let { value } = e.target;
     if (name === "email" && emailError) {
       setEmailError("");
+    }
+    if (name === "schoolId") {
+      value = normalizeSchoolIdInput(value);
+      if (schoolIdError) {
+        setSchoolIdError("");
+      }
+    }
+    if (name === "yearSection") {
+      value = normalizeYearSectionInput(value);
+      if (yearSectionError) {
+        setYearSectionError("");
+      }
     }
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
@@ -65,15 +106,49 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
     return "";
   };
 
+  const validateSchoolId = (value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+      return "Please enter a school ID.";
+    }
+    if (!SCHOOL_ID_PATTERN.test(normalized)) {
+      return "School ID must use the format 23-00164.";
+    }
+    return "";
+  };
+
+  const validateYearSection = (value) => {
+    const normalized = String(value || "").trim().toUpperCase();
+    if (!normalized) {
+      return "Please enter a year/section.";
+    }
+    if (!YEAR_SECTION_PATTERN.test(normalized)) {
+      return "Year/Section must use the format 1A, 2B, or 3C.";
+    }
+    return "";
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const errorMessage = validateEmail(formData.email);
+    const schoolIdValidation = validateSchoolId(formData.schoolId);
+    const yearSectionValidation = validateYearSection(formData.yearSection);
     if (errorMessage) {
       setEmailError(errorMessage);
+    }
+    if (schoolIdValidation) {
+      setSchoolIdError(schoolIdValidation);
+    }
+    if (yearSectionValidation) {
+      setYearSectionError(yearSectionValidation);
+    }
+    if (errorMessage || schoolIdValidation || yearSectionValidation) {
       return;
     }
 
     setEmailError("");
+    setSchoolIdError("");
+    setYearSectionError("");
     await onSave(user.id, formData);
   };
 
@@ -108,7 +183,6 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
             name="middleInitial"
             value={formData.middleInitial}
             onChange={handleChange}
-            placeholder="M"
             maxLength={3}
           />
           <GlassInput
@@ -134,8 +208,15 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
             name="schoolId"
             value={formData.schoolId}
             onChange={handleChange}
-            placeholder="School ID"
+            placeholder="00-0000"
+            maxLength={8}
+            aria-describedby="edit-user-school-id-error"
           />
+          {schoolIdError && (
+            <p id="edit-user-school-id-error" className="mt-2 text-sm text-red-300 md:col-span-2">
+              {schoolIdError}
+            </p>
+          )}
           <GlassInput
             label={
               <span className="text-sm font-medium text-white mb-2">
@@ -159,8 +240,15 @@ const EditUserModal = ({ isOpen, onClose, user, onSave, isSaving = false }) => {
             name="yearSection"
             value={formData.yearSection}
             onChange={handleChange}
-            placeholder="Year/Section"
+            placeholder="1A"
+            maxLength={2}
+            aria-describedby="edit-user-year-section-error"
           />
+          {yearSectionError && (
+            <p id="edit-user-year-section-error" className="mt-2 text-sm text-red-300 md:col-span-2">
+              {yearSectionError}
+            </p>
+          )}
           <SelectField
             label="Program"
             name="program"

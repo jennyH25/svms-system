@@ -115,6 +115,24 @@ const buildImportErrorModalState = (message) => {
   };
 };
 
+const STUDENT_SCHOOL_ID_PATTERN = /^\d{2}-\d{5}$/;
+const STUDENT_YEAR_SECTION_PATTERN = /^[1-4][A-Z]$/;
+
+const validateStudentFieldFormats = (schoolId, yearSection) => {
+  const normalizedSchoolId = String(schoolId || "").trim();
+  const normalizedYearSection = String(yearSection || "").trim().toUpperCase();
+
+  if (!STUDENT_SCHOOL_ID_PATTERN.test(normalizedSchoolId)) {
+    return "School ID must use the format 23-00164.";
+  }
+
+  if (!STUDENT_YEAR_SECTION_PATTERN.test(normalizedYearSection)) {
+    return "Year/Section must use the format 1A, 2B, or 3C.";
+  }
+
+  return "";
+};
+
 const UserManagement = () => {
   const { settings } = useSettings();
   const [activeTab, setActiveTab] = useState("regular");
@@ -392,6 +410,15 @@ const UserManagement = () => {
   });
 
   const handleSaveEdit = async (id, updatedData) => {
+    const validationMessage = validateStudentFieldFormats(
+      updatedData.schoolId,
+      updatedData.yearSection,
+    );
+    if (validationMessage) {
+      alert(validationMessage);
+      return false;
+    }
+
     const normalizedSchoolId = String(updatedData.schoolId || "")
       .trim()
       .toLowerCase();
@@ -483,6 +510,15 @@ const UserManagement = () => {
   };
 
   const handleSaveNewUser = async (userData) => {
+    const validationMessage = validateStudentFieldFormats(
+      userData.schoolId,
+      userData.yearSection,
+    );
+    if (validationMessage) {
+      alert(validationMessage);
+      return false;
+    }
+
     const normalizedSchoolId = String(userData.schoolId || "")
       .trim()
       .toLowerCase();

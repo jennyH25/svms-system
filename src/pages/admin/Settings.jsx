@@ -605,7 +605,7 @@ const Settings = () => {
                     type="button"
                     onClick={handleDownloadTemplate}
                     disabled={isDownloadingTemplate}
-                    className="inline-flex min-h-[44px] items-center justify-center gap-2 self-start rounded-lg bg-[#A3AED0] px-6 text-base font-medium text-[#23262B] transition-colors hover:bg-[#8B9CB8]"
+                    className="inline-flex min-h-[36px] items-center justify-center gap-2 self-start rounded-md bg-[#F4B942] px-4 py-2 text-sm font-semibold text-[#23180A] shadow-[0_10px_24px_rgba(244,185,66,0.22)] transition-colors hover:bg-[#E2A52D] disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     <Download className="h-4 w-4" />
                     {isDownloadingTemplate ? <LoadingText label="Downloading" /> : 'Download Template'}
