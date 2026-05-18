@@ -147,6 +147,7 @@ const Settings = () => {
   const [success, setSuccess] = useState('')
   const [isPreparingLogo, setIsPreparingLogo] = useState(false)
   const [isPreparingExportHeader, setIsPreparingExportHeader] = useState(false)
+  const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const logoInputRef = useRef(null)
   const exportHeaderInputRef = useRef(null)
@@ -321,6 +322,36 @@ const Settings = () => {
       'Export header removal pending. Click "Save Changes" to apply.',
     )
     setError('')
+  }
+
+  const handleDownloadTemplate = async () => {
+    try {
+      setIsDownloadingTemplate(true)
+      setError('')
+      const response = await fetch(exportHeaderTemplateFile, {
+        cache: 'no-store',
+      })
+
+      if (!response.ok) {
+        throw new Error('Unable to download the template file.')
+      }
+
+      const blob = await response.blob()
+      const downloadUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = 'HEADER-TEMPLATE-EMPTY.docx'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(downloadUrl)
+    } catch (err) {
+      setError(err.message || 'Unable to download the template file.')
+      setSuccess('')
+      window.setTimeout(() => setError(''), 5000)
+    } finally {
+      setIsDownloadingTemplate(false)
+    }
   }
 
   const handleSaveChanges = async () => {
@@ -570,14 +601,15 @@ const Settings = () => {
                   </div>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <a
-                    href={exportHeaderTemplateFile}
-                    download="HEADER-TEMPLATE-EMPTY.docx"
+                  <button
+                    type="button"
+                    onClick={handleDownloadTemplate}
+                    disabled={isDownloadingTemplate}
                     className="inline-flex min-h-[44px] items-center justify-center gap-2 self-start rounded-lg bg-[#A3AED0] px-6 text-base font-medium text-[#23262B] transition-colors hover:bg-[#8B9CB8]"
                   >
                     <Download className="h-4 w-4" />
-                    Download Template
-                  </a>
+                    {isDownloadingTemplate ? <LoadingText label="Downloading" /> : 'Download Template'}
+                  </button>
                   <div className="self-start rounded-full border border-white/10 bg-[#1a1a1a] px-4 py-2 text-sm text-gray-200 sm:self-auto">
                     Required image size: <span className="font-semibold text-white">1598 x 293</span>
                   </div>

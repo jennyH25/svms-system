@@ -10108,6 +10108,19 @@ app.post(
       }
 
       const settings = result.rows[0];
+      const {
+        resolvedImagePath: exportHeaderPath,
+        normalizedPersistedValue: normalizedExportHeaderPath,
+      } = await normalizePersistedImagePath(settings.export_header_path);
+      if (
+        normalizedExportHeaderPath &&
+        normalizedExportHeaderPath !== settings.export_header_path
+      ) {
+        await pool.query(
+          `UPDATE "SystemSettings" SET export_header_path = $1 WHERE id = $2`,
+          [normalizedExportHeaderPath, settings.id],
+        );
+      }
 
       await logAuditEvent(req, {
         action: "UPLOAD_LOGO",
@@ -10132,7 +10145,7 @@ app.post(
           settingKey: settings.setting_key,
           displayName: settings.display_name,
           logoPath: logoPath, // Return the actual (decrypted) path for display
-          exportHeaderPath: settings.export_header_path || null,
+          exportHeaderPath: exportHeaderPath || null,
           theme: settings.theme,
           themeColor: settings.theme_color,
           updatedAt: settings.updated_at,
@@ -10176,6 +10189,19 @@ app.delete("/api/settings/logo", async (req, res) => {
     }
 
     const settings = result.rows[0];
+    const {
+      resolvedImagePath: exportHeaderPath,
+      normalizedPersistedValue: normalizedExportHeaderPath,
+    } = await normalizePersistedImagePath(settings.export_header_path);
+    if (
+      normalizedExportHeaderPath &&
+      normalizedExportHeaderPath !== settings.export_header_path
+    ) {
+      await pool.query(
+        `UPDATE "SystemSettings" SET export_header_path = $1 WHERE id = $2`,
+        [normalizedExportHeaderPath, settings.id],
+      );
+    }
 
     await logAuditEvent(req, {
       action: "REMOVE_LOGO",
@@ -10197,7 +10223,7 @@ app.delete("/api/settings/logo", async (req, res) => {
         settingKey: settings.setting_key,
         displayName: settings.display_name,
         logoPath: null,
-        exportHeaderPath: settings.export_header_path || null,
+        exportHeaderPath: exportHeaderPath || null,
         theme: settings.theme,
         themeColor: settings.theme_color,
         updatedAt: settings.updated_at,
@@ -10265,6 +10291,19 @@ app.post(
       }
 
       const settings = result.rows[0];
+      const {
+        resolvedLogoPath: logoPath,
+        normalizedPersistedValue: normalizedLogoPath,
+      } = await normalizePersistedLogoPath(settings.logo_path);
+      if (
+        normalizedLogoPath &&
+        normalizedLogoPath !== settings.logo_path
+      ) {
+        await pool.query(
+          `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+          [normalizedLogoPath, settings.id],
+        );
+      }
       await logAuditEvent(req, {
         action: "UPLOAD_EXPORT_HEADER",
         targetType: "system_settings",
@@ -10282,7 +10321,7 @@ app.post(
           id: settings.id,
           settingKey: settings.setting_key,
           displayName: settings.display_name,
-          logoPath: settings.logo_path || null,
+          logoPath: logoPath || null,
           exportHeaderPath,
           theme: settings.theme,
           themeColor: settings.theme_color,
@@ -10326,6 +10365,19 @@ app.delete("/api/settings/export-header", async (req, res) => {
     }
 
     const settings = result.rows[0];
+    const {
+      resolvedLogoPath: logoPath,
+      normalizedPersistedValue: normalizedLogoPath,
+    } = await normalizePersistedLogoPath(settings.logo_path);
+    if (
+      normalizedLogoPath &&
+      normalizedLogoPath !== settings.logo_path
+    ) {
+      await pool.query(
+        `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+        [normalizedLogoPath, settings.id],
+      );
+    }
     await logAuditEvent(req, {
       action: "REMOVE_EXPORT_HEADER",
       targetType: "system_settings",
@@ -10336,14 +10388,14 @@ app.delete("/api/settings/export-header", async (req, res) => {
     return res.status(200).json({
       status: "ok",
       message: "Export header removed successfully.",
-      settings: {
-        id: settings.id,
-        settingKey: settings.setting_key,
-        displayName: settings.display_name,
-        logoPath: settings.logo_path || null,
-        exportHeaderPath: null,
-        theme: settings.theme,
-        themeColor: settings.theme_color,
+        settings: {
+          id: settings.id,
+          settingKey: settings.setting_key,
+          displayName: settings.display_name,
+          logoPath: logoPath || null,
+          exportHeaderPath: null,
+          theme: settings.theme,
+          themeColor: settings.theme_color,
         updatedAt: settings.updated_at,
       },
     });
