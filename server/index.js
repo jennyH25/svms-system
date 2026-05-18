@@ -44,11 +44,42 @@ const EMAIL_LOGO_FILE_PATH = path.resolve(publicDir, "ccs_logo.png");
 const EMAIL_LOGO_PUBLIC_PATH = "/ccs_logo.png";
 const EMAIL_LOGO_DISPLAY_WIDTH = 72;
 const EMAIL_LOGO_DISPLAY_HEIGHT = 41;
+const EMAIL_INLINE_LOGO_CID = "svms-system-logo";
+const DEFAULT_SYSTEM_DISPLAY_NAME = "Student Violation Management System";
 const STUDENT_NOTIFICATIONS_PATH = "/student/notifications";
 const GOOGLE_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const GOOGLE_OAUTH_SCOPE = "openid email profile";
+let cachedSystemEmailBranding = {
+  displayName: DEFAULT_SYSTEM_DISPLAY_NAME,
+  logoPath: null,
+};
+
+function getSystemDisplayName() {
+  return String(
+    cachedSystemEmailBranding.displayName || DEFAULT_SYSTEM_DISPLAY_NAME,
+  ).trim() || DEFAULT_SYSTEM_DISPLAY_NAME;
+}
+
+function setCachedSystemEmailBranding({ displayName, logoPath } = {}) {
+  if (displayName !== undefined) {
+    cachedSystemEmailBranding.displayName =
+      String(displayName || "").trim() || DEFAULT_SYSTEM_DISPLAY_NAME;
+  }
+
+  if (logoPath !== undefined) {
+    cachedSystemEmailBranding.logoPath = logoPath || null;
+  }
+}
 
 function getEmailLogoUrl() {
+  const configuredLogoPath = String(cachedSystemEmailBranding.logoPath || "").trim();
+  if (configuredLogoPath) {
+    if (configuredLogoPath.startsWith("data:image/")) {
+      return `cid:${EMAIL_INLINE_LOGO_CID}`;
+    }
+    return configuredLogoPath;
+  }
+
   const explicitLogoUrl = String(process.env.EMAIL_LOGO_URL || "").trim();
   if (explicitLogoUrl) {
     return explicitLogoUrl;
@@ -75,11 +106,137 @@ function getEmailLogoUrl() {
     return `https://${vercelUrl}${EMAIL_LOGO_PUBLIC_PATH}`;
   }
 
-  if (!isServerlessRuntime) {
-    return `http://localhost:${port}${EMAIL_LOGO_PUBLIC_PATH}`;
+  return `cid:${EMAIL_INLINE_LOGO_CID}`;
+}
+
+function parseImageDataUrl(dataUrl) {
+  const normalized = String(dataUrl || "").trim();
+  const match = normalized.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+  if (!match) {
+    return null;
   }
 
-  return "";
+  const mimeType = match[1].toLowerCase();
+  const base64Payload = match[2];
+  const extension = (() => {
+    if (mimeType === "image/jpeg") return "jpg";
+    if (mimeType === "image/png") return "png";
+    if (mimeType === "image/webp") return "webp";
+    if (mimeType === "image/gif") return "gif";
+    if (mimeType === "image/svg+xml") return "svg";
+    if (mimeType === "image/bmp") return "bmp";
+    if (mimeType === "image/x-icon") return "ico";
+    return "img";
+  })();
+
+  return {
+    mimeType,
+    extension,
+    content: Buffer.from(base64Payload, "base64"),
+  };
+}
+
+async function buildInlineEmailLogoAttachment() {
+  const configuredLogoPath = String(cachedSystemEmailBranding.logoPath || "").trim();
+
+  if (configuredLogoPath.startsWith("data:image/")) {
+    const parsedDataUrl = parseImageDataUrl(configuredLogoPath);
+    if (!parsedDataUrl) {
+      return null;
+    }
+
+    return {
+      filename: `system-logo.${parsedDataUrl.extension}`,
+      content: parsedDataUrl.content,
+      contentType: parsedDataUrl.mimeType,
+      cid: EMAIL_INLINE_LOGO_CID,
+    };
+  }
+
+  if (configuredLogoPath) {
+    return null;
+  }
+
+  try {
+    const fileContent = await readFile(EMAIL_LOGO_FILE_PATH);
+    return {
+      filename: path.basename(EMAIL_LOGO_FILE_PATH),
+      content: fileContent,
+      contentType: getMimeTypeFromFilePath(EMAIL_LOGO_FILE_PATH),
+      cid: EMAIL_INLINE_LOGO_CID,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function withInlineEmailLogoAttachment(mailOptions) {
+  if (
+    !mailOptions ||
+    typeof mailOptions.html !== "string" ||
+    !mailOptions.html.includes(`cid:${EMAIL_INLINE_LOGO_CID}`)
+  ) {
+    return mailOptions;
+  }
+
+  const attachment = await buildInlineEmailLogoAttachment();
+  if (!attachment) {
+    return mailOptions;
+  }
+
+  return {
+    ...mailOptions,
+    attachments: [...(mailOptions.attachments || []), attachment],
+  };
+}
+
+async function refreshSystemEmailBrandingFromDatabase() {
+  if (!hasDbConfig()) {
+    return cachedSystemEmailBranding;
+  }
+
+  try {
+    const pool = getDbPool();
+    const result = await pool.query(
+      `SELECT id, display_name, logo_path
+       FROM "SystemSettings"
+       WHERE setting_key = 'system_config'
+       LIMIT 1`,
+    );
+    const settings = result.rows?.[0];
+
+    if (!settings) {
+      setCachedSystemEmailBranding({
+        displayName: DEFAULT_SYSTEM_DISPLAY_NAME,
+        logoPath: null,
+      });
+      return cachedSystemEmailBranding;
+    }
+
+    const {
+      resolvedLogoPath,
+      normalizedPersistedValue,
+    } = await normalizePersistedLogoPath(settings.logo_path);
+
+    if (
+      normalizedPersistedValue !== null &&
+      normalizedPersistedValue !== settings.logo_path
+    ) {
+      await pool.query(
+        `UPDATE "SystemSettings" SET logo_path = $1 WHERE id = $2`,
+        [normalizedPersistedValue, settings.id],
+      );
+    }
+
+    setCachedSystemEmailBranding({
+      displayName: settings.display_name || DEFAULT_SYSTEM_DISPLAY_NAME,
+      logoPath: resolvedLogoPath || null,
+    });
+  } catch (error) {
+    console.warn(`Unable to refresh system email branding: ${error.message}`);
+  }
+
+  return cachedSystemEmailBranding;
 }
 
 function getEmailAppBaseUrl() {
@@ -2947,6 +3104,10 @@ function getMimeTypeFromFilePath(filePath) {
   return "application/octet-stream";
 }
 
+function buildImageDataUrl(buffer, mimeType = "application/octet-stream") {
+  return `data:${String(mimeType || "application/octet-stream").trim()};base64,${buffer.toString("base64")}`;
+}
+
 function chunkArray(items, chunkSize) {
   const normalizedItems = Array.isArray(items) ? items : [];
   const normalizedChunkSize = Math.max(1, Number(chunkSize) || 1);
@@ -3147,24 +3308,7 @@ async function uploadBufferToSupabaseStorage(
 }
 
 async function persistLogoBuffer(buffer, mimeType, options = {}) {
-  const extension = path.extname(String(options.fileName || "")).toLowerCase() ||
-    (() => {
-      if (mimeType === "image/png") return ".png";
-      if (mimeType === "image/jpeg") return ".jpg";
-      if (mimeType === "image/webp") return ".webp";
-      if (mimeType === "image/gif") return ".gif";
-      if (mimeType === "image/svg+xml") return ".svg";
-      if (mimeType === "image/bmp") return ".bmp";
-      if (mimeType === "image/x-icon") return ".ico";
-      return ".bin";
-    })();
-
-  const uploadedUrl = await uploadBufferToSupabaseStorage(buffer, {
-    contentType: mimeType,
-    prefix: "logos",
-    extension,
-  });
-
+  const uploadedUrl = buildImageDataUrl(buffer, mimeType);
   return {
     logoPath: uploadedUrl,
     encryptedPath: encryptImagePath(uploadedUrl),
@@ -3719,12 +3863,13 @@ function legacyLightBuildCredentialEmailTemplate({
   password,
   accountLabel = "Student",
 }) {
+  const systemDisplayName = getSystemDisplayName();
   return buildSystemEmailShell({
     eyebrow: "SVMS Account Created",
     heading: `Your ${escapeHtml(accountLabel)} Account Credentials`,
     lead: `Hello ${escapeHtml(firstName || "Student")},`,
     contentHtml: `
-      <p style="margin:0 0 14px 0;color:#4b5563;font-size:14px;line-height:1.6;">An account has been created for you in the Student Violation Management System. Use the credentials below to sign in.</p>
+      <p style="margin:0 0 14px 0;color:#4b5563;font-size:14px;line-height:1.6;">An account has been created for you in the ${escapeHtml(systemDisplayName)}. Use the credentials below to sign in.</p>
       <div style="background:linear-gradient(180deg,#f0f9ff 0%,#f8fbff 100%);border:1px solid #cfe9ff;border-radius:14px;padding:18px;margin:20px 0;">
         <p style="margin:0 0 12px 0;font-size:13px;font-weight:600;color:#0369a1;letter-spacing:0.06em;text-transform:uppercase;">Username</p>
         <p style="margin:0 0 18px 0;font-size:15px;color:#0f172a;font-weight:700;letter-spacing:0.03em;">${escapeHtml(username)}</p>
@@ -3736,7 +3881,7 @@ function legacyLightBuildCredentialEmailTemplate({
       </div>
     `,
     footerNote:
-      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+      `This is an automated message from ${systemDisplayName}. Please do not reply to this email.`,
   });
 }
 
@@ -3756,9 +3901,14 @@ function legacyLightBuildSystemEmailShell({
   contentHtml,
   footerNote,
 }) {
+  const systemDisplayName = getSystemDisplayName();
   const logoUrl = getEmailLogoUrl();
   const logoHtml = logoUrl
-    ? `<div style="display:inline-block;background:#ffffff;border-radius:14px;padding:8px;"><img src="${escapeHtml(logoUrl)}" width="${EMAIL_LOGO_DISPLAY_WIDTH}" height="${EMAIL_LOGO_DISPLAY_HEIGHT}" alt="CCS Logo" style="display:block;width:${EMAIL_LOGO_DISPLAY_WIDTH}px;height:${EMAIL_LOGO_DISPLAY_HEIGHT}px;border:0;outline:none;text-decoration:none;" /></div>`
+    ? `<div style="display:inline-table;min-width:136px;height:90px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:24px;box-shadow:0 10px 24px rgba(15,23,42,0.18);">
+        <div style="display:table-cell;min-width:136px;height:90px;vertical-align:middle;text-align:center;padding:8px 12px;">
+          <img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(systemDisplayName)} Logo" style="display:block;max-width:124px;max-height:74px;width:auto;height:auto;margin:0 auto;border:0;outline:none;text-decoration:none;background:transparent;" />
+        </div>
+      </div>`
     : `<div style="width:${EMAIL_LOGO_DISPLAY_WIDTH}px;height:${EMAIL_LOGO_DISPLAY_HEIGHT}px;border-radius:14px;background:rgba(255,255,255,0.14);display:block;"></div>`;
 
   return `
@@ -3776,8 +3926,8 @@ function legacyLightBuildSystemEmailShell({
                       </td>
                       <td valign="middle" style="vertical-align:middle;text-align:left;">
                         <p style="margin:0 0 6px 0;color:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;line-height:1.4;">College of Computer Studies</p>
-                        <p style="margin:0 0 10px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;line-height:1.4;">${escapeHtml(eyebrow || "SVMS")}</p>
-                        <h1 style="margin:0;color:#f8fafc;font-size:26px;font-weight:800;line-height:1.2;text-align:left;">${escapeHtml(heading || "Student Violation Management System")}</h1>
+                        <p style="margin:0 0 10px 0;color:#7dd3fc;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;line-height:1.4;">${escapeHtml(systemDisplayName)}</p>
+                        <h1 style="margin:0;color:#f8fafc;font-size:26px;font-weight:800;line-height:1.2;text-align:left;">${escapeHtml(heading || systemDisplayName)}</h1>
                       </td>
                     </tr>
                     ${lead ? `<tr><td colspan="2" style="padding-top:18px;text-align:left;"><p style="margin:0;color:#cbd5e1;font-size:14px;line-height:1.6;text-align:left;">${escapeHtml(lead)}</p></td></tr>` : ""}
@@ -3800,6 +3950,7 @@ function legacyLightBuildSystemEmailShell({
 
 function legacyLightBuildForgotPasswordEmailTemplate({ code }) {
   const safeCode = escapeHtml(code);
+  const systemDisplayName = getSystemDisplayName();
   return buildSystemEmailShell({
     eyebrow: "SVMS Security",
     heading: "Password Reset Verification",
@@ -3814,12 +3965,13 @@ function legacyLightBuildForgotPasswordEmailTemplate({ code }) {
       </div>
     `,
     footerNote:
-      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+      `This is an automated message from ${systemDisplayName}. Please do not reply to this email.`,
   });
 }
 
 function legacyLightBuildSuperAdminLoginCodeEmailTemplate({ code }) {
   const safeCode = escapeHtml(code);
+  const systemDisplayName = getSystemDisplayName();
   return legacyLightBuildSystemEmailShell({
     eyebrow: "SVMS Security",
     heading: "Super Admin Login Verification",
@@ -3834,7 +3986,7 @@ function legacyLightBuildSuperAdminLoginCodeEmailTemplate({ code }) {
       </div>
     `,
     footerNote:
-      "This is an automated security message from Student Violation Management System. Please do not reply to this email.",
+      `This is an automated security message from ${systemDisplayName}. Please do not reply to this email.`,
   });
 }
 
@@ -3846,6 +3998,7 @@ function legacyLightBuildAdminAlertEmailTemplate({
   program,
   yearSection,
 }) {
+  const systemDisplayName = getSystemDisplayName();
   const safeStudentName = escapeHtml(studentName || "Student");
   const safeAlertType = escapeHtml(alertType || "Admin Alert");
   const safeMessage = escapeHtml(message || "No message provided.");
@@ -3858,7 +4011,7 @@ function legacyLightBuildAdminAlertEmailTemplate({
   return buildSystemEmailShell({
     eyebrow: "SVMS Notification",
     heading: "New Alert From Administrator",
-    lead: `Hello ${safeStudentName}, you have received a new alert from the Student Violation Management System.`,
+    lead: `Hello ${safeStudentName}, you have received a new alert from the ${escapeHtml(systemDisplayName)}.`,
     contentHtml: `
       <div style="display:block;margin-bottom:14px;padding:12px 14px;border-radius:12px;background:#f8fafc;border:1px solid #dbe7f2;">
         <p style="margin:0 0 8px 0;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#0369a1;">Alert Type</p>
@@ -3925,13 +4078,14 @@ function buildCredentialEmailTemplate({
   password,
   accountLabel = "Student",
 }) {
+  const systemDisplayName = getSystemDisplayName();
   return buildSystemEmailShell({
     eyebrow: "SVMS Account Created",
     heading: `Your ${escapeHtml(accountLabel)} Account Credentials`,
     lead: `Hello ${escapeHtml(firstName || "Student")},`,
     contentHtml: `
       <div style="margin:0 0 18px 0;padding:18px;border-radius:20px;background:#1b2230;border:1px solid #344256;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);">
-        <p style="margin:0;color:#d7e2f0;font-size:15px;line-height:1.75;">An account has been created for you in the Student Violation Management System. Use the credentials below to sign in.</p>
+        <p style="margin:0;color:#d7e2f0;font-size:15px;line-height:1.75;">An account has been created for you in the ${escapeHtml(systemDisplayName)}. Use the credentials below to sign in.</p>
       </div>
       <div style="margin:0 0 18px 0;padding:20px;border-radius:22px;background:#1b2230;border:1px solid #42556d;box-shadow:0 10px 24px rgba(0,0,0,0.22);">
         <p style="margin:0 0 12px 0;font-size:12px;font-weight:700;color:#8ad2ff;letter-spacing:0.08em;text-transform:uppercase;">Username</p>
@@ -3944,7 +4098,7 @@ function buildCredentialEmailTemplate({
       </div>
     `,
     footerNote:
-      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+      `This is an automated message from ${systemDisplayName}. Please do not reply to this email.`,
   });
 }
 
@@ -3955,10 +4109,15 @@ function buildSystemEmailShell({
   contentHtml,
   footerNote,
 }) {
+  const systemDisplayName = getSystemDisplayName();
   const logoUrl = getEmailLogoUrl();
   const logoHtml = logoUrl
-    ? `<div style="width:62px;height:62px;border-radius:16px;background:#1d2026;border:1px solid #343942;text-align:center;vertical-align:middle;"><img src="${escapeHtml(logoUrl)}" width="${EMAIL_LOGO_DISPLAY_WIDTH}" height="${EMAIL_LOGO_DISPLAY_HEIGHT}" alt="CCS Logo" style="display:inline-block;width:${EMAIL_LOGO_DISPLAY_WIDTH}px;height:${EMAIL_LOGO_DISPLAY_HEIGHT}px;border:0;outline:none;text-decoration:none;margin-top:10px;" /></div>`
-    : `<div style="width:62px;height:62px;border-radius:16px;background:#1d2026;border:1px solid #343942;display:block;"></div>`;
+    ? `<div style="min-width:118px;height:92px;border-radius:28px;background:#1d2026;border:1px solid #343942;display:table;box-shadow:0 12px 28px rgba(0,0,0,0.22);">
+        <div style="display:table-cell;min-width:118px;height:92px;vertical-align:middle;text-align:center;padding:8px 12px;">
+          <img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(systemDisplayName)} Logo" style="display:block;max-width:106px;max-height:76px;width:auto;height:auto;margin:0 auto;border:0;outline:none;text-decoration:none;background:transparent;" />
+        </div>
+      </div>`
+    : `<div style="min-width:118px;height:92px;border-radius:28px;background:#1d2026;border:1px solid #343942;display:block;"></div>`;
 
   return `
     <div style="margin:0;padding:0;background:#1f2229;font-family:Segoe UI,Arial,sans-serif;color:#e5eef8;">
@@ -3970,12 +4129,12 @@ function buildSystemEmailShell({
                 <td align="left" style="padding:32px 36px;background:#17191d;text-align:left;border-bottom:1px solid #292d34;">
                   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;width:100%;">
                     <tr>
-                      <td valign="middle" width="76" style="width:76px;padding:0 16px 0 0;vertical-align:middle;">
+                      <td valign="middle" width="126" style="width:126px;padding:0 10px 0 0;vertical-align:middle;">
                         ${logoHtml}
                       </td>
-                      <td valign="middle" style="vertical-align:middle;text-align:left;padding-left:12px;">
-                        <p style="margin:0;color:#f3f4f6;font-size:13px;font-weight:700;line-height:1.45;">College of Computer Studies</p>
-                        <p style="margin:6px 0 0;color:#8fa3bd;font-size:12px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;line-height:1.45;">Student Violation System</p>
+                      <td valign="middle" style="vertical-align:middle;text-align:left;padding-left:2px;">
+                        <p style="margin:0;color:#f3f4f6;font-size:19px;font-weight:800;line-height:1.25;">College of Computer Studies</p>
+                        <p style="margin:7px 0 0;color:#8fa3bd;font-size:17px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;line-height:1.3;">${escapeHtml(systemDisplayName)}</p>
                       </td>
                     </tr>
                   </table>
@@ -3984,7 +4143,7 @@ function buildSystemEmailShell({
               <tr>
                 <td align="left" style="padding:34px 36px 30px;background:#0b0c0e;text-align:left;">
                   <p style="margin:0 0 14px 0;font-size:11px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#8fa3bd;">${escapeHtml(eyebrow || "SVMS")}</p>
-                  <h1 style="margin:0 0 14px 0;color:#ffffff;font-size:31px;font-weight:800;line-height:1.2;letter-spacing:-0.02em;text-align:left;">${escapeHtml(heading || "Student Violation Management System")}</h1>
+                  <h1 style="margin:0 0 14px 0;color:#ffffff;font-size:31px;font-weight:800;line-height:1.2;letter-spacing:-0.02em;text-align:left;">${escapeHtml(heading || systemDisplayName)}</h1>
                   ${lead ? `<p style="margin:0 0 28px 0;color:#c8d0dc;font-size:14px;line-height:1.8;text-align:left;">${escapeHtml(lead)}</p>` : ""}
                   ${contentHtml}
                   ${footerNote ? `<p style="margin:24px 0 0 0;color:#9aa7bb;font-size:12px;line-height:1.75;">${escapeHtml(footerNote)}</p>` : ""}
@@ -4000,6 +4159,7 @@ function buildSystemEmailShell({
 
 function buildForgotPasswordEmailTemplate({ code }) {
   const safeCode = escapeHtml(code);
+  const systemDisplayName = getSystemDisplayName();
   return buildSystemEmailShell({
     eyebrow: "SVMS Security",
     heading: "Password Reset Verification",
@@ -4014,12 +4174,13 @@ function buildForgotPasswordEmailTemplate({ code }) {
       </div>
     `,
     footerNote:
-      "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+      `This is an automated message from ${systemDisplayName}. Please do not reply to this email.`,
   });
 }
 
 function buildSuperAdminLoginCodeEmailTemplate({ code }) {
   const safeCode = escapeHtml(code);
+  const systemDisplayName = getSystemDisplayName();
   return buildSystemEmailShell({
     eyebrow: "SVMS Security",
     heading: "Super Admin Login Verification",
@@ -4034,7 +4195,7 @@ function buildSuperAdminLoginCodeEmailTemplate({ code }) {
       </div>
     `,
     footerNote:
-      "This is an automated security message from Student Violation Management System. Please do not reply to this email.",
+      `This is an automated security message from ${systemDisplayName}. Please do not reply to this email.`,
   });
 }
 
@@ -4046,6 +4207,7 @@ function buildAdminAlertEmailTemplate({
   program,
   yearSection,
 }) {
+  const systemDisplayName = getSystemDisplayName();
   const safeStudentName = escapeHtml(studentName || "Student");
   const safeAlertType = escapeHtml(alertType || "Admin Alert");
   const safeMessage = escapeHtml(message || "No message provided.");
@@ -4057,7 +4219,7 @@ function buildAdminAlertEmailTemplate({
   return buildSystemEmailShell({
     eyebrow: "Student Violation Notification",
     heading: "Administrative Alert",
-    lead: `Hello ${safeStudentName}, you have received a new alert from the Student Violation Management System.`,
+    lead: `Hello ${safeStudentName}, you have received a new alert from the ${escapeHtml(systemDisplayName)}.`,
     contentHtml: `
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:24px;border-collapse:collapse;">
         <tr>
@@ -4139,7 +4301,8 @@ async function sendMailWithLimitGuard(mailOptions, contextLabel) {
   }
 
   try {
-    await transporter.sendMail(mailOptions);
+    const normalizedMailOptions = await withInlineEmailLogoAttachment(mailOptions);
+    await transporter.sendMail(normalizedMailOptions);
     return { sent: true };
   } catch (error) {
     if (isDailyMailLimitError(error)) {
@@ -4222,7 +4385,7 @@ async function deactivateGraduatedStudentAccounts() {
                 title: "Account Status Changed",
                 tone: "danger",
                 body:
-                  'Your status has been updated to "Graduated" and your account has been deactivated. You will no longer be able to log in to the Student Violation Management System.',
+                  `Your status has been updated to "Graduated" and your account has been deactivated. You will no longer be able to log in to the ${escapeHtml(getSystemDisplayName())}.`,
               })}
               ${buildSystemNoticeCard({
                 title: "Need Help?",
@@ -4231,7 +4394,7 @@ async function deactivateGraduatedStudentAccounts() {
                   "If you believe this is an error, please contact your administrator immediately.",
               })}
             `,
-            footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+            footerNote: `This is an automated message from ${getSystemDisplayName()}. Please do not reply to this email.`,
           }),
         },
         "graduated-deactivation-startup",
@@ -8006,7 +8169,7 @@ app.put("/api/students/:id", async (req, res) => {
                       "If you believe this is an error, please contact your administrator immediately.",
                   })}
                 `,
-                footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+                footerNote: `This is an automated message from ${getSystemDisplayName()}. Please do not reply to this email.`,
               }),
             },
             "account-deactivated-graduation",
@@ -8042,17 +8205,17 @@ app.put("/api/students/:id", async (req, res) => {
                     title: "Record Archived",
                     tone: "danger",
                     body:
-                      `Your record has been archived, and access to the Student Violation Management System is no longer available.<span style="display:block;margin-top:18px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#fca5a5;">Reason</span><span style="display:block;margin-top:6px;font-size:18px;font-weight:800;line-height:1.35;color:#ffffff;">${escapeHtml(normalizedArchivedReason || "Not specified")}</span>`,
+                      `Your record has been archived, and access to the ${escapeHtml(getSystemDisplayName())} is no longer available.<span style="display:block;margin-top:18px;font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#fca5a5;">Reason</span><span style="display:block;margin-top:6px;font-size:18px;font-weight:800;line-height:1.35;color:#ffffff;">${escapeHtml(normalizedArchivedReason || "Not specified")}</span>`,
                   })}
                   ${buildSystemNoticeCard({
                     title: "Need Help?",
                     tone: "info",
                     compact: true,
                     body:
-                      "You will no longer be able to log in to the Student Violation Management System. If you believe this is an error, please contact your administrator.",
+                      `You will no longer be able to log in to the ${escapeHtml(getSystemDisplayName())}. If you believe this is an error, please contact your administrator.`,
                   })}
                 `,
-                footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+                footerNote: `This is an automated message from ${getSystemDisplayName()}. Please do not reply to this email.`,
               }),
             },
             "account-deactivated-archive",
@@ -9658,6 +9821,12 @@ app.get("/api/settings", async (req, res) => {
       );
     }
 
+    setCachedSystemEmailBranding({
+      displayName:
+        settings.display_name || DEFAULT_SYSTEM_DISPLAY_NAME,
+      logoPath: decryptedLogoPath || null,
+    });
+
     return res.status(200).json({
       status: "ok",
       settings: {
@@ -9722,6 +9891,10 @@ app.get("/api/settings/logo", async (_req, res) => {
         [normalizedPersistedValue, settings.id],
       );
     }
+
+    setCachedSystemEmailBranding({
+      logoPath: logoPath || null,
+    });
 
     return res.status(200).json({
       status: "ok",
@@ -9803,6 +9976,11 @@ app.post("/api/settings", async (req, res) => {
         offensesHandbookTitle: settings.offenses_handbook_title,
         offensesHandbookUrl: settings.offenses_handbook_url,
       },
+    });
+
+    setCachedSystemEmailBranding({
+      displayName: settings.display_name || DEFAULT_SYSTEM_DISPLAY_NAME,
+      logoPath: decryptedLogoPath || null,
     });
 
     return res.status(200).json({
@@ -9899,6 +10077,11 @@ app.post(
         },
       });
 
+      setCachedSystemEmailBranding({
+        displayName: settings.display_name || DEFAULT_SYSTEM_DISPLAY_NAME,
+        logoPath: logoPath || null,
+      });
+
       return res.status(200).json({
         status: "ok",
         message: "Logo uploaded successfully.",
@@ -9956,6 +10139,11 @@ app.delete("/api/settings/logo", async (req, res) => {
       targetType: "system_settings",
       targetId: settings.id,
       details: "Removed system logo.",
+    });
+
+    setCachedSystemEmailBranding({
+      displayName: settings.display_name || DEFAULT_SYSTEM_DISPLAY_NAME,
+      logoPath: null,
     });
 
     return res.status(200).json({
@@ -12778,7 +12966,7 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
                   title: "Account Status Changed",
                   tone: "success",
                   body:
-                    "Your archive has been removed. You can now sign in to the Student Violation Management System again.",
+                    `Your archive has been removed. You can now sign in to the ${escapeHtml(getSystemDisplayName())} again.`,
                 })}
                 ${buildSystemNoticeCard({
                   title: "Need Help?",
@@ -12788,7 +12976,7 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
                     "If you have any questions or need assistance, please contact your administrator.",
                 })}
               `,
-              footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+              footerNote: `This is an automated message from ${getSystemDisplayName()}. Please do not reply to this email.`,
             }),
           },
           "restore-single-user",
@@ -12901,7 +13089,7 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
                     title: "Account Status Changed",
                     tone: "success",
                     body:
-                      "Your archive has been removed. You can now sign in to the Student Violation Management System again.",
+                      `Your archive has been removed. You can now sign in to the ${escapeHtml(getSystemDisplayName())} again.`,
                   })}
                   ${buildSystemNoticeCard({
                     title: "Need Help?",
@@ -12911,7 +13099,7 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
                       "If you have any questions or need assistance, please contact your administrator.",
                   })}
                 `,
-                footerNote: "This is an automated message from Student Violation Management System. Please do not reply to this email.",
+                footerNote: `This is an automated message from ${getSystemDisplayName()}. Please do not reply to this email.`,
               }),
             },
             "restore-all-users",
@@ -13718,6 +13906,7 @@ async function ensureAuthDatabaseReady() {
 
   try {
     await authSyncPromise;
+    await refreshSystemEmailBrandingFromDatabase();
   } catch (error) {
     authSyncPromise = null;
     throw error;

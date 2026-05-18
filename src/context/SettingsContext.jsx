@@ -83,14 +83,17 @@ export const SettingsProvider = ({ children }) => {
       const data = await response.json()
 
       if (data.status === 'ok' && data.settings) {
-        const logoPath = settings.logoPath
-        setSettings({
-          displayName: data.settings.displayName,
-          logoPath,
-          theme: data.settings.theme,
-          themeColor: data.settings.themeColor,
+        let nextSettings = null
+        setSettings(prev => {
+          nextSettings = {
+            displayName: data.settings.displayName,
+            logoPath: data.settings.logoPath ?? prev.logoPath ?? null,
+            theme: data.settings.theme,
+            themeColor: data.settings.themeColor,
+          }
+          return nextSettings
         })
-        return { success: true, settings: { ...data.settings, logoPath } }
+        return { success: true, settings: nextSettings ?? data.settings }
       } else {
         return { success: false, error: data.message }
       }
@@ -117,13 +120,17 @@ export const SettingsProvider = ({ children }) => {
       const data = await response.json()
 
       if (data.status === 'ok' && data.settings) {
-        setSettings({
-          displayName: data.settings.displayName,
-          logoPath: data.settings.logoPath,
-          theme: data.settings.theme,
-          themeColor: data.settings.themeColor,
+        let nextSettings = null
+        setSettings(prev => {
+          nextSettings = {
+            displayName: data.settings.displayName ?? prev.displayName,
+            logoPath: data.settings.logoPath ?? null,
+            theme: data.settings.theme ?? prev.theme,
+            themeColor: data.settings.themeColor ?? prev.themeColor,
+          }
+          return nextSettings
         })
-        return { success: true, settings: data.settings, message: data.message }
+        return { success: true, settings: nextSettings ?? data.settings, message: data.message }
       } else {
         return { success: false, error: data.message }
       }
@@ -146,13 +153,17 @@ export const SettingsProvider = ({ children }) => {
       const data = await response.json()
 
       if (data.status === 'ok' && data.settings) {
-        setSettings({
-          displayName: data.settings.displayName,
-          logoPath: data.settings.logoPath,
-          theme: data.settings.theme,
-          themeColor: data.settings.themeColor,
+        let nextSettings = null
+        setSettings(prev => {
+          nextSettings = {
+            displayName: data.settings.displayName ?? prev.displayName,
+            logoPath: null,
+            theme: data.settings.theme ?? prev.theme,
+            themeColor: data.settings.themeColor ?? prev.themeColor,
+          }
+          return nextSettings
         })
-        return { success: true, settings: data.settings, message: data.message }
+        return { success: true, settings: nextSettings ?? data.settings, message: data.message }
       } else {
         return { success: false, error: data.message }
       }

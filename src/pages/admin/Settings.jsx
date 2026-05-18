@@ -2,6 +2,103 @@ import React, { useState, useEffect, useRef } from 'react'
 import AnimatedContent from '../../components/ui/AnimatedContent'
 import Button from '../../components/ui/Button'
 import { useSettings } from '../../context/SettingsContext'
+import defaultLogo from '../../assets/css_logo.png'
+
+const MAX_LOGO_DIMENSION = 320
+const MAX_LOGO_FILE_SIZE = 5 * 1024 * 1024
+const MAX_INLINE_LOGO_FILE_SIZE = 450 * 1024
+const DOT_DELAYS = ['0ms', '160ms', '320ms']
+
+const LoadingDots = () => (
+  <span className="inline-flex items-end">
+    {DOT_DELAYS.map(delay => (
+      <span
+        key={delay}
+        className="mx-[1px] inline-block h-1.5 w-1.5 rounded-full bg-current opacity-25 animate-pulse"
+        style={{ animationDelay: delay, animationDuration: '1s' }}
+      />
+    ))}
+  </span>
+)
+
+const LoadingText = ({ label }) => (
+  <span className="inline-flex items-center gap-1.5">
+    <span>{label}</span>
+    <LoadingDots />
+  </span>
+)
+
+const Spinner = () => (
+  <span className="inline-block h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+)
+
+const loadImageFromFile = file =>
+  new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      resolve(image)
+    }
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('Unable to read the selected image.'))
+    }
+    image.src = objectUrl
+  })
+
+const canvasToBlob = (canvas, type, quality) =>
+  new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (blob) {
+        resolve(blob)
+      } else {
+        reject(new Error('Unable to optimize the selected image.'))
+      }
+    }, type, quality)
+  })
+
+const optimizeLogoFile = async file => {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Only image files are allowed.')
+  }
+
+  const image = await loadImageFromFile(file)
+  const largestSide = Math.max(image.width, image.height)
+  const shouldResize =
+    largestSide > MAX_LOGO_DIMENSION || file.size > MAX_INLINE_LOGO_FILE_SIZE
+  const scale = shouldResize
+    ? Math.min(1, MAX_LOGO_DIMENSION / largestSide)
+    : 1
+  const width = Math.max(1, Math.round(image.width * scale))
+  const height = Math.max(1, Math.round(image.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+
+  const context = canvas.getContext('2d')
+  if (!context) {
+    return file
+  }
+
+  context.clearRect(0, 0, width, height)
+  context.drawImage(image, 0, 0, width, height)
+  const optimizedBlob = await canvasToBlob(canvas, 'image/png')
+
+  if (
+    file.type === 'image/png' &&
+    optimizedBlob.size >= file.size &&
+    !shouldResize
+  ) {
+    return file
+  }
+
+  const optimizedBaseName = (file.name || 'logo').replace(/\.[^.]+$/, '')
+  return new File([optimizedBlob], `${optimizedBaseName}.png`, {
+    type: 'image/png',
+    lastModified: Date.now(),
+  })
+}
 
 const Settings = () => {
   const { settings, uploadLogo, removeLogo, updateSettings } = useSettings()
@@ -13,8 +110,10 @@ const Settings = () => {
   const [logoToRemove, setLogoToRemove] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [isPreparingLogo, setIsPreparingLogo] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const logoInputRef = useRef(null)
+  const previewUrlRef = useRef(null)
 
   // Apply theme immediately when local state changes
   useEffect(() => {
@@ -48,7 +147,25 @@ const Settings = () => {
     }
   }, [settings])
 
-  const handleLogoUpload = (e) => {
+  useEffect(() => () => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current)
+    }
+  }, [])
+
+  const clearPreviewUrl = () => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current)
+      previewUrlRef.current = null
+    }
+  }
+
+  const showTemporaryMessage = (setter, value) => {
+    setter(value)
+    window.setTimeout(() => setter(''), 5000)
+  }
+
+  const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
 
@@ -56,50 +173,72 @@ const Settings = () => {
     if (!file.type.startsWith('image/')) {
       setError('Only image files are allowed.')
       setSuccess('')
-      setTimeout(() => setError(''), 5000)
+      window.setTimeout(() => setError(''), 5000)
       return
     }
 
     // Validate file size (5MB max)
-    if (file.size > 5 * 1024 * 1024) {
+    if (file.size > MAX_LOGO_FILE_SIZE) {
       setError('File size exceeds 5MB limit')
       setSuccess('')
-      setTimeout(() => setError(''), 5000)
+      window.setTimeout(() => setError(''), 5000)
       return
     }
 
-    // Set the file locally for preview, will upload on save
-    setUploadedLogoFile(file)
-    setLogo(URL.createObjectURL(file)) // Preview the uploaded file
-    setLogoToRemove(false) // Cancel any pending removal
-    setSuccess('Logo selected. Click "Save Changes" to apply.')
-    setError('')
-    setTimeout(() => setSuccess(''), 5000)
+    try {
+      setIsPreparingLogo(true)
+      setError('')
+      setSuccess('')
 
-    // Reset input
-    if (logoInputRef.current) {
-      logoInputRef.current.value = ''
+      const optimizedFile = await optimizeLogoFile(file)
+      clearPreviewUrl()
+      const previewUrl = URL.createObjectURL(optimizedFile)
+
+      previewUrlRef.current = previewUrl
+      setUploadedLogoFile(optimizedFile)
+      setLogo(previewUrl)
+      setLogoToRemove(false)
+      showTemporaryMessage(setSuccess, 'Logo selected. Click "Save Changes" to apply.')
+    } catch (err) {
+      setError(err.message || 'Unable to prepare the selected logo.')
+      setSuccess('')
+      window.setTimeout(() => setError(''), 5000)
+    } finally {
+      setIsPreparingLogo(false)
+      if (logoInputRef.current) {
+        logoInputRef.current.value = ''
+      }
     }
   }
 
   const handleRemoveLogo = () => {
+    clearPreviewUrl()
     setLogo(null)
     setUploadedLogoFile(null)
     setLogoToRemove(true)
-    setSuccess('Logo removal pending. Click "Save Changes" to apply.')
+    showTemporaryMessage(setSuccess, 'Logo removal pending. Click "Save Changes" to apply.')
     setError('')
-    setTimeout(() => setSuccess(''), 5000)
   }
 
   const handleSaveChanges = async () => {
     if (!displayName.trim()) {
       setError('Display name cannot be empty')
       setSuccess('')
-      setTimeout(() => setError(''), 5000)
+      window.setTimeout(() => setError(''), 5000)
       return
     }
 
-    setLoading(true)
+    const hasSettingsChanges =
+      displayName.trim() !== (settings?.displayName || '').trim() ||
+      theme !== (settings?.theme || 'dark') ||
+      customColor !== (settings?.themeColor || '#000000')
+
+    if (!uploadedLogoFile && !logoToRemove && !hasSettingsChanges) {
+      showTemporaryMessage(setSuccess, 'No changes to save.')
+      return
+    }
+
+    setIsSaving(true)
 
     try {
       // Handle logo removal first
@@ -108,8 +247,7 @@ const Settings = () => {
         if (!removeResult.success) {
           setError(removeResult.error || 'Failed to remove logo')
           setSuccess('')
-          setTimeout(() => setError(''), 5000)
-          setLoading(false)
+          window.setTimeout(() => setError(''), 5000)
           return
         }
       }
@@ -120,35 +258,43 @@ const Settings = () => {
         if (!uploadResult.success) {
           setError(uploadResult.error || 'Failed to upload logo')
           setSuccess('')
-          setTimeout(() => setError(''), 5000)
-          setLoading(false)
+          window.setTimeout(() => setError(''), 5000)
           return
         }
       }
 
       // Update other settings
-      const result = await updateSettings(displayName, theme, customColor)
+      const result = hasSettingsChanges
+        ? await updateSettings(displayName.trim(), theme, customColor)
+        : { success: true }
 
       if (result.success) {
-        setSuccess('Settings saved successfully!')
+        clearPreviewUrl()
+        showTemporaryMessage(setSuccess, 'Settings saved successfully!')
         setError('')
-        setTimeout(() => setSuccess(''), 5000)
-        // Reset local changes
         setUploadedLogoFile(null)
         setLogoToRemove(false)
       } else {
         setError(result.error || 'Failed to save settings')
         setSuccess('')
-        setTimeout(() => setError(''), 5000)
+        window.setTimeout(() => setError(''), 5000)
       }
     } catch (err) {
       setError('An unexpected error occurred')
       setSuccess('')
-      setTimeout(() => setError(''), 5000)
+      window.setTimeout(() => setError(''), 5000)
+    } finally {
+      setIsSaving(false)
     }
-
-    setLoading(false)
   }
+
+  const isUploadBusy = isPreparingLogo
+  const isRemoveBusy = false
+  const isSaveBusy = isSaving
+  const uploadButtonLabel =
+    isUploadBusy ? <LoadingText label="Loading" /> : 'Upload'
+  const removeButtonLabel =
+    isRemoveBusy ? <LoadingText label="Loading" /> : 'Remove'
 
   return (
     <div className="text-white">
@@ -184,8 +330,8 @@ const Settings = () => {
                   />
                 ) : (
                   <img
-                    src="/avatar-placeholder.png"
-                    alt="Avatar"
+                    src={settings?.logoPath || defaultLogo}
+                    alt="System Logo"
                     className="w-full h-full object-cover rounded-full"
                   />
                 )}
@@ -203,18 +349,18 @@ const Settings = () => {
                   size="lg"
                   className="bg-white text-[#23262B] hover:bg-gray-200 border-0 px-8"
                   onClick={() => logoInputRef.current?.click()}
-                  disabled={loading}
+                  disabled={isPreparingLogo || isSaving}
                 >
-                  {loading ? 'Processing...' : 'Upload'}
+                  {uploadButtonLabel}
                 </Button>
                 <Button
                   variant="danger"
                   size="lg"
                   className="bg-red-600 text-white border-0 px-8"
                   onClick={handleRemoveLogo}
-                  disabled={loading || !logo}
+                  disabled={isPreparingLogo || isSaving || !logo}
                 >
-                  {loading ? 'Processing...' : 'Remove'}
+                  {removeButtonLabel}
                 </Button>
               </div>
             </div>
@@ -239,11 +385,18 @@ const Settings = () => {
           <Button
             variant="secondary"
             size="lg"
-            className="bg-[#A3AED0] text-[#23262B] hover:bg-[#8B9CB8] border-0 px-12"
+            className="min-w-[148px] bg-[#A3AED0] text-[#23262B] hover:bg-[#8B9CB8] border-0 px-12"
             onClick={handleSaveChanges}
-            disabled={loading}
+            disabled={isPreparingLogo || isSaving}
           >
-            {loading ? 'Saving...' : 'Save Changes'}
+            {isSaveBusy ? (
+              <>
+                <Spinner />
+                Saving...
+              </>
+            ) : (
+              'Save Changes'
+            )}
           </Button>
         </div>
       </AnimatedContent>
