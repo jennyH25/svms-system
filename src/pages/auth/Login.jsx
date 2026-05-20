@@ -14,6 +14,47 @@ const SUPER_ADMIN_TRUSTED_DEVICE_KEY = "svms_super_admin_trusted_device";
 const GOOGLE_AUTH_RESULT_STORAGE_KEY = "svms_google_auth_result";
 const GOOGLE_AUTH_RESULT_FALLBACK_STORAGE_KEY = "svms_google_auth_result_fallback";
 
+const preloadStudentRouteModules = () =>
+  Promise.allSettled([
+    import("../../components/layout/StudentLayout"),
+    import("../student/StudentDashboard"),
+  ]);
+
+const preloadAdminRouteModules = () =>
+  Promise.allSettled([
+    import("../../components/layout/AdminLayout"),
+    import("../admin/Dashboard"),
+  ]);
+
+const preloadSuperAdminRouteModules = () =>
+  Promise.allSettled([
+    import("../../components/layout/AdminLayout"),
+    import("../superAdmin/SuperAdminDashboard"),
+  ]);
+
+function preloadRoutesForRole(role) {
+  if (role === "student") {
+    void preloadStudentRouteModules();
+    return;
+  }
+
+  if (role === "super_admin") {
+    void preloadSuperAdminRouteModules();
+    return;
+  }
+
+  if (role === "admin") {
+    void preloadAdminRouteModules();
+    return;
+  }
+
+  void Promise.allSettled([
+    preloadAdminRouteModules(),
+    preloadSuperAdminRouteModules(),
+    preloadStudentRouteModules(),
+  ]);
+}
+
 function decodeGoogleAuthPayload(value) {
   const normalized = String(value || "").trim();
   if (!normalized) {
@@ -195,6 +236,8 @@ const Login = () => {
   const isGoogleExchangeView = searchParams.get("googleAuth") === "exchange";
 
   const handleAuthenticatedLoginSuccess = (user) => {
+    preloadRoutesForRole(user?.role);
+
     if (user?.role === "both") {
       setPendingRoleChoiceUser(user);
       setIsLoading(false);
@@ -358,7 +401,6 @@ const Login = () => {
         setSuperAdminMessage("");
         setIsStartingGoogleLogin(false);
         setIsLoading(false);
-        navigate(location.pathname, { replace: true });
         handleAuthenticatedLoginSuccess(storedGoogleResult.user);
         return;
       }
@@ -480,6 +522,7 @@ const Login = () => {
     setError("");
     setSuperAdminMessage("");
     setIsLoading(true);
+    preloadRoutesForRole("both");
 
     try {
       const trustedDeviceToken = localStorage.getItem(
@@ -928,6 +971,7 @@ const Login = () => {
     setError("");
     setSuperAdminMessage("");
     setIsStartingGoogleLogin(true);
+    preloadRoutesForRole("student");
     localStorage.removeItem("svms_user");
 
     const returnTo = `${window.location.origin}/login`;
@@ -1146,8 +1190,8 @@ const Login = () => {
                       disabled={isLoading || isStartingGoogleLogin}
                       className="w-full rounded-lg border border-white/15 bg-white/[0.04] px-4 py-4 text-left text-sm sm:text-base font-semibold text-white transition-all duration-300 hover:border-white/30 hover:bg-white/[0.08] hover:shadow-lg hover:shadow-white/5 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <span className="flex items-center justify-center gap-3">
-                        {(isStartingGoogleLogin || isLoading) ? (
+                        <span className="flex items-center justify-center gap-3">
+                        {isStartingGoogleLogin ? (
                           <div className="w-5 h-5 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
                         ) : (
                           <svg

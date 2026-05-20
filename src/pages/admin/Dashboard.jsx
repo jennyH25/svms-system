@@ -1311,16 +1311,6 @@ const Dashboard = () => {
       setIsLoadingRanking(true);
     }
 
-    const degreeRank = {
-      "First Degree": 1,
-      "Second Degree": 2,
-      "Third Degree": 3,
-      "Fourth Degree": 4,
-      "Fifth Degree": 5,
-      "Sixth Degree": 6,
-      "Seventh Degree": 7,
-    };
-
     const getRiskColor = (rank) => {
       if (rank >= 5 && rank <= 7) return "bg-red-500";
       if (rank >= 3 && rank <= 4) return "bg-orange-500";
@@ -1330,33 +1320,6 @@ const Dashboard = () => {
     };
 
     try {
-      const [currentSettingsRes, studentsRes, violationsRes] = await Promise.all([
-        cachedFetchJSON("/api/archive/current-settings", {}, {
-          ttlMs: 30000,
-          staleWhileRevalidate: true,
-          forceRefresh,
-        }),
-        cachedFetchJSON("/api/students", {}, {
-          ttlMs: 12000,
-          staleWhileRevalidate: true,
-          forceRefresh,
-        }),
-        cachedFetchJSON("/api/student-violations", {}, {
-          ttlMs: 12000,
-          staleWhileRevalidate: true,
-          forceRefresh,
-        }),
-      ]);
-
-      const currentSettings = currentSettingsRes.data || {};
-      const normalizedCurrentSem = String(currentSettings.currentSemester || "").trim();
-      const currentSY = String(currentSettings.currentSchoolYear || "").trim();
-
-      if (currentSettingsRes.status === "ok" && currentSettings?.status === "ok") {
-        setCurrentSemester(normalizedCurrentSem);
-        setCurrentSchoolYear(currentSY);
-      }
-
       const analyticsUrl = selectedSchoolYear && selectedSemester
         ? `/api/violation-analytics?schoolYear=${encodeURIComponent(selectedSchoolYear)}&semester=${encodeURIComponent(selectedSemester)}`
         : "/api/violation-analytics";
@@ -1367,117 +1330,35 @@ const Dashboard = () => {
         forceRefresh,
       });
 
-      const studentsResult = studentsRes.data || {};
-      const violationsResult = violationsRes.data || {};
       const analyticsResult = analyticsRes.data || {};
+      const configuredCurrentTerm = analyticsResult?.configuredCurrentTerm || null;
+      const normalizedCurrentSem = String(configuredCurrentTerm?.semester || "").trim();
+      const currentSY = String(configuredCurrentTerm?.schoolYear || "").trim();
 
-      const isSelectedCurrentTerm =
-        selectedSchoolYear &&
-        selectedSemester &&
-        selectedSchoolYear === currentSY &&
-        normalizeSemester(selectedSemester) === normalizeSemester(normalizedCurrentSem);
+      if (analyticsRes.status === "ok" && analyticsResult?.status === "ok" && configuredCurrentTerm) {
+        setCurrentSemester(normalizedCurrentSem);
+        setCurrentSchoolYear(currentSY);
+      }
 
       console.log("Violation Trends Debug:", {
         selectedSY: selectedSchoolYear,
         selectedSem: selectedSemester,
         currentSY,
         currentSem: normalizedCurrentSem,
-        dataSource: isSelectedCurrentTerm ? "StudentViolations" : "Archives",
-        ongoingLabel: isSelectedCurrentTerm,
         analyticsUrl,
         analyticsStatus: analyticsResult?.status,
         forceRefresh,
       });
 
-      if (studentsRes.status !== "ok" || !Array.isArray(studentsResult?.students)) {
-        throw new Error("Failed to load students.");
+      if (analyticsRes.status !== "ok" || analyticsResult?.status !== "ok") {
+        throw new Error(analyticsResult?.message || "Failed to load dashboard analytics.");
       }
-      if (violationsRes.status !== "ok" || !Array.isArray(violationsResult?.records)) {
-        throw new Error("Failed to load violations.");
-      }
-
-      const students = studentsResult.students || [];
-      const activeRecords = violationsResult.records.filter((rec) => !rec.cleared_at);
-
-      const studentById = new Map(students.map((student) => [Number(student.id), student]));
-
-      const studentMaxDegree = activeRecords.reduce((acc, rec) => {
-        const studentId = Number(rec.student_id);
-        if (!studentId) return acc;
-
-        const rank = degreeRank[String(rec.violation_degree)] || 0;
-        acc[studentId] = Math.max(acc[studentId] || 0, rank);
-        return acc;
-      }, {});
-
-      const violationCountMap = {};
-      students.forEach((student) => {
-        violationCountMap[student.id] = Number(student.violation_count) || 0;
-      });
-
-      let warningStudents = 0;
-      let atRiskStudents = 0;
-      let highRiskStudents = 0;
-
-      Object.entries(studentMaxDegree).forEach(([studentId, degree]) => {
-        const count = violationCountMap[studentId] || 0;
-
-        if (count >= 5 || (degree >= 5 && degree <= 7)) {
-          highRiskStudents += 1;
-        } else if ((count >= 3 && count <= 4) || (degree >= 3 && degree <= 4)) {
-          atRiskStudents += 1;
-        } else if (count === 2 || degree === 2) {
-          warningStudents += 1;
-        }
-      });
-
-      const rankingStats = activeRecords.reduce((acc, rec) => {
-        const studentId = Number(rec.student_id);
-        if (!studentId || !studentById.has(studentId)) return acc;
-
-        if (!acc[studentId]) {
-          acc[studentId] = {
-            count: 0,
-            maxDegreeRank: 0,
-          };
-        }
-
-        acc[studentId].count += 1;
-        const rank = degreeRank[String(rec.violation_degree)] || 0;
-        if (rank > acc[studentId].maxDegreeRank) {
-          acc[studentId].maxDegreeRank = rank;
-        }
-        return acc;
-      }, {});
-
-      const newRankingData = Object.entries(rankingStats)
-        .map(([studentId, data]) => {
-          const student = studentById.get(Number(studentId));
-          const parsedYearSection = parseYearSection(student?.year_section);
-          return {
-            rank: "",
-            name: student?.full_name || student?.username || "Unknown",
-            violations: data.count,
-            color: getRiskColor(data.maxDegreeRank),
-            id: student?.school_id || "",
-            program: student?.program || "",
-            year: parsedYearSection.year,
-            section: parsedYearSection.section,
-            yearSection: parsedYearSection.normalized,
-            maxDegreeRank: data.maxDegreeRank,
-          };
-        })
-        .sort((a, b) => b.violations - a.violations || b.maxDegreeRank - a.maxDegreeRank)
-        .map((item, index) => ({
-          ...item,
-          rank: String(index + 1).padStart(2, "0"),
-        }));
 
       setViolationMetrics({
-        activeViolations: activeRecords.length,
-        warningStudents,
-        atRiskStudents,
-        highRiskStudents,
+        activeViolations: Number(analyticsResult?.cards?.activeViolations?.current) || 0,
+        warningStudents: Number(analyticsResult?.cards?.warningStudents?.current) || 0,
+        atRiskStudents: Number(analyticsResult?.cards?.atRiskStudents?.current) || 0,
+        highRiskStudents: Number(analyticsResult?.cards?.highRiskStudents?.current) || 0,
       });
 
       setMetricComparisons({
@@ -1504,7 +1385,24 @@ const Dashboard = () => {
       });
       setTrendTermBySemester(analyticsResult?.trendTermBySemester || {});
       setOngoingSemesters(analyticsResult?.ongoingSemesters || {});
-      setRankingData(newRankingData);
+      setRankingData(
+        (Array.isArray(analyticsResult?.rankingData) ? analyticsResult.rankingData : [])
+          .map((student, index) => {
+            const parsedYearSection = parseYearSection(student?.yearSection);
+            return {
+              rank: String(index + 1).padStart(2, "0"),
+              name: student?.name || "Unknown",
+              violations: Number(student?.violations) || 0,
+              color: getRiskColor(Number(student?.maxDegreeRank) || 0),
+              id: student?.id || "",
+              program: student?.program || "",
+              year: student?.year || parsedYearSection.year,
+              section: student?.section || parsedYearSection.section,
+              yearSection: student?.yearSection || parsedYearSection.normalized,
+              maxDegreeRank: Number(student?.maxDegreeRank) || 0,
+            };
+          }),
+      );
     } catch (_error) {
       setViolationMetrics({
         activeViolations: 0,

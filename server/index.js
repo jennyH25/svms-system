@@ -2972,8 +2972,69 @@ function buildAnalyticsFromRecords({
     (value) => Math.round((value / maxSeriesValue) * 42),
   );
 
+  const currentTermStudentStats = new Map();
+  allRecords.forEach((record) => {
+    const semester = normalizeSemester(record.semester);
+    const schoolYear = normalizeSchoolYear(record.schoolYear);
+    const studentKey = String(record.studentKey || "").trim();
+
+    if (!studentKey || !currentTermKey) {
+      return;
+    }
+
+    if (buildTermKey(semester, schoolYear) !== currentTermKey) {
+      return;
+    }
+
+    if (!currentTermStudentStats.has(studentKey)) {
+      currentTermStudentStats.set(studentKey, {
+        name: String(record.studentName || "").trim() || "Unknown",
+        schoolId: String(record.schoolId || "").trim(),
+        program: String(record.program || "").trim(),
+        yearSection: String(record.yearSection || "").trim(),
+        violations: 0,
+        maxDegreeRank: 0,
+      });
+    }
+
+    const studentStats = currentTermStudentStats.get(studentKey);
+    studentStats.violations += 1;
+    studentStats.maxDegreeRank = Math.max(
+      studentStats.maxDegreeRank,
+      Number(record.degreeRank) || 0,
+    );
+  });
+
+  const rankingData = Array.from(currentTermStudentStats.values())
+    .map((student) => {
+      const compactYearSection = String(student.yearSection || "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "");
+      const yearMatch = compactYearSection.match(/\d+/);
+      const sectionMatch = compactYearSection.match(/[A-Z]+/);
+
+      return {
+        name: student.name,
+        violations: student.violations,
+        id: student.schoolId,
+        program: student.program,
+        year: yearMatch ? yearMatch[0] : "",
+        section: sectionMatch ? sectionMatch[0] : "",
+        yearSection: compactYearSection,
+        maxDegreeRank: student.maxDegreeRank,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.violations - left.violations ||
+        right.maxDegreeRank - left.maxDegreeRank ||
+        left.name.localeCompare(right.name),
+    );
+
   return {
     cards,
+    rankingData,
     trendBySemester,
     studentAnalytics: {
       historyLabels: termSeries.map((entry) => entry.label),
@@ -8891,6 +8952,7 @@ app.get("/api/violation-analytics", async (req, res) => {
             svl.semester,
             svl.school_year,
             svl.violation_label,
+            s.school_id,
             s.full_name,
             s.program,
             s.year_section,
@@ -8925,6 +8987,7 @@ app.get("/api/violation-analytics", async (req, res) => {
             source: "current",
             studentKey,
             studentName: safeName,
+            schoolId: String(row.school_id || "").trim(),
             program: String(row.program || "").trim(),
             yearSection: String(row.year_section || "").trim(),
             violationLabel: String(row.violation_label || "").trim(),
@@ -8947,6 +9010,7 @@ app.get("/api/violation-analytics", async (req, res) => {
             sva.semester,
             sva.school_year,
             sva.violation_label,
+            s.school_id,
             s.full_name,
             s.program,
             s.year_section,
@@ -8979,6 +9043,7 @@ app.get("/api/violation-analytics", async (req, res) => {
               source: "archived",
               studentKey,
               studentName: safeName,
+              schoolId: String(row.school_id || "").trim(),
               program: String(row.program || "").trim(),
               yearSection: String(row.year_section || "").trim(),
               violationLabel: String(row.violation_label || "").trim(),
@@ -9043,6 +9108,13 @@ app.get("/api/violation-analytics", async (req, res) => {
       ...analytics,
       ongoingSemesters,
       targetSchoolYear,
+      configuredCurrentTerm: currentSchoolYear
+        ? {
+            semester: normalizeSemester(currentSemester),
+            schoolYear: currentSchoolYear,
+            label: `${currentSchoolYear} ${SEMESTER_DISPLAY_MAP[normalizeSemester(currentSemester)] || normalizeSemester(currentSemester) || ""}`.trim(),
+          }
+        : null,
       metadata: {
         historicalRecordCount: workbookRecords.length,
         databaseRecordCount: databaseRecords.length,
