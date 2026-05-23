@@ -158,7 +158,7 @@ const VerificationCodeInput = ({
       <label className="mb-3 block text-sm font-medium text-gray-300">
         {label}
       </label>
-      <div className="flex w-full max-w-[500px] items-center gap-2 sm:gap-3">
+      <div className="flex w-full items-center gap-2 sm:gap-3">
         {digits.map((digit, index) => (
           <input
             key={`${label}-${index}`}
@@ -175,7 +175,7 @@ const VerificationCodeInput = ({
             onKeyDown={(event) => handleKeyDown(event, index)}
             onPaste={handlePaste}
             onFocus={(event) => event.target.select()}
-            className="verification-code-slot h-14 min-w-0 flex-1 rounded-xl border border-white/12 bg-white/[0.04] px-0 text-center text-lg font-bold tracking-[0.12em] text-white outline-none transition-all focus:border-cyan-300/70 focus:bg-white/[0.08] focus:shadow-[0_0_0_3px_rgba(103,232,249,0.12)] disabled:cursor-not-allowed disabled:opacity-60 sm:h-[68px] sm:max-w-[58px] sm:text-xl sm:tracking-[0.22em]"
+            className="verification-code-slot h-14 min-w-0 flex-1 rounded-xl border border-white/12 bg-white/[0.04] px-0 text-center text-lg font-bold tracking-[0.12em] text-white outline-none transition-all focus:border-cyan-300/70 focus:bg-white/[0.08] focus:shadow-[0_0_0_3px_rgba(103,232,249,0.12)] disabled:cursor-not-allowed disabled:opacity-60 sm:h-[68px] sm:text-xl sm:tracking-[0.22em]"
             aria-label={`${label} digit ${index + 1}`}
           />
         ))}
@@ -282,6 +282,23 @@ const Login = () => {
 
     setIsLoading(false);
     setError("Account role is not recognized.");
+  };
+
+  const handleCloseRoleChoiceModal = () => {
+    setPendingRoleChoiceUser(null);
+  };
+
+  const handleCloseAccountSetupModal = () => {
+    setPendingAccountSetupUser(null);
+    setSetupUsername("");
+    setSetupPassword("");
+    setSetupConfirmPassword("");
+    setSetupError("");
+    setSetupPasswordValidationError("");
+    setShowSetupPassword(false);
+    setShowSetupConfirmPassword(false);
+    setShowSetupPasswordRequirements(false);
+    setIsSubmittingAccountSetup(false);
   };
 
   const handleChooseLoginRole = async (selectedRole) => {
@@ -1578,10 +1595,10 @@ const Login = () => {
 
       <Modal
         isOpen={Boolean(pendingRoleChoiceUser)}
-        onClose={() => {}}
+        onClose={handleCloseRoleChoiceModal}
         title={<span className="font-black font-inter">Login as</span>}
         size="md"
-        showCloseButton={false}
+        showCloseButton
       >
         <div className="rounded-lg border border-white/10 bg-white/[0.04] px-4 py-4 mb-5">
           <p className="text-sm text-gray-200">
@@ -1610,10 +1627,10 @@ const Login = () => {
 
       <Modal
         isOpen={Boolean(pendingAccountSetupUser)}
-        onClose={() => {}}
+        onClose={handleCloseAccountSetupModal}
         title={<span className="font-black font-inter">Set-up your Account</span>}
         size="lg"
-        showCloseButton={false}
+        showCloseButton
       >
         <div className="rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-4 py-3 mb-4">
           <p className="text-sm font-medium text-cyan-100">

@@ -30,6 +30,8 @@ const EditProfileModal = ({
   serverError = "",
   onClearError,
 }) => {
+  const allowedEmailDomain = "@plpasig.edu.ph";
+
   const buildInitialFormData = () => ({
     username: initialData.username || "",
     schoolId: initialData.schoolId || "",
@@ -52,6 +54,7 @@ const EditProfileModal = ({
     if (isOpen) {
       setFormData(buildInitialFormData());
       setValidationErrors({});
+      setEmailError("");
       setCurrentPasswordError("");
       setCurrentPasswordValid(false);
       setShowPasswordRequirements(false);
@@ -81,6 +84,7 @@ const EditProfileModal = ({
 
   const [showPasswordRequirements, setShowPasswordRequirements] =
     useState(false);
+  const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [validationErrors, setValidationErrors] = useState({});
   const [currentPasswordError, setCurrentPasswordError] = useState("");
@@ -239,15 +243,48 @@ const EditProfileModal = ({
     return errors;
   };
 
+  const validateEmail = (value) => {
+    const normalizedEmail = String(value || "").trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      return "Please enter an email address.";
+    }
+
+    if (!normalizedEmail.includes("@")) {
+      return "Please enter a valid email address.";
+    }
+
+    if (!normalizedEmail.endsWith(allowedEmailDomain)) {
+      return `Email must end with ${allowedEmailDomain}.`;
+    }
+
+    return "";
+  };
+
   const handleChange = (field) => (e) => {
-    setFormData((prev) => ({ ...prev, [field]: e.target.value }));
+    const nextValue = e.target.value;
+
+    setFormData((prev) => ({ ...prev, [field]: nextValue }));
+
+    if (field === "email") {
+      setEmailError(nextValue ? validateEmail(nextValue) : "");
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    const nextEmailError = validateEmail(formData.email);
+
     // Validate password fields
     const errors = validatePasswordFields();
+    if (nextEmailError) {
+      errors.email = nextEmailError;
+      setEmailError(nextEmailError);
+    } else {
+      setEmailError("");
+    }
+
     if (Object.keys(errors).length > 0) {
       setValidationErrors(errors);
       setShowValidationModal(true);
@@ -274,6 +311,7 @@ const EditProfileModal = ({
 
     setFormData(buildInitialFormData());
     setValidationErrors({});
+    setEmailError("");
     setCurrentPasswordError("");
     setCurrentPasswordValid(false);
     setCheckingPassword(false);
@@ -382,8 +420,14 @@ const EditProfileModal = ({
             type="email"
             value={formData.email}
             onChange={handleChange("email")}
-            placeholder="Enter email address"
+            placeholder={`name${allowedEmailDomain}`}
+            aria-describedby="edit-profile-email-error"
           />
+          {emailError && (
+            <p id="edit-profile-email-error" className="mt-2 text-sm text-red-300">
+              {emailError}
+            </p>
+          )}
         </div>
 
         {/* Divider */}
