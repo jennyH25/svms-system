@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Download, Save, Trash2, Upload } from 'lucide-react'
+import { Download, Mail, Save, Trash2, Upload } from 'lucide-react'
 import AnimatedContent from '../../components/ui/AnimatedContent'
 import Button from '../../components/ui/Button'
 import { useSettings } from '../../context/SettingsContext'
@@ -35,6 +35,23 @@ const LoadingText = ({ label }) => (
 const Spinner = () => (
   <span className="inline-block h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
 )
+
+const formatUsageTimestamp = value => {
+  if (!value) return 'No tracked emails in the last 24 hours.'
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Recent activity unavailable.'
+  }
+
+  return parsed.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
 
 const loadImageFromFile = file =>
   new Promise((resolve, reject) => {
@@ -149,6 +166,9 @@ const Settings = () => {
   const [isPreparingExportHeader, setIsPreparingExportHeader] = useState(false)
   const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [emailUsage, setEmailUsage] = useState(settings?.emailUsage || null)
+  const [isLoadingEmailUsage, setIsLoadingEmailUsage] = useState(false)
+  const [emailUsageError, setEmailUsageError] = useState('')
   const logoInputRef = useRef(null)
   const exportHeaderInputRef = useRef(null)
   const logoPreviewUrlRef = useRef(null)
@@ -186,6 +206,7 @@ const Settings = () => {
       setUploadedExportHeaderFile(null)
       setLogoToRemove(false)
       setExportHeaderToRemove(false)
+      setEmailUsage(prev => settings.emailUsage || prev || null)
     }
   }, [settings])
 
@@ -197,6 +218,51 @@ const Settings = () => {
       URL.revokeObjectURL(exportHeaderPreviewUrlRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    let isMounted = true
+    const hasInitialEmailUsage = Boolean(settings?.emailUsage)
+
+    const loadEmailUsage = async () => {
+      try {
+        if (isMounted) {
+          setIsLoadingEmailUsage(!hasInitialEmailUsage)
+          setEmailUsageError('')
+        }
+
+        const response = await fetch('/api/settings/email-usage', {
+          cache: 'no-store',
+        })
+        const data = await response.json().catch(() => ({}))
+
+        if (!response.ok) {
+          throw new Error(data?.message || 'Unable to load email usage.')
+        }
+
+        if (isMounted) {
+          setEmailUsage(data?.usage || null)
+        }
+      } catch (err) {
+        if (isMounted) {
+          setEmailUsageError(err.message || 'Unable to load email usage.')
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingEmailUsage(false)
+        }
+      }
+    }
+
+    if (!hasInitialEmailUsage) {
+      loadEmailUsage()
+    }
+    const intervalId = window.setInterval(loadEmailUsage, 30 * 1000)
+
+    return () => {
+      isMounted = false
+      window.clearInterval(intervalId)
+    }
+  }, [settings?.emailUsage])
 
   const clearPreviewUrl = previewRef => {
     if (previewRef.current) {
@@ -455,6 +521,16 @@ const Settings = () => {
   const isExportHeaderUploadBusy = isPreparingExportHeader
   const isRemoveBusy = false
   const isSaveBusy = isSaving
+  const emailUsagePercent = Math.max(
+    0,
+    Math.min(100, Number(emailUsage?.usagePercent || 0)),
+  )
+  const emailUsageToneClass =
+    emailUsagePercent >= 90
+      ? 'bg-red-400'
+      : emailUsagePercent >= 75
+        ? 'bg-amber-400'
+        : 'bg-cyan-400'
   const uploadButtonLabel =
     isUploadBusy ? <LoadingText label="Loading" /> : 'Upload'
   const exportHeaderUploadButtonLabel =
@@ -465,29 +541,29 @@ const Settings = () => {
   return (
     <div className="text-white">
       <AnimatedContent>
-        <h2 className="text-xl font-bold mb-6 tracking-wide">SYSTEM SETTINGS</h2>
+        <h2 className="mb-4 text-xl font-bold tracking-wide">SYSTEM SETTINGS</h2>
       </AnimatedContent>
       <AnimatedContent delay={0.1}>
-        <div className="bg-[#23262B] rounded-xl p-8 ml-8">
+        <div className="ml-8 rounded-xl bg-[#23262B] p-6">
           {/* Error and Success Messages */}
           {error && (
-            <div className="mb-6 p-4 bg-red-500/20 border border-red-500 rounded-lg text-red-200">
+            <div className="mb-5 rounded-lg border border-red-500 bg-red-500/20 p-4 text-red-200">
               {error}
             </div>
           )}
           {success && (
-            <div className="mb-6 p-4 bg-green-500/20 border border-green-500 rounded-lg text-green-200">
+            <div className="mb-5 rounded-lg border border-green-500 bg-green-500/20 p-4 text-green-200">
               {success}
             </div>
           )}
 
-          <div className="mb-8">
-            <h3 className="text-2xl font-bold mb-2">Change Logo</h3>
-            <p className="text-gray-400 text-base mb-6">
+          <div className="mb-6">
+            <h3 className="mb-1.5 text-xl font-bold">Change Logo</h3>
+            <p className="mb-4 text-sm text-gray-400">
               Customize the system's logo and display name.
             </p>
-            <div className="flex items-center gap-8 mb-6">
-              <div className="w-28 h-28 rounded-full bg-[#1a1a1a] flex items-center justify-center overflow-hidden">
+            <div className="mb-4 flex items-center gap-5">
+              <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-[#1a1a1a]">
                 {logo ? (
                   <img
                     src={logo}
@@ -532,26 +608,26 @@ const Settings = () => {
                 </Button>
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-10 items-end">
+            <div className="grid grid-cols-1 gap-6 items-end">
               <div className="max-w-xl">
-                <label className="block text-base font-medium mb-3">
+                <label className="mb-2 block text-sm font-medium">
                   System Display Name
                 </label>
                 <input
                   type="text"
                   value={displayName}
                   onChange={e => setDisplayName(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-white/10 rounded-lg px-4 py-3 text-white text-base focus:outline-none focus:ring-1 focus:ring-gray-600"
+                  className="w-full rounded-lg border border-white/10 bg-[#1a1a1a] px-4 py-3 text-base text-white focus:outline-none focus:ring-1 focus:ring-gray-600"
                   placeholder="This name will appear on the dashboard header."
                 />
               </div>
             </div>
-            <div className="border-t border-white/10 my-8" />
-            <div className="mb-8">
-              <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="my-6 border-t border-white/10" />
+            <div className="mb-4">
+              <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div className="max-w-2xl">
-                  <h3 className="text-2xl font-bold mb-2">Export Header</h3>
-                  <p className="text-gray-400 text-base">
+                  <h3 className="mb-1.5 text-xl font-bold">Export Header</h3>
+                  <p className="text-sm text-gray-400">
                     This header will appear in every export for both admin and student users.
                   </p>
                 </div>
@@ -585,15 +661,15 @@ const Settings = () => {
                   </Button>
                 </div>
               </div>
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div className="rounded-2xl border border-white/10 bg-[#1a1a1a] p-4">
                   <p className="mb-3 text-sm font-medium text-gray-300">Current Header</p>
-                  <div className="flex min-h-[150px] items-center justify-center overflow-hidden rounded-xl border border-dashed border-white/10 bg-white px-4 py-6">
+                  <div className="flex min-h-[96px] items-center justify-center overflow-hidden rounded-xl border border-dashed border-white/10 bg-white px-4 py-4">
                     {exportHeader ? (
                       <img
                         src={exportHeader}
                         alt="Export Header"
-                        className="max-h-[130px] w-full object-contain"
+                        className="max-h-[78px] w-full object-contain"
                       />
                     ) : (
                       <span className="text-sm text-gray-500">No export header selected.</span>
@@ -610,7 +686,7 @@ const Settings = () => {
                     <Download className="h-4 w-4" />
                     {isDownloadingTemplate ? <LoadingText label="Downloading" /> : 'Download Template'}
                   </button>
-                  <div className="self-start rounded-full border border-white/10 bg-[#1a1a1a] px-4 py-2 text-sm text-gray-200 sm:self-auto">
+                  <div className="self-start rounded-full border border-white/10 bg-[#1a1a1a] px-4 py-2 text-xs text-gray-200 sm:self-auto">
                     Required image size: <span className="font-semibold text-white">1598 x 293</span>
                   </div>
                 </div>
@@ -618,7 +694,10 @@ const Settings = () => {
             </div>
           </div>
         </div>
-        <div className="flex justify-end mt-6">
+      </AnimatedContent>
+
+      <AnimatedContent delay={0.12}>
+        <div className="ml-8 mt-5 flex justify-end">
           <Button
             variant="secondary"
             size="lg"
@@ -638,6 +717,92 @@ const Settings = () => {
               </>
             )}
           </Button>
+        </div>
+      </AnimatedContent>
+
+      <AnimatedContent delay={0.15}>
+        <div className="ml-8 mt-4">
+          <h3 className="mb-3 text-lg font-bold tracking-wide text-white">EMAIL USAGE</h3>
+          <div className="rounded-xl bg-[#23262B] p-5">
+          <div className="rounded-2xl border border-white/10 bg-[#1a1a1a] p-4">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
+                  <Mail className="h-4.5 w-4.5" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-white">
+                    Rolling 24-hour SVMS tracking for the configured sender.
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Usage shown here only includes emails sent by this system.
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-full border border-white/10 bg-[#23262B] px-3 py-1.5 text-xs text-gray-300">
+                {emailUsage?.senderEmail || 'SMTP sender not configured'}
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between gap-4">
+                <p className="text-sm font-medium text-gray-200">
+                  {isLoadingEmailUsage
+                    ? 'Loading email usage...'
+                    : `${emailUsage?.recipientsUsed || 0} / ${emailUsage?.dailyLimit || 500} recipients used`}
+                </p>
+                <p className="text-sm text-gray-400">
+                  {isLoadingEmailUsage ? '--' : `${emailUsagePercent}%`}
+                </p>
+              </div>
+              <div className="h-2.5 overflow-hidden rounded-full bg-white/10">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${emailUsageToneClass}`}
+                  style={{ width: `${emailUsagePercent}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-white/10 bg-[#23262B] px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.16em] text-gray-500">Remaining</p>
+                <p className="mt-2 text-lg font-semibold text-white">
+                  {isLoadingEmailUsage ? '--' : emailUsage?.remaining || 0}
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-[#23262B] px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.16em] text-gray-500">Messages Sent</p>
+                <p className="mt-2 text-lg font-semibold text-white">
+                  {isLoadingEmailUsage ? '--' : emailUsage?.messagesSent || 0}
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-[#23262B] px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.16em] text-gray-500">Last Tracked Send</p>
+                <p className="mt-2 text-sm font-medium text-white">
+                  {isLoadingEmailUsage
+                    ? 'Loading...'
+                    : formatUsageTimestamp(emailUsage?.lastSentAt)}
+                </p>
+              </div>
+            </div>
+
+            {emailUsage?.cooldownActive && (
+              <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                Gmail sending is currently on cooldown after hitting a daily sending limit. Tracked reset time: {formatUsageTimestamp(emailUsage?.cooldownUntil)}.
+              </div>
+            )}
+
+            {emailUsageError && (
+              <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {emailUsageError}
+              </div>
+            )}
+
+            <p className="mt-3 text-xs leading-relaxed text-gray-500">
+              This bar tracks emails sent by SVMS only. Manual Gmail sends or other apps using the same account are not included here.
+            </p>
+          </div>
+          </div>
         </div>
       </AnimatedContent>
     </div>

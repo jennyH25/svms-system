@@ -13,6 +13,8 @@ import {
   Loader2,
   Minus,
   AlertCircle,
+  Bell,
+  Mail,
 } from "lucide-react";
 import Button from "../../components/ui/Button";
 import SearchBar from "../../components/ui/SearchBar";
@@ -54,6 +56,8 @@ const ALERT_TYPE_OPTIONS = [
   "At-Risk Alert",
   "Custom",
 ];
+// Keep in sync with the server-side default in server/index.js.
+const ALERT_EMAIL_MAX_BATCH_SIZE = 50;
 
 const ARCHIVE_REASON_OPTIONS = [
   "LOA (Leave of Absence)",
@@ -210,6 +214,7 @@ const UserManagement = () => {
   const [alertType, setAlertType] = useState("");
   const [customAlertType, setCustomAlertType] = useState("");
   const [alertMessage, setAlertMessage] = useState("");
+  const [alertDeliveryMode, setAlertDeliveryMode] = useState("in_app_only");
   const [alertValidationMessage, setAlertValidationMessage] = useState("");
   const [alertResultModal, setAlertResultModal] = useState({
     isOpen: false,
@@ -1134,11 +1139,16 @@ const UserManagement = () => {
     () => selectedStudentsForAlert.filter((student) => Number(student.violationCount || 0) > 0),
     [selectedStudentsForAlert],
   );
+  const isBulkAlertSelection =
+    selectedStudentsForAlert.length > ALERT_EMAIL_MAX_BATCH_SIZE;
+  const canSendAlertEmails =
+    selectedStudentsForAlert.length > 0 && !isBulkAlertSelection;
 
   const resetAlertForm = () => {
     setAlertType("");
     setCustomAlertType("");
     setAlertMessage("");
+    setAlertDeliveryMode("in_app_only");
     setAlertValidationMessage("");
   };
 
@@ -1152,6 +1162,7 @@ const UserManagement = () => {
       return;
     }
 
+    setAlertDeliveryMode("in_app_only");
     setAlertValidationMessage("");
     setShowSendAlertModal(true);
   };
@@ -1199,6 +1210,7 @@ const UserManagement = () => {
           studentIds: selectedStudentsForAlert.map((student) => student.id),
           alertType: resolvedAlertType,
           message: String(alertMessage || "").trim(),
+          deliveryMode: canSendAlertEmails ? alertDeliveryMode : "in_app_only",
         }),
       });
 
@@ -1213,11 +1225,19 @@ const UserManagement = () => {
         : 0;
       const emailSentCount = Number(data?.emailSentCount || 0);
       const emailFailedCount = Number(data?.emailFailedCount || 0);
+      const emailSuppressed =
+        data?.emailDeliveryMode === "in_app_only" ||
+        data?.emailDeliverySuppressedReason === "bulk-in-app-only";
 
-      const deliverySummary =
-        emailFailedCount > 0
-          ? `Email delivered to ${formatStudentLabel(emailSentCount)}; ${emailFailedCount} email delivery issue${emailFailedCount === 1 ? '' : 's'}.`
-          : `Email delivered to ${formatStudentLabel(emailSentCount)}.`;
+      let deliverySummary = "Delivered as in-app notifications only.";
+      if (emailSuppressed && data?.emailDeliverySuppressedReason === "bulk-in-app-only") {
+        deliverySummary = `Delivered as in-app notifications only. Bulk alerts for more than ${ALERT_EMAIL_MAX_BATCH_SIZE} students are not sent through email.`;
+      } else if (!emailSuppressed) {
+        deliverySummary =
+          emailFailedCount > 0
+            ? `Email delivered to ${formatStudentLabel(emailSentCount)}; ${emailFailedCount} email delivery issue${emailFailedCount === 1 ? '' : "s"}.`
+            : `Email delivered to ${formatStudentLabel(emailSentCount)}.`;
+      }
 
       setShowSendAlertModal(false);
       resetAlertForm();
@@ -2935,6 +2955,9 @@ const UserManagement = () => {
           <p className="text-xs text-orange-100 leading-relaxed">
             {formatStudentLabel(selectedStudentsForAlert.length)} will receive this alert notification.
           </p>
+          <p className="text-xs text-orange-100/90 leading-relaxed mt-2">
+            Bulk alerts default to in-app only. Email is reserved for small batches and account or security messages.
+          </p>
         </div>
 
         <div className="mb-4">
@@ -3029,6 +3052,103 @@ const UserManagement = () => {
             placeholder={`Type the message that will be sent to selected ${pluralize("student", selectedStudentsForAlert.length)}.`}
             className="w-full resize-none backdrop-blur-md border border-white/20 rounded-lg px-4 py-3 text-sm text-white bg-white/5 placeholder-gray-400 focus:outline-none focus:border-cyan-300/60 focus:ring-1 focus:ring-cyan-300/30 transition-all disabled:opacity-50"
           />
+        </div>
+
+        <div className="mt-4 rounded-lg border border-white/20 bg-slate-950/25 px-3.5 py-3">
+          <div className="mb-2.5">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300/85">
+              Delivery Method
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+              Choose how this alert will be delivered.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setAlertDeliveryMode("in_app_only")}
+              disabled={isSendingAlert}
+              className={`flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all ${
+                alertDeliveryMode === "in_app_only"
+                  ? "border-cyan-300/70 bg-cyan-400/10"
+                  : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              <span
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
+                  alertDeliveryMode === "in_app_only"
+                    ? "border-cyan-300/25 bg-cyan-400/10 text-cyan-300"
+                    : "border-white/10 bg-white/[0.05] text-slate-300"
+                }`}
+                aria-hidden="true"
+              >
+                <Bell className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-slate-50">
+                  In-App Notification
+                </span>
+                <span className="mt-0.5 block text-[11px] text-slate-400">
+                  Notification panel only
+                </span>
+              </span>
+              <span
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-all ${
+                  alertDeliveryMode === "in_app_only"
+                    ? "border-cyan-300 bg-cyan-300 text-slate-950"
+                    : "border-white/25 bg-transparent text-transparent"
+                }`}
+                aria-hidden="true"
+              >
+                <CheckCircle className="h-3 w-3" />
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (canSendAlertEmails) {
+                  setAlertDeliveryMode("in_app_and_email");
+                }
+              }}
+              disabled={isSendingAlert || !canSendAlertEmails}
+              className={`flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-all ${
+                alertDeliveryMode === "in_app_and_email" && canSendAlertEmails
+                  ? "border-cyan-300/70 bg-cyan-400/10"
+                  : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              <span
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
+                  alertDeliveryMode === "in_app_and_email" && canSendAlertEmails
+                    ? "border-cyan-300/25 bg-cyan-400/10 text-cyan-300"
+                    : "border-white/10 bg-white/[0.05] text-slate-300"
+                }`}
+                aria-hidden="true"
+              >
+                <Mail className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-slate-50">
+                  In-App + Email
+                </span>
+                <span className="mt-0.5 block text-[11px] text-slate-400">
+                  For up to {ALERT_EMAIL_MAX_BATCH_SIZE} students
+                </span>
+              </span>
+              <span
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-all ${
+                  alertDeliveryMode === "in_app_and_email" && canSendAlertEmails
+                    ? "border-cyan-300 bg-cyan-300 text-slate-950"
+                    : "border-white/25 bg-transparent text-transparent"
+                }`}
+                aria-hidden="true"
+              >
+                <CheckCircle className="h-3 w-3" />
+              </span>
+            </button>
+          </div>
         </div>
 
         {alertValidationMessage && (

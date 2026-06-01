@@ -25,6 +25,7 @@ import {
   syncStudentsDatabase,
   syncSystemSettingsDatabase,
   syncAuditLogsDatabase,
+  syncEmailUsageDatabase,
   syncViolationsDatabase,
   syncNotificationsDatabase,
   syncPasswordResetDatabase,
@@ -4343,6 +4344,118 @@ function buildAdminAlertEmailTemplate({
 // Cached transporter — created once, reused for all emails.
 let _mailTransporter = null;
 let _mailSendLimitBlockedUntilMs = 0;
+const DEFAULT_EMAIL_DAILY_USAGE_LIMIT = Number(
+  process.env.EMAIL_DAILY_USAGE_LIMIT || 500,
+);
+
+function getConfiguredEmailDailyUsageLimit() {
+  return Math.max(1, DEFAULT_EMAIL_DAILY_USAGE_LIMIT);
+}
+
+async function getTrackedEmailUsageSummary(pool) {
+  const dailyLimit = getConfiguredEmailDailyUsageLimit();
+  const senderEmail = String(
+    process.env.SMTP_FROM || process.env.SMTP_USER || "",
+  )
+    .trim()
+    .toLowerCase();
+  const result = await pool.query(
+    `
+    SELECT
+      COALESCE(SUM(recipient_count), 0) AS recipients_used,
+      COUNT(*)::int AS messages_sent,
+      MAX(created_at) AS last_sent_at
+    FROM email_send_logs
+    WHERE created_at >= NOW() - INTERVAL '24 hours'
+      AND ($1::text IS NULL OR sender_email = $1)
+    `,
+    [senderEmail || null],
+  );
+
+  const recipientsUsed = Number(result.rows?.[0]?.recipients_used || 0);
+  const messagesSent = Number(result.rows?.[0]?.messages_sent || 0);
+  const remaining = Math.max(0, dailyLimit - recipientsUsed);
+  const usagePercent =
+    dailyLimit > 0
+      ? Math.min(100, Math.round((recipientsUsed / dailyLimit) * 100))
+      : 0;
+
+  return {
+    senderEmail: senderEmail || null,
+    trackedWindowHours: 24,
+    dailyLimit,
+    recipientsUsed,
+    messagesSent,
+    remaining,
+    usagePercent,
+    lastSentAt: result.rows?.[0]?.last_sent_at || null,
+    cooldownActive: _mailSendLimitBlockedUntilMs > Date.now(),
+    cooldownUntil:
+      _mailSendLimitBlockedUntilMs > Date.now()
+        ? new Date(_mailSendLimitBlockedUntilMs).toISOString()
+        : null,
+    trackedByAppOnly: true,
+  };
+}
+
+function normalizeMailRecipients(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => normalizeMailRecipients(entry));
+  }
+
+  if (typeof value === "object") {
+    const address = String(value.address || "").trim().toLowerCase();
+    return address ? [address] : [];
+  }
+
+  return String(value)
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function getTrackedMailRecipients(mailOptions) {
+  return [
+    ...normalizeMailRecipients(mailOptions?.to),
+    ...normalizeMailRecipients(mailOptions?.cc),
+    ...normalizeMailRecipients(mailOptions?.bcc),
+  ];
+}
+
+async function recordSuccessfulEmailSend(mailOptions, contextLabel) {
+  if (!hasDbConfig()) {
+    return;
+  }
+
+  const recipients = getTrackedMailRecipients(mailOptions);
+  const recipientCount = recipients.length > 0 ? recipients.length : 1;
+  const senderEmail = String(
+    mailOptions?.from || process.env.SMTP_FROM || process.env.SMTP_USER || "",
+  )
+    .trim()
+    .toLowerCase();
+
+  try {
+    const pool = getDbPool();
+    await pool.query(
+      `
+      INSERT INTO email_send_logs (sender_email, context_label, recipient_count, recipients)
+      VALUES ($1, $2, $3, $4::jsonb)
+      `,
+      [
+        senderEmail || null,
+        String(contextLabel || "unknown").trim().slice(0, 100) || "unknown",
+        recipientCount,
+        recipients.length > 0 ? JSON.stringify(recipients) : null,
+      ],
+    );
+  } catch (error) {
+    console.warn(
+      `Unable to record email usage for ${contextLabel}: ${error.message}`,
+    );
+  }
+}
 
 function isDailyMailLimitError(error) {
   const responseText = String(error?.response || "").toLowerCase();
@@ -4377,6 +4490,7 @@ async function sendMailWithLimitGuard(mailOptions, contextLabel) {
   try {
     const normalizedMailOptions = await withInlineEmailLogoAttachment(mailOptions);
     await transporter.sendMail(normalizedMailOptions);
+    await recordSuccessfulEmailSend(normalizedMailOptions, contextLabel);
     return { sent: true };
   } catch (error) {
     if (isDailyMailLimitError(error)) {
@@ -8516,7 +8630,7 @@ app.delete("/api/students/:id", async (req, res) => {
 });
 
 app.post("/api/students/alerts", async (req, res) => {
-  const { studentIds, alertType, message } = req.body ?? {};
+  const { studentIds, alertType, message, deliveryMode } = req.body ?? {};
 
   if (!Array.isArray(studentIds) || studentIds.length === 0) {
     return res.status(400).json({
@@ -8527,6 +8641,10 @@ app.post("/api/students/alerts", async (req, res) => {
 
   const normalizedAlertType = String(alertType || "").trim();
   const normalizedMessage = String(message || "").trim();
+  const normalizedDeliveryMode =
+    String(deliveryMode || "in_app_only").trim() === "in_app_and_email"
+      ? "in_app_and_email"
+      : "in_app_only";
 
   if (!normalizedAlertType) {
     return res.status(400).json({
@@ -8572,6 +8690,9 @@ app.post("/api/students/alerts", async (req, res) => {
     const skippedStudents = [];
     const emailDelivered = [];
     const emailFailures = [];
+    const ALERT_EMAIL_MAX_BATCH_SIZE = Number(
+      process.env.ALERT_EMAIL_MAX_BATCH_SIZE || 50,
+    );
     const studentLookup = await pool.query(
       `
       SELECT id, user_id, school_id, full_name, program, year_section, violation_count, email
@@ -8652,25 +8773,36 @@ app.post("/api/students/alerts", async (req, res) => {
       });
     }
 
-    for (const student of emailCandidates) {
-      const studentEmail = String(student.email || "")
-        .trim()
-        .toLowerCase();
-
-      if (!studentEmail || !studentEmail.includes("@")) {
-        emailFailures.push({
-          studentId: Number(student.id),
-          reason: "Student email address is missing or invalid.",
-        });
-      }
-    }
-
     const validEmailStudents = emailCandidates.filter((student) => {
       const studentEmail = String(student.email || "")
         .trim()
         .toLowerCase();
       return studentEmail && studentEmail.includes("@");
     });
+    const emailDeliveryMode =
+      normalizedStudentIds.length > ALERT_EMAIL_MAX_BATCH_SIZE
+        ? "in_app_only"
+        : normalizedDeliveryMode;
+    const emailDeliverySuppressedReason =
+      normalizedStudentIds.length > ALERT_EMAIL_MAX_BATCH_SIZE &&
+      normalizedDeliveryMode === "in_app_and_email"
+        ? "bulk-in-app-only"
+        : null;
+
+    if (emailDeliveryMode === "in_app_and_email") {
+      for (const student of emailCandidates) {
+        const studentEmail = String(student.email || "")
+          .trim()
+          .toLowerCase();
+
+        if (!studentEmail || !studentEmail.includes("@")) {
+          emailFailures.push({
+            studentId: Number(student.id),
+            reason: "Student email address is missing or invalid.",
+          });
+        }
+      }
+    }
 
     const ALERT_EMAIL_BACKGROUND_THRESHOLD = Number(process.env.ALERT_EMAIL_BACKGROUND_THRESHOLD || 100);
 
@@ -8735,7 +8867,10 @@ app.post("/api/students/alerts", async (req, res) => {
       return { delivered, failures };
     }
 
-    if (validEmailStudents.length > ALERT_EMAIL_BACKGROUND_THRESHOLD) {
+    if (
+      emailDeliveryMode === "in_app_and_email" &&
+      validEmailStudents.length > ALERT_EMAIL_BACKGROUND_THRESHOLD
+    ) {
       // Queue email sends in the background so the HTTP request returns quickly.
       // This prevents request timeouts when sending to many recipients (e.g., 700+).
       const studentsForBackground = Array.from(validEmailStudents);
@@ -8759,6 +8894,8 @@ app.post("/api/students/alerts", async (req, res) => {
           messageLength: normalizedMessage.length,
           recipients: insertedNotifications.map((entry) => entry.studentId),
           queuedEmailRecipients: validEmailStudents.map((s) => Number(s.id)),
+          emailDeliveryMode,
+          emailDeliverySuppressedReason,
         },
       });
 
@@ -8766,15 +8903,19 @@ app.post("/api/students/alerts", async (req, res) => {
         status: "ok",
         sentCount: insertedNotifications.length,
         emailQueuedCount: validEmailStudents.length,
+        emailDeliveryMode,
+        emailDeliverySuppressedReason,
         notifications: insertedNotifications,
         skippedStudents,
       });
     }
 
-    // Process emails synchronously (small recipient sets) and attach results.
-    const { delivered, failures } = await processEmailChunksSequentially(validEmailStudents);
-    emailDelivered.push(...delivered);
-    emailFailures.push(...failures);
+    if (emailDeliveryMode === "in_app_and_email") {
+      // Process emails synchronously (small recipient sets) and attach results.
+      const { delivered, failures } = await processEmailChunksSequentially(validEmailStudents);
+      emailDelivered.push(...delivered);
+      emailFailures.push(...failures);
+    }
 
     if (insertedNotifications.length === 0) {
       return res.status(404).json({
@@ -8794,6 +8935,8 @@ app.post("/api/students/alerts", async (req, res) => {
         recipients: insertedNotifications.map((entry) => entry.studentId),
         emailedRecipients: emailDelivered.map((entry) => entry.studentId),
         emailFailureCount: emailFailures.length,
+        emailDeliveryMode,
+        emailDeliverySuppressedReason,
         skippedStudents,
       },
     });
@@ -8803,6 +8946,8 @@ app.post("/api/students/alerts", async (req, res) => {
       sentCount: insertedNotifications.length,
       emailSentCount: emailDelivered.length,
       emailFailedCount: emailFailures.length,
+      emailDeliveryMode,
+      emailDeliverySuppressedReason,
       notifications: insertedNotifications,
       skippedStudents,
       emailFailures,
@@ -9999,6 +10144,7 @@ app.get("/api/settings", async (req, res) => {
         settings.display_name || DEFAULT_SYSTEM_DISPLAY_NAME,
       logoPath: decryptedLogoPath || null,
     });
+    const emailUsage = await getTrackedEmailUsageSummary(pool);
 
     return res.status(200).json({
       status: "ok",
@@ -10017,12 +10163,38 @@ app.get("/api/settings", async (req, res) => {
           settings.offenses_handbook_url ||
           "https://online.fliphtml5.com/befok/lfwi/",
         updatedAt: settings.updated_at,
+        emailUsage,
       },
     });
   } catch (error) {
     return res.status(503).json({
       status: "error",
       message: `Unable to fetch settings (${error.message}).`,
+    });
+  }
+});
+
+app.get("/api/settings/email-usage", async (_req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const usage = await getTrackedEmailUsageSummary(pool);
+
+    return res.status(200).json({
+      status: "ok",
+      usage,
+    });
+  } catch (error) {
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to fetch email usage (${error.message}).`,
     });
   }
 });
@@ -14261,6 +14433,7 @@ async function ensureAuthDatabaseReady() {
       await syncSystemSettingsDatabase();
       await syncViolationsDatabase(false);
       await syncAuditLogsDatabase();
+      await syncEmailUsageDatabase();
       await syncStudentsFromUsers();
       await syncNotificationsDatabase();
       await syncPasswordResetDatabase();
@@ -14291,6 +14464,7 @@ async function ensureAuthDatabaseReady() {
           // In dev, skip re-seeding violations and app state sync - they're heavy operations
           await syncViolationsDatabase(isDev);
           await syncAuditLogsDatabase();
+          await syncEmailUsageDatabase();
           await syncStudentsFromUsers();
           await syncNotificationsDatabase();
           await syncPasswordResetDatabase();

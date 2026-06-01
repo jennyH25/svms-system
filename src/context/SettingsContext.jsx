@@ -19,6 +19,7 @@ export const SettingsProvider = ({ children }) => {
     exportHeaderPath: DEFAULT_EXPORT_HEADER_PATH,
     theme: 'dark',
     themeColor: '#000000',
+    emailUsage: null,
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -29,6 +30,7 @@ export const SettingsProvider = ({ children }) => {
     exportHeaderPath: DEFAULT_EXPORT_HEADER_PATH,
     theme: 'dark',
     themeColor: '#000000',
+    emailUsage: null,
   })
 
   // Fetch settings from server
@@ -36,26 +38,18 @@ export const SettingsProvider = ({ children }) => {
     try {
       setLoading(true)
       setError(null)
-      const [settingsResponse, logoResponse] = await Promise.all([
-        fetch('/api/settings'),
-        fetch('/api/settings/logo'),
-      ])
-      const [settingsData, logoData] = await Promise.all([
-        settingsResponse.json(),
-        logoResponse.json(),
-      ])
+      const settingsResponse = await fetch('/api/settings')
+      const settingsData = await settingsResponse.json()
 
       if (settingsData.status === 'ok' && settingsData.settings) {
         setSettings({
           displayName: settingsData.settings.displayName,
-          logoPath:
-            logoData.status === 'ok'
-              ? logoData.logoPath || null
-              : null,
+          logoPath: settingsData.settings.logoPath || null,
           exportHeaderPath:
             settingsData.settings.exportHeaderPath || DEFAULT_EXPORT_HEADER_PATH,
           theme: settingsData.settings.theme,
           themeColor: settingsData.settings.themeColor,
+          emailUsage: settingsData.settings.emailUsage || null,
         })
       } else {
         setSettings(buildDefaultSettings())
@@ -97,6 +91,7 @@ export const SettingsProvider = ({ children }) => {
               data.settings.exportHeaderPath ?? prev.exportHeaderPath ?? DEFAULT_EXPORT_HEADER_PATH,
             theme: data.settings.theme,
             themeColor: data.settings.themeColor,
+            emailUsage: data.settings.emailUsage ?? prev.emailUsage ?? null,
           }
           return nextSettings
         })
@@ -136,6 +131,7 @@ export const SettingsProvider = ({ children }) => {
               data.settings.exportHeaderPath ?? prev.exportHeaderPath ?? DEFAULT_EXPORT_HEADER_PATH,
             theme: data.settings.theme ?? prev.theme,
             themeColor: data.settings.themeColor ?? prev.themeColor,
+            emailUsage: prev.emailUsage ?? null,
           }
           return nextSettings
         })
@@ -171,6 +167,7 @@ export const SettingsProvider = ({ children }) => {
               data.settings.exportHeaderPath ?? prev.exportHeaderPath ?? DEFAULT_EXPORT_HEADER_PATH,
             theme: data.settings.theme ?? prev.theme,
             themeColor: data.settings.themeColor ?? prev.themeColor,
+            emailUsage: prev.emailUsage ?? null,
           }
           return nextSettings
         })
@@ -209,6 +206,7 @@ export const SettingsProvider = ({ children }) => {
               data.settings.exportHeaderPath ?? prev.exportHeaderPath ?? DEFAULT_EXPORT_HEADER_PATH,
             theme: data.settings.theme ?? prev.theme,
             themeColor: data.settings.themeColor ?? prev.themeColor,
+            emailUsage: prev.emailUsage ?? null,
           }
           return nextSettings
         })
@@ -242,6 +240,7 @@ export const SettingsProvider = ({ children }) => {
             exportHeaderPath: DEFAULT_EXPORT_HEADER_PATH,
             theme: data.settings.theme ?? prev.theme,
             themeColor: data.settings.themeColor ?? prev.themeColor,
+            emailUsage: prev.emailUsage ?? null,
           }
           return nextSettings
         })
