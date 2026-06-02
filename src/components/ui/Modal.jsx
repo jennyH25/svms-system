@@ -21,7 +21,8 @@ const Modal = ({
   children, 
   size = 'md',
   showCloseButton = true,
-  className = '' 
+  className = '',
+  bodyClassName = '',
 }) => {
   // Animation state
   const [visible, setVisible] = React.useState(false);
@@ -98,7 +99,7 @@ const Modal = ({
               </div>
             )}
             {/* Body */}
-            <div className="px-4 pb-4 sm:px-6 sm:pb-6">
+            <div className={`px-4 pb-4 sm:px-6 sm:pb-6 ${bodyClassName}`}>
               {children}
             </div>
           </div>

@@ -62,6 +62,38 @@ const formatDate = (dateString) => {
   }
 };
 
+const formatDateTime = (dateString) => {
+  if (!dateString) return "-";
+  try {
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) {
+      return "-";
+    }
+    return date.toLocaleString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch (err) {
+    console.warn("Date-time format error:", dateString, err);
+    return "-";
+  }
+};
+
+const getArchiveFolderNoticePreviewScenario = () => {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.search);
+  return String(
+    params.get("previewArchiveFolderNotice") ||
+      params.get("previewArchiveNotice") ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+};
+
 const getArchiveViolationDisplayDate = (record) =>
   record?.original_created_at ||
   record?.originalCreatedAt ||
@@ -492,6 +524,7 @@ const Archives = () => {
   const [downloadAlertMessage, setDownloadAlertMessage] = useState("");
   const [previewSignatureImage, setPreviewSignatureImage] = useState("");
   const [loadingSignatureIds, setLoadingSignatureIds] = useState(new Set());
+  const [archiveRetentionOverview, setArchiveRetentionOverview] = useState(null);
   const availableArchiveSemesters = semestersBySchoolYear[activeFolder] || [];
   const availableUnresolvedSemesters =
     unresolvedSemestersBySchoolYear[selectedUnresolvedYear] || [];
@@ -516,6 +549,48 @@ const Archives = () => {
       message,
     });
   }, []);
+
+  const loadArchiveRetentionOverview = useCallback(async () => {
+    try {
+      const response = await fetch("/api/archive/retention/overview", {
+        headers: { ...getAuditHeaders() },
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || data.status === "error") {
+        throw new Error(data.message || "Failed to load archive retention overview");
+      }
+
+      setArchiveRetentionOverview(data);
+    } catch (error) {
+      console.warn("Unable to load archive retention overview:", error?.message || error);
+    }
+  }, []);
+
+  const loadArchivedUsers = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError("");
+      const response = await fetch("/api/archive/users", {
+        headers: { ...getAuditHeaders() },
+      });
+      const data = await response.json();
+
+      if (response.ok && data.status === "ok") {
+        setArchivedUsers(data.archivedUsers || []);
+      } else {
+        setError(data.message || "Failed to load archived users");
+      }
+    } catch (err) {
+      setError("Failed to load archived users: " + err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadArchiveRetentionOverview();
+  }, [loadArchiveRetentionOverview]);
 
   const navigateToArchiveLocation = useCallback((item) => {
     const target = item?.navigationTarget || getArchiveNavigationTarget(item);
@@ -623,29 +698,8 @@ const Archives = () => {
 
   // Load archived users on mount
   useEffect(() => {
-    const loadArchivedUsers = async () => {
-      try {
-        setIsLoading(true);
-        setError("");
-        const response = await fetch("/api/archive/users", {
-          headers: { ...getAuditHeaders() },
-        });
-        const data = await response.json();
-
-        if (response.ok && data.status === "ok") {
-          setArchivedUsers(data.archivedUsers || []);
-        } else {
-          setError(data.message || "Failed to load archived users");
-        }
-      } catch (err) {
-        setError("Failed to load archived users: " + err.message);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     loadArchivedUsers();
-  }, []);
+  }, [loadArchivedUsers]);
 
   // Listen for archive completion events from StudentViolation page
   useEffect(() => {
@@ -690,7 +744,7 @@ const Archives = () => {
     return () => {
       window.removeEventListener("archiveCompleted", handleArchiveEvent);
     };
-  }, [activeFolder, loadArchiveSchoolYears, loadUnresolvedSchoolYears]);
+  }, [activeFolder, loadArchiveSchoolYears, loadArchivedUsers, loadUnresolvedSchoolYears]);
 
   const isViolationType = (item, type) => {
     const categoryText = String(item.violationCategory || item.type || "").toLowerCase();
@@ -1098,15 +1152,16 @@ const Archives = () => {
       });
 
       if (response.ok) {
-        await response.json();
-        const [data, unresolvedData] = await Promise.all([
+        const responseData = await response.json();
+        const [refreshedData, unresolvedData] = await Promise.all([
           loadArchiveSchoolYears(),
           loadUnresolvedSchoolYears(),
         ]);
+        await loadArchivedUsers();
         // If the deleted year was active, switch to users folder
         if (
           activeFolder === schoolYearToDelete &&
-          !data?.schoolYears?.includes(schoolYearToDelete)
+          !refreshedData?.schoolYears?.includes(schoolYearToDelete)
         ) {
           setActiveFolder("users");
           setActiveSemester("1ST SEM");
@@ -1124,6 +1179,10 @@ const Archives = () => {
         setIsDeleteSchoolYearModalOpen(false);
         setSchoolYearToDelete(null);
         setError(""); // Clear any previous errors
+        openSuccessModal(
+          responseData?.message || `School year ${schoolYearToDelete} deleted successfully.`,
+          "School Year Deleted",
+        );
         // Trigger archive completion event to refresh other components
         window.dispatchEvent(new CustomEvent("archiveCompleted"));
       } else {
@@ -1284,6 +1343,76 @@ const Archives = () => {
     ],
     [schoolYears],
   );
+
+  const archiveFolderNoticePreviewScenario = useMemo(
+    () => getArchiveFolderNoticePreviewScenario(),
+    [],
+  );
+
+  const previewArchiveFolderNotice = useMemo(() => {
+    const sampleNotices = {
+      week: {
+        schoolYear: "2015-2016",
+        scheduledDeletionAt: "2026-06-01T08:00:00.000Z",
+        daysRemaining: 7,
+        stage: "week",
+      },
+      day: {
+        schoolYear: "2014-2015",
+        scheduledDeletionAt: "2026-06-01T08:00:00.000Z",
+        daysRemaining: 1,
+        stage: "day",
+      },
+    };
+
+    return sampleNotices[archiveFolderNoticePreviewScenario] || null;
+  }, [archiveFolderNoticePreviewScenario]);
+
+  useEffect(() => {
+    if (!previewArchiveFolderNotice?.schoolYear) {
+      return;
+    }
+
+    setActiveFolder(previewArchiveFolderNotice.schoolYear);
+    setActiveSemester("1ST SEM");
+    setIsGlobalSearch(false);
+    setSelectedUnresolvedYear("");
+  }, [previewArchiveFolderNotice]);
+
+  const activeFolderRetentionNotice = useMemo(() => {
+    if (previewArchiveFolderNotice && activeFolder === previewArchiveFolderNotice.schoolYear) {
+      return {
+        ...previewArchiveFolderNotice,
+        isPreview: true,
+      };
+    }
+
+    const schoolYearNotices = Array.isArray(archiveRetentionOverview?.schoolYears)
+      ? archiveRetentionOverview.schoolYears
+      : [];
+    const matchedNotice = schoolYearNotices.find(
+      (notice) =>
+        notice?.schoolYear === activeFolder &&
+        ["week", "day", "delete"].includes(String(notice?.stage || "").trim().toLowerCase()),
+    );
+
+    return matchedNotice || null;
+  }, [activeFolder, archiveRetentionOverview, previewArchiveFolderNotice]);
+
+  const activeFolderRetentionSummary = useMemo(() => {
+    if (!activeFolderRetentionNotice) {
+      return null;
+    }
+
+    const daysRemaining = Number(activeFolderRetentionNotice.daysRemaining || 0);
+    if (daysRemaining <= 0) {
+      return "Deletes today";
+    }
+    if (daysRemaining === 1) {
+      return "Deletes in 1 day";
+    }
+    return `Deletes in ${daysRemaining} days`;
+  }, [activeFolderRetentionNotice]);
 
 // Prepare data based on active folder or global search
   const displayData = useMemo(() => {
@@ -3736,6 +3865,44 @@ const Archives = () => {
             <h3 className="text-lg font-bold mb-4">{tableTitle}</h3>
           )}
 
+          {activeFolder !== "users" &&
+            activeFolder !== "unresolved" &&
+            !isGlobalSearch &&
+            activeFolderRetentionNotice && (
+              <div className="mb-4 rounded-xl border border-red-400/20 bg-red-500/10 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-red-500/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-red-200">
+                        {activeFolderRetentionNotice.stage === "day"
+                          ? "1-Day Warning"
+                          : activeFolderRetentionNotice.stage === "delete"
+                            ? "Deleting"
+                            : "7-Day Warning"}
+                      </span>
+                      {activeFolderRetentionNotice.isPreview ? (
+                        <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-300">
+                          Preview
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-sm font-semibold text-red-100">
+                      S.Y. <span className="text-red-300">{activeFolder}</span> is scheduled for deletion.
+                    </p>
+                    <p className="mt-1 text-xs text-red-100/80">
+                      {activeFolderRetentionSummary} • {formatDateTime(activeFolderRetentionNotice.scheduledDeletionAt)}
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg border border-white/10 bg-black/15 px-3 py-2 text-xs font-medium uppercase tracking-[0.16em] text-red-100/85">
+                    {activeFolderRetentionNotice.isPreview
+                      ? "Banner Preview"
+                      : "Folder Notice"}
+                  </div>
+                </div>
+              </div>
+            )}
+
           <div className="flex justify-between items-center mb-4">
             <div className="flex gap-2 items-center flex-wrap">
               {(activeFolder === "users" || isGlobalSearch) && (
@@ -4175,7 +4342,7 @@ const Archives = () => {
               <span className="font-semibold text-[#A3AED0]">
                 S.Y. {schoolYearToDelete}
               </span>
-              ? This will permanently delete all archived violation records for this school year and cannot be undone.
+              ? This will permanently delete all archived violation records for this school year, and any archived users assigned to this school year will also be removed. This action cannot be undone.
             </p>
             <ModalFooter>
               <Button

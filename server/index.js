@@ -18,6 +18,7 @@ import {
   getMissingDbVars,
   hasDbConfig,
   recordProjectActivityHeartbeat,
+  syncArchiveRetentionDatabase,
   syncAppStateDatabase,
   syncAuthDatabase,
   isAuthSchemaCurrent,
@@ -880,6 +881,12 @@ const NOTIFICATION_RETENTION_DAYS = Number(
   process.env.NOTIFICATION_RETENTION_DAYS || 60,
 );
 const NOTIFICATION_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const ARCHIVED_RECORD_RETENTION_YEARS = Number(
+  process.env.ARCHIVED_RECORD_RETENTION_YEARS || 10,
+);
+const ARCHIVED_RECORD_WARNING_WEEK_DAYS = 7;
+const ARCHIVED_RECORD_WARNING_DAY_DAYS = 1;
+const ARCHIVED_RECORD_MAINTENANCE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const API_GET_CACHE_TTL_MS = Number(process.env.API_GET_CACHE_TTL_MS || 8000);
 const API_GET_CACHE_MAX_ENTRIES = Number(
   process.env.API_GET_CACHE_MAX_ENTRIES || 400,
@@ -3932,6 +3939,661 @@ async function purgeExpiredNotifications() {
   }
 }
 
+function calculateArchivedSchoolYearDeletionAt(schoolYear) {
+  const normalizedSchoolYear = normalizeSchoolYear(schoolYear);
+  const match = normalizedSchoolYear.match(/^(\d{4})-(\d{4})$/);
+  if (!match) {
+    return null;
+  }
+
+  const schoolYearEnd = Number(match[2]);
+  if (!Number.isFinite(schoolYearEnd)) {
+    return null;
+  }
+
+  return new Date(
+    Date.UTC(schoolYearEnd + ARCHIVED_RECORD_RETENTION_YEARS, 5, 1, 0, 0, 0, 0),
+  );
+}
+
+function formatArchiveRetentionDeadline(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return "the scheduled retention deadline";
+  }
+
+  return date.toLocaleString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function getArchivedSchoolYearRetentionStatus(entry, now = new Date()) {
+  const scheduledDeletionAt = calculateArchivedSchoolYearDeletionAt(
+    entry?.schoolYear,
+  );
+  if (!scheduledDeletionAt) {
+    return {
+      scheduledDeletionAt: null,
+      msUntilDeletion: null,
+      daysRemaining: null,
+      nextAction: "unknown",
+      actionLabel: "School year unavailable",
+      stage: "unknown",
+    };
+  }
+
+  const msUntilDeletion = scheduledDeletionAt.getTime() - now.getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const daysRemaining = Math.max(0, Math.ceil(msUntilDeletion / dayMs));
+
+  if (msUntilDeletion <= 0) {
+    return {
+      scheduledDeletionAt,
+      msUntilDeletion,
+      daysRemaining: 0,
+      nextAction: "delete",
+      actionLabel: "Ready for auto-delete",
+      stage: "delete",
+    };
+  }
+
+  if (
+    !entry?.dayNoticeSentAt &&
+    msUntilDeletion <= ARCHIVED_RECORD_WARNING_DAY_DAYS * dayMs
+  ) {
+    return {
+      scheduledDeletionAt,
+      msUntilDeletion,
+      daysRemaining,
+      nextAction: "warn_day",
+      actionLabel: "1-day admin warning pending",
+      stage: "day",
+    };
+  }
+
+  if (
+    !entry?.weekNoticeSentAt &&
+    msUntilDeletion <= ARCHIVED_RECORD_WARNING_WEEK_DAYS * dayMs
+  ) {
+    return {
+      scheduledDeletionAt,
+      msUntilDeletion,
+      daysRemaining,
+      nextAction: "warn_week",
+      actionLabel: "7-day admin warning pending",
+      stage: "week",
+    };
+  }
+
+  if (msUntilDeletion <= ARCHIVED_RECORD_WARNING_DAY_DAYS * dayMs) {
+    return {
+      scheduledDeletionAt,
+      msUntilDeletion,
+      daysRemaining,
+      nextAction: "monitor",
+      actionLabel: "1-day admin warning active",
+      stage: "day",
+    };
+  }
+
+  if (msUntilDeletion <= ARCHIVED_RECORD_WARNING_WEEK_DAYS * dayMs) {
+    return {
+      scheduledDeletionAt,
+      msUntilDeletion,
+      daysRemaining,
+      nextAction: "monitor",
+      actionLabel: "7-day admin warning active",
+      stage: "week",
+    };
+  }
+
+  return {
+    scheduledDeletionAt,
+    msUntilDeletion,
+    daysRemaining,
+    nextAction: "monitor",
+    actionLabel: "Monitoring",
+    stage: "monitor",
+  };
+}
+
+async function backfillArchivedStudentSchoolYears(pool) {
+  const result = await pool.query(`
+    UPDATE "Students" s
+    SET archived_school_year = (
+      SELECT sva.school_year
+      FROM student_violation_archives sva
+      WHERE sva.student_id = s.id
+        AND sva.school_year IS NOT NULL
+        AND TRIM(sva.school_year) <> ''
+      ORDER BY sva.archived_at DESC NULLS LAST, sva.id DESC
+      LIMIT 1
+    )
+    WHERE s.is_archived = TRUE
+      AND (s.archived_school_year IS NULL OR TRIM(s.archived_school_year) = '')
+      AND EXISTS (
+        SELECT 1
+        FROM student_violation_archives sva
+        WHERE sva.student_id = s.id
+          AND sva.school_year IS NOT NULL
+          AND TRIM(sva.school_year) <> ''
+      )
+  `);
+
+  return Number(result.rowCount || 0);
+}
+
+async function getArchivedSchoolYearRetentionCandidates(pool) {
+  await backfillArchivedStudentSchoolYears(pool);
+
+  const result = await pool.query(`
+    SELECT DISTINCT school_year
+    FROM (
+      SELECT archived_school_year AS school_year
+      FROM "Students"
+      WHERE is_archived = TRUE
+        AND archived_school_year IS NOT NULL
+        AND TRIM(archived_school_year) <> ''
+
+      UNION
+
+      SELECT school_year
+      FROM student_violation_archives
+      WHERE school_year IS NOT NULL
+        AND TRIM(school_year) <> ''
+    ) school_years
+  `);
+
+  return Array.from(
+    new Set(
+      (result.rows || [])
+        .map((row) => normalizeSchoolYear(row.school_year))
+        .filter(Boolean),
+    ),
+  ).sort((left, right) => getSchoolYearStart(left) - getSchoolYearStart(right));
+}
+
+async function syncArchivedSchoolYearRetentionRows(pool, schoolYears) {
+  for (const schoolYear of schoolYears) {
+    const scheduledDeletionAt = calculateArchivedSchoolYearDeletionAt(schoolYear);
+    if (!scheduledDeletionAt) {
+      continue;
+    }
+
+    await pool.query(
+      `
+      INSERT INTO archive_school_year_retention_notices (
+        school_year,
+        scheduled_deletion_at
+      )
+      VALUES ($1, $2)
+      ON CONFLICT (school_year) DO UPDATE
+      SET scheduled_deletion_at = EXCLUDED.scheduled_deletion_at,
+          deleted_at = NULL,
+          updated_at = NOW()
+      `,
+      [schoolYear, scheduledDeletionAt.toISOString()],
+    );
+  }
+}
+
+async function loadArchivedSchoolYearRetentionEntries(pool) {
+  const schoolYears = await getArchivedSchoolYearRetentionCandidates(pool);
+  if (schoolYears.length === 0) {
+    return [];
+  }
+
+  await syncArchivedSchoolYearRetentionRows(pool, schoolYears);
+
+  const result = await pool.query(
+    `
+    SELECT
+      r.school_year,
+      r.scheduled_deletion_at,
+      r.week_notice_sent_at,
+      r.day_notice_sent_at,
+      r.deleted_at,
+      COALESCE(archive_counts.archive_violation_count, 0)::int AS archive_violation_count,
+      COALESCE(student_counts.archived_student_count, 0)::int AS archived_student_count
+    FROM archive_school_year_retention_notices r
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS archive_violation_count
+      FROM student_violation_archives sva
+      WHERE sva.school_year = r.school_year
+    ) archive_counts ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS archived_student_count
+      FROM "Students" s
+      WHERE s.is_archived = TRUE
+        AND s.archived_school_year = r.school_year
+    ) student_counts ON TRUE
+    WHERE r.school_year = ANY($1::text[])
+    ORDER BY r.scheduled_deletion_at ASC, r.school_year ASC
+    `,
+    [schoolYears],
+  );
+
+  return (result.rows || []).map((row) => ({
+    schoolYear: normalizeSchoolYear(row.school_year),
+    scheduledDeletionAt: row.scheduled_deletion_at,
+    weekNoticeSentAt: row.week_notice_sent_at || null,
+    dayNoticeSentAt: row.day_notice_sent_at || null,
+    deletedAt: row.deleted_at || null,
+    archiveViolationCount: Number(row.archive_violation_count || 0),
+    archivedStudentCount: Number(row.archived_student_count || 0),
+  }));
+}
+
+async function markArchivedSchoolYearNoticeSent(pool, schoolYear, sentColumn) {
+  await pool.query(
+    `
+    UPDATE archive_school_year_retention_notices
+    SET ${sentColumn} = NOW(),
+        updated_at = NOW()
+    WHERE school_year = $1
+    `,
+    [schoolYear],
+  );
+}
+
+async function deleteArchivedSchoolYearFolder(pool, schoolYear) {
+  const normalizedSchoolYear = normalizeSchoolYear(schoolYear);
+  if (!normalizedSchoolYear) {
+    return {
+      schoolYear: "",
+      deletedArchiveStudentCount: 0,
+      deletedArchiveViolationCount: 0,
+    };
+  }
+
+  const archivedStudentsResult = await pool.query(
+    `
+    SELECT id
+    FROM "Students"
+    WHERE is_archived = TRUE
+      AND archived_school_year = $1
+    ORDER BY archived_at DESC NULLS LAST, id DESC
+    `,
+    [normalizedSchoolYear],
+  );
+
+  const archivedStudents = archivedStudentsResult.rows || [];
+  let deletedArchiveStudentCount = 0;
+  let deletedArchiveViolationCount = 0;
+
+  for (const archivedStudent of archivedStudents) {
+    const deletedRecord = await deleteArchivedStudentRecord(pool, archivedStudent.id);
+    if (!deletedRecord?.studentDeleted) {
+      continue;
+    }
+
+    deletedArchiveStudentCount += 1;
+    deletedArchiveViolationCount += Number(
+      deletedRecord.archiveViolationCount || 0,
+    );
+  }
+
+  const remainingSchoolYearDeleteResult = await pool.query(
+    `
+    DELETE FROM student_violation_archives
+    WHERE school_year = $1
+    RETURNING id
+    `,
+    [normalizedSchoolYear],
+  );
+
+  deletedArchiveViolationCount += Number(
+    remainingSchoolYearDeleteResult.rowCount || 0,
+  );
+
+  await pool.query(
+    `
+    UPDATE archive_school_year_retention_notices
+    SET deleted_at = NOW(),
+        updated_at = NOW()
+    WHERE school_year = $1
+    `,
+    [normalizedSchoolYear],
+  );
+
+  return {
+    schoolYear: normalizedSchoolYear,
+    deletedArchiveStudentCount,
+    deletedArchiveViolationCount,
+  };
+}
+
+async function deleteArchivedStudentRecord(pool, studentId) {
+  const studentResult = await pool.query(
+    `
+    SELECT id, user_id, full_name, email, archived_school_year
+    FROM "Students"
+    WHERE id = $1 AND is_archived = TRUE
+    LIMIT 1
+    `,
+    [studentId],
+  );
+
+  const student = studentResult.rows?.[0] || null;
+  if (!student) {
+    return null;
+  }
+
+  const archiveDeleteResult = await pool.query(
+    `
+    DELETE FROM student_violation_archives
+    WHERE student_id = $1
+    RETURNING id
+    `,
+    [studentId],
+  );
+
+  let userDeleted = false;
+  let studentDeleted = false;
+  const userId = Number(student.user_id || 0);
+
+  if (Number.isFinite(userId) && userId > 0) {
+    const userDeleteResult = await pool.query(
+      `
+      DELETE FROM users
+      WHERE id = $1 AND role = 'student'
+      RETURNING id
+      `,
+      [userId],
+    );
+    userDeleted = Boolean(userDeleteResult.rows?.[0]);
+    studentDeleted = userDeleted;
+  }
+
+  if (!studentDeleted) {
+    const studentDeleteResult = await pool.query(
+      `
+      DELETE FROM "Students"
+      WHERE id = $1
+      RETURNING id
+      `,
+      [studentId],
+    );
+    studentDeleted = Boolean(studentDeleteResult.rows?.[0]);
+  }
+
+  return {
+    studentId: Number(student.id),
+    userId: userDeleted ? userId : null,
+    fullName: student.full_name,
+    archivedSchoolYear:
+      String(student.archived_school_year || "").trim() || null,
+    archiveViolationCount: Number(archiveDeleteResult.rowCount || 0),
+    studentDeleted,
+    userDeleted,
+  };
+}
+
+async function purgeExpiredArchivedStudentRecords() {
+  if (!hasDbConfig()) {
+    return {
+      warnedWeekCount: 0,
+      warnedDayCount: 0,
+      deletedSchoolYearCount: 0,
+      deletedStudentCount: 0,
+      deletedArchiveViolationCount: 0,
+    };
+  }
+
+  const pool = getDbPool();
+  if (!pool) {
+    return {
+      warnedWeekCount: 0,
+      warnedDayCount: 0,
+      deletedSchoolYearCount: 0,
+      deletedStudentCount: 0,
+      deletedArchiveViolationCount: 0,
+    };
+  }
+
+  try {
+    let warnedWeekCount = 0;
+    let warnedDayCount = 0;
+    let deletedSchoolYearCount = 0;
+    let deletedStudentCount = 0;
+    let deletedArchiveViolationCount = 0;
+    const now = new Date();
+
+    for (const entry of await loadArchivedSchoolYearRetentionEntries(pool)) {
+      if (entry.deletedAt) {
+        continue;
+      }
+
+      const status = getArchivedSchoolYearRetentionStatus(entry, now);
+      if (!status.scheduledDeletionAt) {
+        continue;
+      }
+
+      if (status.nextAction === "delete") {
+        await pool.query("BEGIN");
+        try {
+          const deleteResult = await deleteArchivedSchoolYearFolder(
+            pool,
+            entry.schoolYear,
+          );
+          await pool.query("COMMIT");
+
+          if (
+            Number(deleteResult.deletedArchiveStudentCount || 0) > 0 ||
+            Number(deleteResult.deletedArchiveViolationCount || 0) > 0
+          ) {
+            deletedSchoolYearCount += 1;
+            deletedStudentCount += Number(
+              deleteResult.deletedArchiveStudentCount || 0,
+            );
+            deletedArchiveViolationCount += Number(
+              deleteResult.deletedArchiveViolationCount || 0,
+            );
+
+            await logSystemAuditEvent(pool, {
+              action: "AUTO_DELETE_ARCHIVE_SCHOOL_YEAR",
+              targetType: "ARCHIVE_SCHOOL_YEAR",
+              targetId: entry.schoolYear,
+              details: `Auto-deleted archived school year folder S.Y. ${entry.schoolYear} after ${ARCHIVED_RECORD_RETENTION_YEARS} years.`,
+              metadata: {
+                schoolYear: entry.schoolYear,
+                deletedArchiveStudentCount:
+                  deleteResult.deletedArchiveStudentCount,
+                deletedArchiveViolationCount:
+                  deleteResult.deletedArchiveViolationCount,
+              },
+            });
+          }
+        } catch (error) {
+          await pool.query("ROLLBACK");
+          throw error;
+        }
+
+        continue;
+      }
+
+      if (status.nextAction === "warn_day") {
+        await markArchivedSchoolYearNoticeSent(
+          pool,
+          entry.schoolYear,
+          "day_notice_sent_at",
+        );
+        warnedDayCount += 1;
+
+        await logSystemAuditEvent(pool, {
+          action: "ARCHIVE_SCHOOL_YEAR_DAY_WARNING",
+          targetType: "ARCHIVE_SCHOOL_YEAR",
+          targetId: entry.schoolYear,
+          details: `Admin warning issued: S.Y. ${entry.schoolYear} will be auto-deleted on ${formatArchiveRetentionDeadline(status.scheduledDeletionAt)} unless it is exported first.`,
+          metadata: {
+            schoolYear: entry.schoolYear,
+            scheduledDeletionAt: status.scheduledDeletionAt.toISOString(),
+            archivedStudentCount: entry.archivedStudentCount,
+            archiveViolationCount: entry.archiveViolationCount,
+          },
+        });
+        continue;
+      }
+
+      if (status.nextAction === "warn_week") {
+        await markArchivedSchoolYearNoticeSent(
+          pool,
+          entry.schoolYear,
+          "week_notice_sent_at",
+        );
+        warnedWeekCount += 1;
+
+        await logSystemAuditEvent(pool, {
+          action: "ARCHIVE_SCHOOL_YEAR_WEEK_WARNING",
+          targetType: "ARCHIVE_SCHOOL_YEAR",
+          targetId: entry.schoolYear,
+          details: `Admin warning issued: S.Y. ${entry.schoolYear} is scheduled for auto-deletion on ${formatArchiveRetentionDeadline(status.scheduledDeletionAt)}. Export the folder to PDF or Excel first if a permanent copy is needed.`,
+          metadata: {
+            schoolYear: entry.schoolYear,
+            scheduledDeletionAt: status.scheduledDeletionAt.toISOString(),
+            archivedStudentCount: entry.archivedStudentCount,
+            archiveViolationCount: entry.archiveViolationCount,
+          },
+        });
+      }
+    }
+
+    if (
+      warnedWeekCount ||
+      warnedDayCount ||
+      deletedSchoolYearCount ||
+      deletedStudentCount
+    ) {
+      console.log("Archived record retention maintenance completed:", {
+        warnedWeekCount,
+        warnedDayCount,
+        deletedSchoolYearCount,
+        deletedStudentCount,
+        deletedArchiveViolationCount,
+      });
+    }
+
+    return {
+      warnedWeekCount,
+      warnedDayCount,
+      deletedSchoolYearCount,
+      deletedStudentCount,
+      deletedArchiveViolationCount,
+    };
+  } catch (error) {
+    console.warn(`Archived record retention maintenance failed: ${error.message}`);
+    return {
+      warnedWeekCount: 0,
+      warnedDayCount: 0,
+      deletedSchoolYearCount: 0,
+      deletedStudentCount: 0,
+      deletedArchiveViolationCount: 0,
+      error: error.message,
+    };
+  }
+}
+
+async function getArchivedRecordRetentionOverview(pool) {
+  const entries = await loadArchivedSchoolYearRetentionEntries(pool);
+  const now = new Date();
+  const schoolYears = entries.map((entry) => {
+    const status = getArchivedSchoolYearRetentionStatus(entry, now);
+    return {
+      schoolYear: entry.schoolYear,
+      scheduledDeletionAt: status.scheduledDeletionAt
+        ? status.scheduledDeletionAt.toISOString()
+        : null,
+      daysRemaining: status.daysRemaining,
+      nextAction: status.nextAction,
+      actionLabel: status.actionLabel,
+      stage: status.stage,
+      weekNoticeSentAt: entry.weekNoticeSentAt,
+      dayNoticeSentAt: entry.dayNoticeSentAt,
+      archivedStudentCount: entry.archivedStudentCount,
+      archiveViolationCount: entry.archiveViolationCount,
+    };
+  });
+
+  const totals = schoolYears.reduce(
+    (acc, schoolYear) => {
+      acc.totalSchoolYears += 1;
+      if (schoolYear.nextAction === "warn_week") acc.warningWeekPending += 1;
+      if (schoolYear.nextAction === "warn_day") acc.warningDayPending += 1;
+      if (schoolYear.nextAction === "delete") acc.readyForDeletion += 1;
+      return acc;
+    },
+    {
+      totalSchoolYears: 0,
+      warningWeekPending: 0,
+      warningDayPending: 0,
+      readyForDeletion: 0,
+    },
+  );
+
+  return {
+    policy: {
+      retentionYears: ARCHIVED_RECORD_RETENTION_YEARS,
+      warningWeekDays: ARCHIVED_RECORD_WARNING_WEEK_DAYS,
+      warningDayDays: ARCHIVED_RECORD_WARNING_DAY_DAYS,
+    },
+    serverTime: now.toISOString(),
+    totals,
+    schoolYears,
+  };
+}
+
+function isAdminArchiveNoticeRole(role) {
+  const normalizedRole = String(role || "").trim().toLowerCase();
+  return ["admin", "super_admin", "both"].includes(normalizedRole);
+}
+
+async function getAdminArchiveRetentionNotices(pool, adminUserId) {
+  const entries = await loadArchivedSchoolYearRetentionEntries(pool);
+  const dismissalResult = await pool.query(
+    `
+    SELECT school_year
+    FROM admin_archive_notice_dismissals
+    WHERE admin_user_id = $1
+    `,
+    [adminUserId],
+  );
+
+  const dismissedYears = new Set(
+    (dismissalResult.rows || [])
+      .map((row) => normalizeSchoolYear(row.school_year))
+      .filter(Boolean),
+  );
+
+  const now = new Date();
+  return entries
+    .filter((entry) => !entry.deletedAt)
+    .map((entry) => {
+      const status = getArchivedSchoolYearRetentionStatus(entry, now);
+      return {
+        schoolYear: entry.schoolYear,
+        scheduledDeletionAt: status.scheduledDeletionAt
+          ? status.scheduledDeletionAt.toISOString()
+          : null,
+        daysRemaining: status.daysRemaining,
+        nextAction: status.nextAction,
+        actionLabel: status.actionLabel,
+        stage: status.stage,
+        archivedStudentCount: entry.archivedStudentCount,
+        archiveViolationCount: entry.archiveViolationCount,
+        weekNoticeSentAt: entry.weekNoticeSentAt,
+        dayNoticeSentAt: entry.dayNoticeSentAt,
+      };
+    })
+    .filter(
+      (entry) =>
+        ["week", "day"].includes(entry.stage) &&
+        !dismissedYears.has(entry.schoolYear),
+    );
+}
+
 function legacyLightBuildCredentialEmailTemplate({
   firstName,
   username,
@@ -4454,6 +5116,42 @@ async function recordSuccessfulEmailSend(mailOptions, contextLabel) {
     console.warn(
       `Unable to record email usage for ${contextLabel}: ${error.message}`,
     );
+  }
+}
+
+async function logSystemAuditEvent(
+  pool,
+  { action, targetType, targetId = null, details = null, metadata = null },
+) {
+  try {
+    if (!pool) {
+      return;
+    }
+
+    await pool.query(
+      `
+      INSERT INTO audit_logs (
+        actor_user_id,
+        actor_name,
+        actor_role,
+        action,
+        target_type,
+        target_id,
+        details,
+        metadata
+      )
+      VALUES (NULL, 'System', 'system', $1, $2, $3, $4, $5::jsonb)
+      `,
+      [
+        action,
+        targetType,
+        targetId ? String(targetId) : null,
+        details,
+        metadata ? JSON.stringify(metadata) : null,
+      ],
+    );
+  } catch (error) {
+    console.warn(`System audit log failed: ${error.message}`);
   }
 }
 
@@ -8251,7 +8949,7 @@ app.put("/api/students/:id", async (req, res) => {
     }
 
     const studentData = await pool.query(
-      `SELECT year_level, year_section, status FROM "Students" WHERE id = $1 LIMIT 1`,
+      `SELECT year_level, year_section, status, current_school_year, archived_school_year FROM "Students" WHERE id = $1 LIMIT 1`,
       [id],
     );
     const student = studentData.rows?.[0];
@@ -8286,6 +8984,7 @@ app.put("/api/students/:id", async (req, res) => {
     // Handle archiving with reason
     let normalizedArchivedReason = null;
     let normalizedOriginalStatus = null;
+    let normalizedArchivedSchoolYear = null;
     if (isArchived === true && archivedReason && archivedReason.trim()) {
       normalizedArchivedReason = archivedReason.trim();
       // Store the current status as original status before archiving
@@ -8293,6 +8992,15 @@ app.put("/api/students/:id", async (req, res) => {
         student?.status || normalizedStatus || "Regular";
       // Keep the status unchanged - store reason separately
       // The reason will be used for display in Archives page
+    }
+
+    if (isArchived === true) {
+      normalizedArchivedSchoolYear =
+        normalizeSchoolYear(student?.current_school_year) ||
+        String(student?.current_school_year || "").trim() ||
+        normalizeSchoolYear(student?.archived_school_year) ||
+        String(student?.archived_school_year || "").trim() ||
+        null;
     }
 
     let computedUnresolvedArchive = null;
@@ -8381,9 +9089,26 @@ app.put("/api/students/:id", async (req, res) => {
         archived_at = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(archived_at, NOW()) ELSE archived_at END,
         archived_reason = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(NULLIF($14, ''), archived_reason) ELSE archived_reason END,
         original_status = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE(NULLIF($15, ''), original_status) ELSE original_status END,
-        is_unresolved_archive = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE($16::boolean, FALSE) ELSE is_unresolved_archive END
+        is_unresolved_archive = CASE WHEN $13::boolean IS NOT NULL AND $13::boolean THEN COALESCE($16::boolean, FALSE) ELSE is_unresolved_archive END,
+        archived_school_year = CASE
+          WHEN $13::boolean IS NOT NULL AND $13::boolean
+            THEN COALESCE(NULLIF($17, ''), archived_school_year)
+          WHEN $13::boolean = FALSE
+            THEN NULL
+          ELSE archived_school_year
+        END,
+        archive_warning_week_sent_at = CASE
+          WHEN $13::boolean IS NOT NULL AND $13::boolean THEN NULL
+          WHEN $13::boolean = FALSE THEN NULL
+          ELSE archive_warning_week_sent_at
+        END,
+        archive_warning_day_sent_at = CASE
+          WHEN $13::boolean IS NOT NULL AND $13::boolean THEN NULL
+          WHEN $13::boolean = FALSE THEN NULL
+          ELSE archive_warning_day_sent_at
+        END
       WHERE id = $12
-      RETURNING id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, program, year_section, year_level, status, violation_count, is_archived, archived_at, archived_reason, original_status, is_unresolved_archive
+      RETURNING id, user_id, email, school_id, full_name, first_name, middle_initial, last_name, program, year_section, year_level, status, violation_count, is_archived, archived_at, archived_reason, archived_school_year, original_status, is_unresolved_archive
       `,
       [
         normalizedEmail || null,
@@ -8404,6 +9129,7 @@ app.put("/api/students/:id", async (req, res) => {
         computedUnresolvedArchive !== null
           ? computedUnresolvedArchive
           : isUnresolvedArchive ?? null,
+        normalizedArchivedSchoolYear || null,
       ],
     );
 
@@ -12800,7 +13526,7 @@ app.get("/api/archive/users", async (req, res) => {
     const result = await pool.query(
       `SELECT 
         s.id, s.user_id, s.email, s.school_id, s.full_name, s.first_name, s.middle_initial, s.last_name, 
-        s.program, s.year_section, s.status, s.is_archived, s.archived_at, s.archived_reason, s.original_status, s.is_unresolved_archive,
+        s.program, s.year_section, s.status, s.is_archived, s.archived_at, s.archived_reason, s.archived_school_year, s.original_status, s.is_unresolved_archive,
         COALESCE(
           COALESCE(active_count.active_total_count, 0) + COALESCE(archive_count.archive_total_count, 0),
           0
@@ -12829,6 +13555,284 @@ app.get("/api/archive/users", async (req, res) => {
     return res.status(503).json({
       status: "error",
       message: `Unable to fetch archived users (${error.message}).`,
+    });
+  }
+});
+
+app.get("/api/archive/retention/overview", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const overview = await getArchivedRecordRetentionOverview(pool);
+
+    return res.status(200).json({
+      status: "ok",
+      ...overview,
+    });
+  } catch (error) {
+    console.error("Error loading archive retention overview:", error);
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to load archive retention overview (${error.message}).`,
+    });
+  }
+});
+
+app.get("/api/archive/retention/admin-notices", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  const actorRole = String(req.get("x-actor-role") || "").trim();
+  const actorUserId = Number(req.get("x-actor-user-id"));
+  if (!isAdminArchiveNoticeRole(actorRole) || !Number.isFinite(actorUserId)) {
+    return res.status(403).json({
+      status: "error",
+      message: "Only admins can view archive retention notices.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+    const notices = await getAdminArchiveRetentionNotices(pool, actorUserId);
+
+    return res.status(200).json({
+      status: "ok",
+      notices,
+      policy: {
+        retentionYears: ARCHIVED_RECORD_RETENTION_YEARS,
+        warningWeekDays: ARCHIVED_RECORD_WARNING_WEEK_DAYS,
+        warningDayDays: ARCHIVED_RECORD_WARNING_DAY_DAYS,
+      },
+      serverTime: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Error loading admin archive retention notices:", error);
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to load admin archive retention notices (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/archive/retention/admin-notices/dismiss", async (req, res) => {
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  const actorRole = String(req.get("x-actor-role") || "").trim();
+  const actorUserId = Number(req.get("x-actor-user-id"));
+  if (!isAdminArchiveNoticeRole(actorRole) || !Number.isFinite(actorUserId)) {
+    return res.status(403).json({
+      status: "error",
+      message: "Only admins can dismiss archive retention notices.",
+    });
+  }
+
+  const schoolYears = Array.from(
+    new Set(
+      (Array.isArray(req.body?.schoolYears) ? req.body.schoolYears : [])
+        .map((value) => normalizeSchoolYear(value))
+        .filter(Boolean),
+    ),
+  );
+
+  if (schoolYears.length === 0) {
+    return res.status(400).json({
+      status: "error",
+      message: "At least one school year notice is required.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    for (const schoolYear of schoolYears) {
+      await pool.query(
+        `
+        INSERT INTO admin_archive_notice_dismissals (
+          admin_user_id,
+          school_year,
+          dismissed_at
+        )
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (admin_user_id, school_year) DO UPDATE
+        SET dismissed_at = NOW(),
+            updated_at = NOW()
+        `,
+        [actorUserId, schoolYear],
+      );
+    }
+
+    await logAuditEvent(req, {
+      action: "DISMISS_ARCHIVE_RETENTION_NOTICE",
+      targetType: "ARCHIVE_RETENTION",
+      targetId: schoolYears.join(","),
+      details: `Dismissed archive retention notice${schoolYears.length === 1 ? "" : "s"} for ${schoolYears.map((year) => `S.Y. ${year}`).join(", ")}.`,
+      metadata: { schoolYears },
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      message: "Archive retention notice preferences saved.",
+      schoolYears,
+    });
+  } catch (error) {
+    console.error("Error dismissing archive retention notices:", error);
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to dismiss archive retention notices (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/archive/retention/demo", async (req, res) => {
+  const { schoolYear, scenario } = req.body ?? {};
+  const normalizedSchoolYear = normalizeSchoolYear(schoolYear);
+  const normalizedScenario = String(scenario || "").trim().toLowerCase();
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  if (!normalizedSchoolYear) {
+    return res.status(400).json({
+      status: "error",
+      message: "A valid school year is required for the demo.",
+    });
+  }
+
+  if (!["week", "day", "delete"].includes(normalizedScenario)) {
+    return res.status(400).json({
+      status: "error",
+      message: "Scenario must be one of: week, day, delete.",
+    });
+  }
+
+  try {
+    const scheduledDeletionAt =
+      calculateArchivedSchoolYearDeletionAt(normalizedSchoolYear);
+    if (!scheduledDeletionAt) {
+      return res.status(400).json({
+        status: "error",
+        message: "Unable to calculate the retention deadline for that school year.",
+      });
+    }
+
+    const dayMs = 24 * 60 * 60 * 1000;
+    const simulatedRunAt =
+      normalizedScenario === "delete"
+        ? new Date(scheduledDeletionAt.getTime() + 5 * 60 * 1000)
+        : new Date(
+            scheduledDeletionAt.getTime() -
+              (normalizedScenario === "day"
+                ? ARCHIVED_RECORD_WARNING_DAY_DAYS
+                : ARCHIVED_RECORD_WARNING_WEEK_DAYS) *
+                dayMs,
+          );
+
+    const statusPreview = getArchivedSchoolYearRetentionStatus(
+      {
+        schoolYear: normalizedSchoolYear,
+        weekNoticeSentAt: normalizedScenario === "week" ? null : simulatedRunAt,
+        dayNoticeSentAt: normalizedScenario === "delete" ? simulatedRunAt : null,
+      },
+      simulatedRunAt,
+    );
+
+    const titleByScenario = {
+      week: "School year folder will be deleted in 7 days",
+      day: "School year folder will be deleted tomorrow",
+      delete: "School year folder is now being auto-deleted",
+    };
+    const descriptionByScenario = {
+      week: `Admin warning preview for S.Y. ${normalizedSchoolYear}. Export the folder to PDF or Excel before ${formatArchiveRetentionDeadline(scheduledDeletionAt)} if you want to keep a copy.`,
+      day: `Final admin warning preview for S.Y. ${normalizedSchoolYear}. The folder should be exported before ${formatArchiveRetentionDeadline(scheduledDeletionAt)} because it will no longer remain in the system.`,
+      delete: `Auto-delete preview for S.Y. ${normalizedSchoolYear}. The maintenance run removes the school year folder plus its archived students and archived database rows once the 10-year retention window ends.`,
+    };
+
+    return res.status(200).json({
+      status: "ok",
+      scenario: normalizedScenario,
+      schoolYear: normalizedSchoolYear,
+      simulatedRunAt: simulatedRunAt.toISOString(),
+      scheduledDeletionAt: scheduledDeletionAt.toISOString(),
+      nextAction: statusPreview.nextAction,
+      actionLabel: statusPreview.actionLabel,
+      title: titleByScenario[normalizedScenario],
+      description: descriptionByScenario[normalizedScenario],
+    });
+  } catch (error) {
+    console.error("Error running archive retention demo:", error);
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to run archive retention demo (${error.message}).`,
+    });
+  }
+});
+
+app.post("/api/archive/retention/run", async (req, res) => {
+  const dryRun = req.body?.dryRun !== false;
+
+  if (!hasDbConfig()) {
+    return res.status(500).json({
+      status: "error",
+      message: "Database is not configured.",
+    });
+  }
+
+  try {
+    await ensureAuthDatabaseReady();
+    const pool = getDbPool();
+
+    if (dryRun) {
+      const overview = await getArchivedRecordRetentionOverview(pool);
+      return res.status(200).json({
+        status: "ok",
+        mode: "dry-run",
+        message: "Archive retention dry run completed.",
+        overview,
+      });
+    }
+
+    const result = await purgeExpiredArchivedStudentRecords();
+    await logAuditEvent(req, {
+      action: "RUN_ARCHIVE_RETENTION_MAINTENANCE",
+      targetType: "ARCHIVE_RETENTION",
+      targetId: null,
+      details: `Manually ran archived record retention maintenance. Warned ${Number(result.warnedWeekCount || 0)} school year folder${Number(result.warnedWeekCount || 0) === 1 ? "" : "s"} (7-day), warned ${Number(result.warnedDayCount || 0)} school year folder${Number(result.warnedDayCount || 0) === 1 ? "" : "s"} (1-day), deleted ${Number(result.deletedSchoolYearCount || 0)} school year folder${Number(result.deletedSchoolYearCount || 0) === 1 ? "" : "s"} and ${Number(result.deletedStudentCount || 0)} archived student record${Number(result.deletedStudentCount || 0) === 1 ? "" : "s"}.`,
+      metadata: result,
+    });
+
+    return res.status(200).json({
+      status: "ok",
+      mode: "live",
+      message: "Archive retention maintenance completed.",
+      result,
+    });
+  } catch (error) {
+    console.error("Error running archive retention maintenance:", error);
+    return res.status(503).json({
+      status: "error",
+      message: `Unable to run archive retention maintenance (${error.message}).`,
     });
   }
 });
@@ -13069,7 +14073,7 @@ app.delete("/api/archive/unresolved/:schoolYear/:semester", async (req, res) => 
   }
 });
 
-// DELETE school year (deletes all archived violations for that year)
+// DELETE school year (deletes archived violations and archived users tied to that year)
 app.delete("/api/archive/school-years/:schoolYear", async (req, res) => {
   const { schoolYear } = req.params;
 
@@ -13090,47 +14094,84 @@ app.delete("/api/archive/school-years/:schoolYear", async (req, res) => {
   try {
     await ensureAuthDatabaseReady();
     const pool = getDbPool();
+    await backfillArchivedStudentSchoolYears(pool);
+    const normalizedSchoolYear = normalizeSchoolYear(schoolYear);
+
+    if (!normalizedSchoolYear) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid school year.",
+      });
+    }
 
     // Check if school year exists in database
     const checkResult = await pool.query(
       `SELECT COUNT(*) as count
        FROM student_violation_archives
-       WHERE school_year = $1
-         AND is_unresolved = FALSE`,
-      [schoolYear],
+       WHERE school_year = $1`,
+      [normalizedSchoolYear],
     );
 
     const databaseViolationCount = parseInt(checkResult.rows[0].count);
+    const archivedStudentsResult = await pool.query(
+      `
+      SELECT id
+      FROM "Students"
+      WHERE is_archived = TRUE
+        AND archived_school_year = $1
+      ORDER BY archived_at DESC NULLS LAST, id DESC
+      `,
+      [normalizedSchoolYear],
+    );
+    const archivedStudents = archivedStudentsResult.rows || [];
 
-    // Delete all archived violations for this school year from database only.
-    // The workbook remains the import source and is never mutated by folder deletion.
-    if (databaseViolationCount > 0) {
-      await pool.query(
-        `DELETE FROM student_violation_archives
-         WHERE school_year = $1
-           AND is_unresolved = FALSE`,
-        [schoolYear],
-      );
-    }
-
-    if (databaseViolationCount === 0) {
+    if (databaseViolationCount === 0 && archivedStudents.length === 0) {
       return res.status(200).json({
         status: "ok",
-        message: `School year ${schoolYear} has no archived records to delete.`,
+        message: `School year ${normalizedSchoolYear} has no archived records to delete.`,
       });
+    }
+
+    await pool.query("BEGIN");
+
+    let deletedArchiveStudentCount = 0;
+    let deletedArchiveViolationCount = 0;
+
+    try {
+      const deleteResult = await deleteArchivedSchoolYearFolder(
+        pool,
+        normalizedSchoolYear,
+      );
+      await pool.query("COMMIT");
+
+      deletedArchiveStudentCount = Number(
+        deleteResult.deletedArchiveStudentCount || 0,
+      );
+      deletedArchiveViolationCount = Number(
+        deleteResult.deletedArchiveViolationCount || 0,
+      );
+    } catch (error) {
+      await pool.query("ROLLBACK");
+      throw error;
     }
 
     // Log the audit event
     await logAuditEvent(req, {
       action: "DELETE_SCHOOL_YEAR",
       targetType: "ARCHIVE_SCHOOL_YEAR",
-      targetId: schoolYear,
-      details: `Deleted school year ${schoolYear} with ${databaseViolationCount} database violations`,
+      targetId: normalizedSchoolYear,
+      details: `Deleted school year ${normalizedSchoolYear} with ${deletedArchiveViolationCount} archived violation record${deletedArchiveViolationCount === 1 ? "" : "s"} and ${deletedArchiveStudentCount} archived user${deletedArchiveStudentCount === 1 ? "" : "s"}.`,
+      metadata: {
+        deletedArchiveViolationCount,
+        deletedArchiveStudentCount,
+      },
     });
 
     return res.status(200).json({
       status: "ok",
-      message: `Successfully deleted school year ${schoolYear} (${databaseViolationCount} database records).`,
+      message: `Successfully deleted school year ${normalizedSchoolYear} (${deletedArchiveViolationCount} archived violation record${deletedArchiveViolationCount === 1 ? "" : "s"} removed, ${deletedArchiveStudentCount} archived user${deletedArchiveStudentCount === 1 ? "" : "s"} removed).`,
+      deletedArchiveViolationCount,
+      deletedArchiveStudentCount,
     });
   } catch (error) {
     console.error("Error deleting school year:", error);
@@ -13537,6 +14578,9 @@ app.put("/api/archive/users/:id/restore", async (req, res) => {
        SET is_archived = false, 
            archived_at = NULL,
            archived_reason = NULL,
+           archived_school_year = NULL,
+           archive_warning_week_sent_at = NULL,
+           archive_warning_day_sent_at = NULL,
            is_unresolved_archive = false,
            original_status = NULL,
            violation_count = CASE WHEN $3::int > 0 THEN $3::int ELSE violation_count END,
@@ -13662,7 +14706,9 @@ app.put("/api/archive/users/restore/all", async (req, res) => {
 
       await pool.query(
         `UPDATE "Students"
-         SET is_archived = false, archived_at = NULL, archived_reason = NULL, is_unresolved_archive = false, original_status = NULL,
+         SET is_archived = false, archived_at = NULL, archived_reason = NULL, archived_school_year = NULL,
+             archive_warning_week_sent_at = NULL, archive_warning_day_sent_at = NULL,
+             is_unresolved_archive = false, original_status = NULL,
              violation_count = CASE WHEN $2::int > 0 THEN $2::int ELSE violation_count END
          WHERE id = $1`,
         [student.id, totalUnresolved],
@@ -14418,6 +15464,7 @@ let server;
 let authSyncPromise = null;
 let auditCleanupTimer = null;
 let notificationCleanupTimer = null;
+let archivedRecordMaintenanceTimer = null;
 
 async function ensureAuthDatabaseReady() {
   if (!authSyncPromise) {
@@ -14434,6 +15481,7 @@ async function ensureAuthDatabaseReady() {
       await syncViolationsDatabase(false);
       await syncAuditLogsDatabase();
       await syncEmailUsageDatabase();
+      await syncArchiveRetentionDatabase();
       await syncStudentsFromUsers();
       await syncNotificationsDatabase();
       await syncPasswordResetDatabase();
@@ -14465,6 +15513,7 @@ async function ensureAuthDatabaseReady() {
           await syncViolationsDatabase(isDev);
           await syncAuditLogsDatabase();
           await syncEmailUsageDatabase();
+          await syncArchiveRetentionDatabase();
           await syncStudentsFromUsers();
           await syncNotificationsDatabase();
           await syncPasswordResetDatabase();
@@ -14521,6 +15570,11 @@ async function startServer() {
           purgeExpiredNotifications();
         }, NOTIFICATION_CLEANUP_INTERVAL_MS);
 
+        purgeExpiredArchivedStudentRecords();
+        archivedRecordMaintenanceTimer = setInterval(() => {
+          purgeExpiredArchivedStudentRecords();
+        }, ARCHIVED_RECORD_MAINTENANCE_INTERVAL_MS);
+
         await deactivateGraduatedStudentAccounts();
 
         if (seedAccounts.length === 0) {
@@ -14561,6 +15615,11 @@ async function shutdown(signal) {
   if (notificationCleanupTimer) {
     clearInterval(notificationCleanupTimer);
     notificationCleanupTimer = null;
+  }
+
+  if (archivedRecordMaintenanceTimer) {
+    clearInterval(archivedRecordMaintenanceTimer);
+    archivedRecordMaintenanceTimer = null;
   }
 
   if (!server) {
@@ -14628,11 +15687,13 @@ app.get("/api/cron/maintenance", async (req, res) => {
     await ensureAuthDatabaseReady();
     await purgeExpiredAuditLogs();
     await purgeExpiredNotifications();
+    const archiveRetentionResult = await purgeExpiredArchivedStudentRecords();
     await deactivateGraduatedStudentAccounts();
 
     return res.status(200).json({
       status: "ok",
       message: "Maintenance completed.",
+      archiveRetention: archiveRetentionResult,
       ranAt: new Date().toISOString(),
     });
   } catch (error) {
