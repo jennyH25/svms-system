@@ -4132,6 +4132,18 @@ async function syncArchivedSchoolYearRetentionRows(pool, schoolYears) {
       VALUES ($1, $2)
       ON CONFLICT (school_year) DO UPDATE
       SET scheduled_deletion_at = EXCLUDED.scheduled_deletion_at,
+          week_notice_sent_at = CASE
+            WHEN archive_school_year_retention_notices.deleted_at IS NOT NULL
+              OR archive_school_year_retention_notices.scheduled_deletion_at IS DISTINCT FROM EXCLUDED.scheduled_deletion_at
+            THEN NULL
+            ELSE archive_school_year_retention_notices.week_notice_sent_at
+          END,
+          day_notice_sent_at = CASE
+            WHEN archive_school_year_retention_notices.deleted_at IS NOT NULL
+              OR archive_school_year_retention_notices.scheduled_deletion_at IS DISTINCT FROM EXCLUDED.scheduled_deletion_at
+            THEN NULL
+            ELSE archive_school_year_retention_notices.day_notice_sent_at
+          END,
           deleted_at = NULL,
           updated_at = NOW()
       `,
