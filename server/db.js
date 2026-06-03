@@ -1726,6 +1726,56 @@ export async function syncArchiveRetentionDatabase() {
   `);
 
   await dbPool.query(`
+    ALTER TABLE archive_school_year_retention_notices ENABLE ROW LEVEL SECURITY
+  `);
+
+  await dbPool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'archive_school_year_retention_notices'
+          AND policyname = 'archive_school_year_retention_notices_service_role_all'
+      ) THEN
+        CREATE POLICY archive_school_year_retention_notices_service_role_all
+        ON archive_school_year_retention_notices
+        FOR ALL
+        TO service_role
+        USING (true)
+        WITH CHECK (true);
+      END IF;
+    END;
+    $$;
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE admin_archive_notice_dismissals ENABLE ROW LEVEL SECURITY
+  `);
+
+  await dbPool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'admin_archive_notice_dismissals'
+          AND policyname = 'admin_archive_notice_dismissals_service_role_all'
+      ) THEN
+        CREATE POLICY admin_archive_notice_dismissals_service_role_all
+        ON admin_archive_notice_dismissals
+        FOR ALL
+        TO service_role
+        USING (true)
+        WITH CHECK (true);
+      END IF;
+    END;
+    $$;
+  `);
+
+  await dbPool.query(`
     CREATE OR REPLACE FUNCTION set_archive_retention_updated_at()
     RETURNS TRIGGER AS $$
     BEGIN
@@ -2229,6 +2279,31 @@ export async function syncEmailUsageDatabase() {
     CREATE INDEX IF NOT EXISTS email_send_logs_sender_created_at_idx
     ON email_send_logs (sender_email, created_at DESC)
     WHERE sender_email IS NOT NULL
+  `);
+
+  await dbPool.query(`
+    ALTER TABLE email_send_logs ENABLE ROW LEVEL SECURITY
+  `);
+
+  await dbPool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'email_send_logs'
+          AND policyname = 'email_send_logs_service_role_all'
+      ) THEN
+        CREATE POLICY email_send_logs_service_role_all
+        ON email_send_logs
+        FOR ALL
+        TO service_role
+        USING (true)
+        WITH CHECK (true);
+      END IF;
+    END;
+    $$;
   `);
 
   await dbPool.query(`
