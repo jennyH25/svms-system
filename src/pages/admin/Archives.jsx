@@ -2161,6 +2161,22 @@ const Archives = () => {
                 row.folderKey === "users" &&
                 String(row.status || "").trim().toLowerCase() === "graduated";
 
+              if (isGraduatedUserInUsersFolder) {
+                return (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleEdit(row, "user", true);
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[#EEF2FF] px-3 py-2 text-sm font-medium text-[#475569] transition-colors hover:bg-[#E2E8F0]"
+                  >
+                    <Eye className="w-4 h-4" />
+                    <span>View</span>
+                  </button>
+                );
+              }
+
               return (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -2264,45 +2280,49 @@ const Archives = () => {
             key: "actions",
             label: "",
             align: "center",
-            render: (_value, row) => (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-[#3D4654] transition-colors">
-                    <MoreVertical className="w-5 h-5 text-[#A3AED0]" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
-                  <DropdownMenuItem
-                    onClick={() => {
-                      const isGraduatedUserInUsersFolder =
-                        row.folderKey === "users" &&
-                        String(row.status || "").trim().toLowerCase() === "graduated";
-                      handleEdit(row, "user", isGraduatedUserInUsersFolder);
-                    }}
-                    className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900"
+            render: (_value, row) => {
+              const isGraduatedUserInUsersFolder =
+                row.folderKey === "users" &&
+                String(row.status || "").trim().toLowerCase() === "graduated";
+
+              if (isGraduatedUserInUsersFolder) {
+                return (
+                  <button
+                    type="button"
+                    onClick={() => handleEdit(row, "user", true)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[#EEF2FF] px-3 py-2 text-sm font-medium text-[#475569] transition-colors hover:bg-[#E2E8F0]"
                   >
-                    {row.folderKey === "users" &&
-                    String(row.status || "").trim().toLowerCase() === "graduated" ? (
-                      <Eye className="w-4 h-4" />
-                    ) : (
+                    <Eye className="w-4 h-4" />
+                    <span>View</span>
+                  </button>
+                );
+              }
+
+              return (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-[#3D4654] transition-colors">
+                      <MoreVertical className="w-5 h-5 text-[#A3AED0]" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="bg-white/95 border-white/20 text-gray-800">
+                    <DropdownMenuItem
+                      onClick={() => handleEdit(row, "user", false)}
+                      className="gap-2 cursor-pointer text-gray-900 hover:bg-gray-200 hover:text-gray-900 focus:bg-gray-200 focus:text-gray-900"
+                    >
                       <Edit className="w-4 h-4" />
-                    )}
-                    <span>
-                      {row.folderKey === "users" &&
-                      String(row.status || "").trim().toLowerCase() === "graduated"
-                        ? "View"
-                        : "Edit"}
-                    </span>
-                  </DropdownMenuItem>
-                  {row.status !== "Graduated" && (
-                    <DropdownMenuItem onClick={() => handleRestoreClick(row)} className="gap-2 cursor-pointer text-green-700 hover:bg-green-100 hover:text-green-800 focus:bg-green-100 focus:text-green-800">
-                      <RotateCcw className="w-4 h-4" />
-                      <span>Restore</span>
+                      <span>Edit</span>
                     </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ),
+                    {row.status !== "Graduated" && (
+                      <DropdownMenuItem onClick={() => handleRestoreClick(row)} className="gap-2 cursor-pointer text-green-700 hover:bg-green-100 hover:text-green-800 focus:bg-green-100 focus:text-green-800">
+                        <RotateCcw className="w-4 h-4" />
+                        <span>Restore</span>
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              );
+            },
           },
         ];
       }

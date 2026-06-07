@@ -20,6 +20,7 @@ import {
   Archive,
   Minus,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -2564,11 +2565,20 @@ const StudentViolation = () => {
             disabled={isConfirmingAction}
             className="px-6 py-2.5"
           >
-            {isConfirmingAction
-              ? "Processing..."
-              : confirmAction?.type === "delete" || confirmAction?.type === "bulk-delete"
-                ? "Delete"
-                : "Clear"}
+            {isConfirmingAction ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>
+                  {confirmAction?.type === "delete" || confirmAction?.type === "bulk-delete"
+                    ? "Deleting..."
+                    : "Processing..."}
+                </span>
+              </span>
+            ) : confirmAction?.type === "delete" || confirmAction?.type === "bulk-delete" ? (
+              "Delete"
+            ) : (
+              "Clear"
+            )}
           </Button>
         </ModalFooter>
       </Modal>
