@@ -7,6 +7,8 @@ import ViolationPickerModal from "@/components/modals/ViolationPickerModal";
 import { CheckCircle, AlertTriangle } from "lucide-react";
 import { formatStudentDisplayName } from "@/lib/utils";
 
+const REMARKS_MAX_LENGTH = 100;
+
 const getTodayDateInputValue = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -344,12 +346,27 @@ const LogNewViolationModal = ({ isOpen, onClose, onSaved }) => {
           <textarea
             value={formData.remarks}
             onChange={(event) =>
-              setFormData((prev) => ({ ...prev, remarks: event.target.value }))
+              setFormData((prev) => ({
+                ...prev,
+                remarks: event.target.value.slice(0, REMARKS_MAX_LENGTH),
+              }))
             }
+            maxLength={REMARKS_MAX_LENGTH}
             rows={4}
             style={{ backgroundColor: "rgba(45, 47, 52, 0.8)" }}
             className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white placeholder-gray-500 focus:outline-none focus:border-white/20 transition-all resize-y min-h-[80px]"
           />
+          <div className="mt-2 flex justify-end">
+            <span
+              className={`text-xs ${
+                formData.remarks.length >= REMARKS_MAX_LENGTH
+                  ? "text-red-400"
+                  : "text-gray-400"
+              }`}
+            >
+              {formData.remarks.length}/{REMARKS_MAX_LENGTH}
+            </span>
+          </div>
         </div>
 
         {error ? <p className="text-sm text-red-300 mt-2">{error}</p> : null}

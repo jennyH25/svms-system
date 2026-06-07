@@ -5,6 +5,8 @@ import Button from "@/components/ui/Button";
 import ViolationPickerModal from "@/components/modals/ViolationPickerModal";
 import { AlertCircle, CheckCircle, PenTool, RotateCcw } from "lucide-react";
 
+const REMARKS_MAX_LENGTH = 100;
+
 const initialForm = {
   violationLabel: "",
   reportedBy: "",
@@ -59,7 +61,7 @@ const EditViolationModal = ({
     setFormData({
       violationLabel: record.violation_label || "",
       reportedBy: record.reported_by || "",
-      remarks: record.remarks || "",
+      remarks: String(record.remarks || "").slice(0, REMARKS_MAX_LENGTH),
       dateLogged: dateStr,
     });
   }, [isOpen, record]);
@@ -86,7 +88,10 @@ const EditViolationModal = ({
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({
+      ...prev,
+      [name]: name === "remarks" ? value.slice(0, REMARKS_MAX_LENGTH) : value,
+    }));
   };
 
   const handleSubmit = async (event) => {
@@ -226,11 +231,23 @@ const EditViolationModal = ({
               name="remarks"
               value={formData.remarks}
               onChange={handleChange}
+              maxLength={REMARKS_MAX_LENGTH}
               rows={4}
               placeholder="Remarks"
               style={{ backgroundColor: "rgba(45, 47, 52, 0.8)" }}
               className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white placeholder-gray-500 focus:outline-none focus:border-white/20 transition-all resize-y min-h-[80px]"
             />
+            <div className="mt-2 flex justify-end">
+              <span
+                className={`text-xs ${
+                  formData.remarks.length >= REMARKS_MAX_LENGTH
+                    ? "text-red-400"
+                    : "text-gray-400"
+                }`}
+              >
+                {formData.remarks.length}/{REMARKS_MAX_LENGTH}
+              </span>
+            </div>
           </div>
 
           {record?.signature_image && (

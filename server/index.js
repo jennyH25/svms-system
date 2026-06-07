@@ -10150,6 +10150,7 @@ app.get("/api/student-violations/me", async (req, res) => {
 });
 
 app.post("/api/student-violations", async (req, res) => {
+  const STUDENT_VIOLATION_REMARKS_MAX_LENGTH = 100;
   const {
     studentId,
     violationCatalogId,
@@ -10191,6 +10192,13 @@ app.post("/api/student-violations", async (req, res) => {
     return res.status(400).json({
       status: "error",
       message: "dateLogged is required.",
+    });
+  }
+
+  if (String(remarks || "").trim().length > STUDENT_VIOLATION_REMARKS_MAX_LENGTH) {
+    return res.status(400).json({
+      status: "error",
+      message: `remarks must be ${STUDENT_VIOLATION_REMARKS_MAX_LENGTH} characters or fewer.`,
     });
   }
 
@@ -10344,6 +10352,7 @@ app.post("/api/student-violations", async (req, res) => {
 });
 
 app.put("/api/student-violations/:id", async (req, res) => {
+  const STUDENT_VIOLATION_REMARKS_MAX_LENGTH = 100;
   const { id } = req.params;
   const {
     reportedBy,
@@ -10917,6 +10926,13 @@ app.get("/api/settings/email-usage", async (_req, res) => {
     return res.status(500).json({
       status: "error",
       message: "Database is not configured.",
+    });
+  }
+
+  if (String(remarks || "").length > STUDENT_VIOLATION_REMARKS_MAX_LENGTH) {
+    return res.status(400).json({
+      status: "error",
+      message: `remarks must be ${STUDENT_VIOLATION_REMARKS_MAX_LENGTH} characters or fewer.`,
     });
   }
 

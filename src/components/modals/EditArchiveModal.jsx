@@ -5,6 +5,8 @@ import Button from "@/components/ui/Button";
 import { AlertCircle, Loader2 } from "lucide-react";
 import SelectField from "@/components/ui/SelectField";
 
+const REMARKS_MAX_LENGTH = 100;
+
 function extractNameFromFullName(fullName) {
   const normalized = String(fullName || "").trim();
   if (!normalized) {
@@ -203,7 +205,7 @@ const EditArchiveModal = ({
           violation: record.violation || "",
           type: record.type || "",
           reportedBy: record.reportedBy || "",
-          remarks: record.remarks || "",
+          remarks: String(record.remarks || "").slice(0, REMARKS_MAX_LENGTH),
           semester: record.semester || "",
           schoolYear: record.schoolYear || record.school_year || "",
         });
@@ -213,7 +215,10 @@ const EditArchiveModal = ({
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({
+      ...prev,
+      [name]: name === "remarks" ? value.slice(0, REMARKS_MAX_LENGTH) : value,
+    }));
   };
 
   const handleSubmit = async (e) => {
@@ -462,9 +467,21 @@ const EditArchiveModal = ({
                 value={formData.remarks}
                 onChange={handleChange}
                 placeholder="Remarks"
+                maxLength={REMARKS_MAX_LENGTH}
                 rows={4}
                 className="w-full backdrop-blur-md border border-white/5 rounded-xl px-4 py-3 text-[15px] text-white bg-[rgba(45,47,52,0.8)] placeholder-gray-500 focus:outline-none focus:border-white/20 transition-all resize-none"
               />
+              <div className="mt-2 flex justify-end">
+                <span
+                  className={`text-xs ${
+                    formData.remarks?.length >= REMARKS_MAX_LENGTH
+                      ? "text-red-400"
+                      : "text-gray-400"
+                  }`}
+                >
+                  {formData.remarks?.length || 0}/{REMARKS_MAX_LENGTH}
+                </span>
+              </div>
             </div>
             {record?.signatureImage && (
               <div className="mb-4">
