@@ -919,7 +919,7 @@ const Violations = () => {
             <button
               type="button"
               onClick={() => setFormData({ ...formData, children: [...formData.children, ""] })}
-              className="text-blue-400 hover:text-blue-600 text-sm"
+              className="mb-3 text-blue-400 hover:text-blue-600 text-sm"
             >
               + Add another sub‑violation
             </button>
@@ -1086,7 +1086,7 @@ const Violations = () => {
           </div>
         </div>
 
-        <ModalFooter className="sticky bottom-0 -mx-6 -mb-6 border-t border-white/10 bg-[#1a1c20]/95 px-6 py-4 backdrop-blur">
+        <ModalFooter className="border-t border-white/10 pt-5">
           <Button
             variant="outline"
             onClick={() => setIsEditModalOpen(false)}
