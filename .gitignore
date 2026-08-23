@@ -26,3 +26,8 @@ dist-ssr
 # Environment files
 .env
 .env.*
+
+# Confidential datasets & Excel files
+*.xlsx
+*.xls
+

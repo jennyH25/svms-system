@@ -1,30 +1,44 @@
-1. About the System
+# Student Violation Monitoring System (SVMS)
 
-**Student Violation Monitoring System (SVMS)** — SVMS is a web application for recording, tracking, and managing student disciplinary violations. It provides role-based access for students and administrators: students can view their own records and notifications; administrators can log incidents, maintain records, and produce reports for review or export.
+## About the System
+
+**Student Violation Monitoring System (SVMS)** is a comprehensive web application designed to streamline the recording, tracking, and management of student disciplinary violations. It provides a secure, role-based ecosystem for educational institutions to enforce disciplinary policies transparently and efficiently.
+
+### Key Capabilities
+- **Role-Based Access Control**: Separate interfaces and permissions for Students and Administrators.
+- **Student Portal**: Enables students to view their disciplinary records, violation history, resolution status, and system notifications.
+- **Admin Dashboard**: Empowers administrators to log new incidents, track violation statuses, manage student profiles, and archive records.
+- **Data Export & Reporting**: Generates detailed PDF summary reports and exports violation records to Excel formats (`.xlsx`).
+- **Real-Time Notifications & Email Alerts**: Delivers real-time updates via WebSockets and dispatches email notifications for record updates or account actions.
 
 ---
 
-2. Technologies Used
+## Tech Stack
 
-- Front-end: `React` + `Vite` (tooling) with `Tailwind CSS` for styling
-- Back-end: `Node.js` running an `Express` API
-- Database: `PostgreSQL` (Supabase-compatible)
+### Frontend
+- **Framework & Tooling**: [React 19](https://react.dev/), [Vite](https://vitejs.dev/)
+- **Styling & UI Components**: [Tailwind CSS](https://tailwindcss.com/), [Radix UI](https://www.radix-ui.com/), [Lucide React Icons](https://lucide.dev/)
+- **Animations**: [Motion](https://motion.dev/), [GSAP](https://gsap.com/)
+
+### Backend
+- **Runtime & Server**: [Node.js](https://nodejs.org/) (>= 20.19.0), [Express.js](https://expressjs.com/)
+- **File Uploads**: [Multer](https://github.com/expressjs/multer)
+
+### Database & Authentication
+- **Database**: [PostgreSQL](https://www.postgresql.org/) (compatible with [Supabase](https://supabase.com/))
+- **Database Driver**: [postgres.js](https://github.com/porsager/postgres)
+- **Security & Encryption**: `bcryptjs` for password hashing, custom encryption modules for session tokens and sensitive data
+
+### Real-Time & Communications
+- **Real-Time Updates**: [Pusher](https://pusher.com/)
+- **Email Notifications**: [Nodemailer](https://nodemailer.com/)
+
+### Document & Data Processing
+- **Reporting & Exporting**: `jsPDF` & `jspdf-autotable` (PDF generation), `ExcelJS` & `xlsx` (Excel processing)
 
 ---
 
-3. User flow and System capabilities
+## Data Privacy & Confidentiality
 
-User flow:
+> **Confidentiality Notice**: All student violation Excel files (`.xlsx`) and exported disciplinary reports serve as confidential datasets containing sensitive personal information. Access to these dataset files is strictly restricted to authorized administration personnel and must be handled in compliance with data privacy policies and security regulations.
 
-1. User authenticates (administrator or student)
-2. Student: views personal violations, notifications, and status
-3. Administrator: logs a violation or updates an existing record
-4. System records the change and notifies relevant users
-5. Admins generate reports or export data as needed
-
-Capabilities (high level):
-
-- Role-based authentication and access control
-- Record creation, editing, archiving, and search for violations
-- Reporting and export to common formats (Excel / PDF)
-- Email-based account recovery and notifications
